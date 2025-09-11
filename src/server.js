@@ -43,7 +43,7 @@ app.get('/cron/request', async (req, res) => {
         for (const user of users) { 
             await loadDatabase(user.ID);
             const sellers = sellerId
-                ? [await sellerModel.getProfileDetailsByID(sellerId)]
+                ? await sellerModel.getSellersProfilesForCronAdvanced({ idSellerAccount: sellerId, pullAll: 1 })
                 : await sellerModel.getSellersProfilesForCronAdvanced({ pullAll: 0 });
             for (const s of sellers) {         
                 if (!s) continue;

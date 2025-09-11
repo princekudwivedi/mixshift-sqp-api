@@ -101,46 +101,6 @@ async function getProfileDetailsByAmazonSellerID(amazonSellerID) {
     return rows[0] || null;
 }
 
-async function getProfileDetailsByAmazonSellerID11(amazonSellerID) {
-    // Search by AmazonSellerID - mirror PHP getSellersProfiles function
-    console.log('getProfileDetailsByAmazonSellerID called with:', amazonSellerID);
-    
-    // First, let's check what sellers exist in the current database
-    const checkSql = `SELECT ID, AmazonSellerID, Name, ProfileId FROM ${tables.seller} LIMIT 5`;
-    const allSellers = await query(checkSql);
-    console.log('All sellers in current database:', JSON.stringify(allSellers, null, 2));
-    
-    const sql = `
-        SELECT 
-            sell.ID AS idSellerAccount,
-            sell.Name AS SellerName,
-            sell.AmazonSellerID,
-            sell.ProfileId,
-            sell.idUserAccount,
-            sell.MerchantType,
-            sell.MerchantRegion,
-            sell.isAdLostAccess,
-            mp.ID AS idMarketPlaceAccount,
-            mp.Name AS MarketPlaceName,
-            mp.CountryCode AS CountryCode,
-            mp.AmazonMarketplaceId
-        FROM ${tables.seller} AS sell
-        LEFT JOIN ${tables.sellerMarketPlacesMapping} AS smpm ON smpm.SellerId = sell.id
-        LEFT JOIN ${tables.marketPlace} AS mp ON mp.id = smpm.MarketId
-        WHERE sell.AmazonSellerID = ?
-          AND sell.IsActive = '1'
-          AND sell.MerchantType != 'Agency'
-        LIMIT 1`;
-    
-    console.log('SQL to execute:', sql);
-    console.log('Parameter:', amazonSellerID);
-    
-    const rows = await query(sql, [amazonSellerID]);
-    console.log('Query result:', JSON.stringify(rows, null, 2));
-    
-    return rows[0] || null;
-}
-
 module.exports = { getSellersProfilesForCron, getProfileDetailsByID, getProfileDetailsByAmazonSellerID };
 
 // Advanced variant mirroring SP_API_Model->getSellersProfilesForCron
