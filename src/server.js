@@ -40,10 +40,7 @@ app.get('/cron/request', async (req, res) => {
         const sellerId = req.query.sellerId ? Number(req.query.sellerId) : null;
         await loadDatabase(0);
         const users = userId ? [{ ID: userId }] : await master.getAllAgencyUserList();
-        for (const user of users) {  
-            if(user.ID != 3) {
-                continue;
-            }
+        for (const user of users) { 
             await loadDatabase(user.ID);
             const sellers = sellerId
                 ? [await sellerModel.getProfileDetailsByID(sellerId)]
