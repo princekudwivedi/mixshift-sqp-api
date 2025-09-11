@@ -1,1 +1,4 @@
 # add ignore files
+/node_modules
+.env
+database

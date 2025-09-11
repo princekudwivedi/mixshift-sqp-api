@@ -1,0 +1,33 @@
+{
+  "name": "dash-amazon-sp-api-node",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node src/server.js",
+    "dev": "nodemon --watch src --ext js,json --exec node src/server.js",
+    "cron:request": "node src/cli/request.js",
+    "cron:status": "node src/cli/status.js",
+    "cron:download": "node src/cli/download.js",
+    "cron:all": "node src/cli/all.js",
+    "serve": "node src/server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@amazon-sp-api-release/amazon-sp-api-sdk-js": "^1.4.0",
+    "aws4": "^1.13.2",
+    "axios": "^1.11.0",
+    "date-fns": "^4.1.0",
+    "dotenv": "^17.2.2",
+    "express": "^5.1.0",
+    "mysql2": "^3.14.5",
+    "pino": "^9.9.4",
+    "pino-pretty": "^13.1.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.10"
+  }
+}
