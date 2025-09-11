@@ -16,6 +16,7 @@ module.exports = {
         waitForConnections: true,
         connectionLimit: 10,
         queueLimit: 0,
+        charset: 'utf8mb4'
     },
     developer: {
         ClientId: env('DEVELOPER_CLIENT_ID', null),
