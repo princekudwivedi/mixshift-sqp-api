@@ -315,8 +315,7 @@ async function downloadReportByType(row, reportType, field, authOverrides = {}) 
 				ReportDocumentID: documentId,
 				CompressionAlgorithm: null,
 				Status: 'COMPLETED',
-				FilePath: filePath,
-				FileSize: fileSize,
+				// FilePath and FileSize are tracked on sqp_download_urls, not in sqp_cron_logs
 			});
 
 			// Mark download as completed

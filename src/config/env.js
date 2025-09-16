@@ -53,7 +53,8 @@ module.exports = {
         stsTokens: env('TBL_SPAPI_STS_TOKEN', 'sp_api_sts'),
         sqpDownloadUrls: env('TBL_SQP_DOWNLOAD_URLS', 'sqp_download_urls'),
         sqpReportData: env('TBL_SQP_REPORT_DATA', 'sqp_report_data'),
-        sqpMetrics3mo: env('TBL_SQP_METRICS_3MO', 'sqp_metrics_3mo')
+        sqpMetrics3mo: env('TBL_SQP_METRICS_3MO', 'sqp_metrics_3mo'),
+        sqpMetrics3moTotals: env('TBL_SQP_METRICS', 'sqp_metrics')
     },
     logLevel: env('LOG_LEVEL', 'info'),
 };

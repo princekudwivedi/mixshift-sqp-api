@@ -133,7 +133,7 @@ async function logCronActivity({ cronJobID, amazonSellerID, reportType, action, 
             // Row exists - UPDATE it
             const updateSql = `UPDATE ${tables.cronLogs} 
                 SET Action = ?, Status = ?, Message = ?, ReportID = ?, ReportDocumentID = ?, DownloadCompleted = ?, 
-                    RecordsProcessed = ?, FileSize = ?, FilePath = ?, RetryCount = ?, ExecutionTime = ?, CreatedDate = NOW()
+                    RecordsProcessed = ?, RetryCount = ?, ExecutionTime = ?, CreatedDate = NOW()
                 WHERE CronJobID = ? AND AmazonSellerID = ? AND ReportType = ?`;
             
             return await query(updateSql, [action, status, message, reportID, reportDocumentID, downloadCompleted, recordsProcessed, fileSize, filePath, retryCount, executionTime, cronJobID, amazonSellerID, reportType]);
@@ -141,8 +141,8 @@ async function logCronActivity({ cronJobID, amazonSellerID, reportType, action, 
             // Row doesn't exist - INSERT new one
             const insertSql = `INSERT INTO ${tables.cronLogs}
                 (CronJobID, AmazonSellerID, ReportType, Action, Status, Message, ReportID, ReportDocumentID, DownloadCompleted, 
-                 RecordsProcessed, FileSize, FilePath, RetryCount, ExecutionTime, CreatedDate)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`;
+                 RecordsProcessed, RetryCount, ExecutionTime, CreatedDate)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`;
             
             return await query(insertSql, [cronJobID, amazonSellerID, reportType, action, status, message, reportID, reportDocumentID, downloadCompleted, recordsProcessed, fileSize, filePath, retryCount, executionTime]);
         }
