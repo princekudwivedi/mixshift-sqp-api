@@ -1,0 +1,25 @@
+const { DataTypes } = require('sequelize');
+const sequelize = require('../../config/sequelize.config');
+const { TBL_USER_DATABASE_CREDENTIALS } = require('../../config/env.config');
+const { makeReadOnly } = require('./utils');
+
+const table = TBL_USER_DATABASE_CREDENTIALS;
+
+const UserDatabaseCredentials = sequelize.define(table, {
+    ID: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    AgencyUserID: { type: DataTypes.INTEGER, allowNull: false },
+    DatabaseID: { type: DataTypes.INTEGER, allowNull: false },
+    Hostname: { type: DataTypes.STRING(300), allowNull: false },
+    Username: { type: DataTypes.STRING(200), allowNull: false },
+    PortNumber: { type: DataTypes.INTEGER, allowNull: false },
+    Password: { type: DataTypes.TEXT, allowNull: true },
+    dtCreatedOn: { type: DataTypes.DATE, allowNull: false },
+    dtUpdatedOn: { type: DataTypes.DATE, allowNull: false }
+}, {
+    tableName: table,
+    timestamps: false
+});
+
+module.exports = makeReadOnly(UserDatabaseCredentials);
+
+

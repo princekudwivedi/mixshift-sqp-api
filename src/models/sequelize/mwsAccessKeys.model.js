@@ -1,9 +1,9 @@
 const { DataTypes } = require('sequelize');
 const sequelize = require('../../config/sequelize.config');
-const { env } = require('../../config/env.config');
+const { TBL_MWS_ACCESS_KEYS } = require('../../config/env.config');
 const { makeReadOnly } = require('./utils');
 
-const table = env('TBL_MWS_ACCESS_KEYS', 'mws_access_keys');
+const table = TBL_MWS_ACCESS_KEYS;
 
 const MwsAccessKeys = sequelize.define(table, {
     ID: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },

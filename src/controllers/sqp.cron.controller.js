@@ -1,10 +1,11 @@
 const logger = require('../utils/logger.utils');
 const dates = require('../utils/dates.utils');
-const model = require('../models/sqpCronModel');
-const sellerModel = require('../models/seller.model');
-const masterModel = require('../models/master.model');
+const model = require('../models/sqp.cron.model');
+const sellerModel = require('../models/sequelize/seller.model');
+const AuthToken = require('../models/authToken.model');
+const StsToken = require('../models/stsToken.model');
 const sp = require('../spapi/client.spapi');
-const jsonSvc = require('../services/sqpJsonProcessingService');
+const jsonSvc = require('../services/sqp.json.processing.service');
 const downloadUrls = require('../models/sqp.download.urls.model');
 const { sellerDefaults } = require('../config/env.config');
 
@@ -81,7 +82,10 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 	try {
 		
 		logger.info({ cronDetailID, reportType }, 'Updating report status to 0');
-		await model.updateSQPReportStatus(cronDetailID, reportType, 0);
+		// Set start date when beginning the report request - we'll update with reportId later
+		const startTime = new Date();
+		logger.info({ cronDetailID, reportType, startTime }, 'Setting start date for report request');
+		await model.updateSQPReportStatus(cronDetailID, reportType, 0, null, null, null, null, startTime);
 		
 		logger.info({ cronDetailID, reportType }, 'Logging cron activity start');
 		await model.logCronActivity({
@@ -97,11 +101,18 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 		const range = dates.getDateRangeForPeriod(period);
 		logger.info({ period, range }, 'Date range calculated');
 		
+		// Resolve marketplace id (required by SP-API). If unavailable, skip this request gracefully.
+		const marketplaceId = seller.AmazonMarketplaceId || null;
+		if (!marketplaceId) {
+			logger.warn({ sellerId: seller.AmazonSellerID }, 'Missing AmazonMarketplaceId; skipping report request');
+			return;
+		}
+
 		const payload = {
 			reportType: 'GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT',
 			dataStartTime: `${range.start}T00:00:00Z`,
 			dataEndTime: `${range.end}T23:59:59Z`,
-			marketplaceIds: [ seller.AmazonMarketplaceId ],
+			marketplaceIds: [ marketplaceId ],
 			reportOptions: { asin: chunk.asin_string, reportPeriod: reportType },
 		};
 		
@@ -109,7 +120,7 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 
 		// Ensure access token is present for this seller
 		if (!authOverrides.accessToken) {
-			const tokenRow = await masterModel.getSavedToken(seller.AmazonSellerID);
+			const tokenRow = await AuthToken.getSavedToken(seller.AmazonSellerID);
 			if (tokenRow && tokenRow.access_token) {
 				authOverrides = { ...authOverrides, accessToken: tokenRow.access_token };
 				logger.info({ amazonSellerID: seller.AmazonSellerID }, 'Access token loaded for request');
@@ -123,7 +134,8 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 		
 		logger.info({ reportId }, 'Report created successfully');
 		
-		await model.updateSQPReportStatus(cronDetailID, reportType, 0, reportId);
+		// Update with reportId but preserve the start date
+		await model.updateSQPReportStatus(cronDetailID, reportType, 0, reportId, null, null, null, startTime);
 		await model.logCronActivity({
 			cronJobID: cronDetailID,
 			amazonSellerID: seller.AmazonSellerID,
@@ -142,7 +154,7 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 		}, 'Error in requestSingleReport');
 		
 		await model.incrementRetryCount(cronDetailID, reportType);
-		await model.updateSQPReportStatus(cronDetailID, reportType, 2, null, e.message);
+		await model.updateSQPReportStatus(cronDetailID, reportType, 2, null, e.message, null, null, null, new Date());
 		await model.logCronActivity({
 			cronJobID: cronDetailID,
 			amazonSellerID: seller.AmazonSellerID,
@@ -187,7 +199,7 @@ async function checkReportStatusByType(row, reportType, field, authOverrides = {
 
 	// Ensure access token for this seller during status checks
 	if (!authOverrides.accessToken) {
-		const tokenRow = await masterModel.getSavedToken(seller.AmazonSellerID);
+		const tokenRow = await AuthToken.getSavedToken(seller.AmazonSellerID);
 		if (tokenRow && tokenRow.access_token) {
 			authOverrides = { ...authOverrides, accessToken: tokenRow.access_token };
 			logger.info({ amazonSellerID: seller.AmazonSellerID }, 'Access token loaded for status');
@@ -221,7 +233,7 @@ async function checkReportStatusByType(row, reportType, field, authOverrides = {
 			await model.logCronActivity({ cronJobID: row.ID, amazonSellerID: row.AmazonSellerID, reportType, action: 'Check Status', status: 0, message: `Report ${status.toLowerCase().replace('_',' ')}`, reportID: reportId });
 		} else if (status === 'FATAL' || status === 'CANCELLED') {
 			await model.incrementRetryCount(row.ID, reportType);
-			await model.updateSQPReportStatus(row.ID, reportType, 2, null, status);
+			await model.updateSQPReportStatus(row.ID, reportType, 2, null, status, null, null, null, new Date());
 			await model.logCronActivity({ cronJobID: row.ID, amazonSellerID: row.AmazonSellerID, reportType, action: 'Check Status', status: 2, message: `Report ${status}`, reportID: reportId });
 		} else {
 			await model.logCronActivity({ cronJobID: row.ID, amazonSellerID: row.AmazonSellerID, reportType, action: 'Check Status', status: 2, message: `Unknown status: ${status}`, reportID: reportId });
@@ -253,7 +265,7 @@ async function downloadReportByType(row, reportType, field, authOverrides = {}) 
 
 	// Ensure access token for download as well
 	if (!authOverrides.accessToken) {
-		const tokenRow = await masterModel.getSavedToken(row.AmazonSellerID);
+		const tokenRow = await AuthToken.getSavedToken(row.AmazonSellerID);
 		if (tokenRow && tokenRow.access_token) {
 			authOverrides = { ...authOverrides, accessToken: tokenRow.access_token };
 			logger.info({ amazonSellerID: row.AmazonSellerID }, 'Access token loaded for download');
@@ -263,6 +275,19 @@ async function downloadReportByType(row, reportType, field, authOverrides = {}) 
 	}
 	try {
 		logger.info({ reportId, reportType }, 'Starting download for report');
+		
+		// Update download status to DOWNLOADING and increment attempts
+		await downloadUrls.updateDownloadUrlStatusByCriteria(
+			row.ID, 
+			reportId, 
+			row.AmazonSellerID, 
+			reportType, 
+			'DOWNLOADING',
+			null,
+			null,
+			null,
+			true // Increment attempts
+		);
 		
 		// First get report status to ensure we have the latest reportDocumentId
 		const statusRes = await sp.getReportStatus(seller, reportId, authOverrides);
@@ -296,30 +321,33 @@ async function downloadReportByType(row, reportType, field, authOverrides = {}) 
 			const downloadMeta = { AmazonSellerID: row.AmazonSellerID, ReportType: reportType, ReportID: documentId };
 			let filePath = null; let fileSize = 0;
 			try {
-				filePath = await jsonSvc.saveReportJsonFile(downloadMeta, data);
-				const fs = require('fs');
-				const stat = await fs.promises.stat(filePath).catch(() => null);
-				fileSize = stat ? stat.size : 0;
-				logger.info({ filePath, fileSize }, 'Report JSON saved to disk');
+				const saveResult = await jsonSvc.saveReportJsonFile(downloadMeta, data);
+				filePath = saveResult?.path || saveResult?.url || null;
+				if (filePath) {
+					const fs = require('fs');
+					const stat = await fs.promises.stat(filePath).catch(() => null);
+					fileSize = stat ? stat.size : 0;
+					logger.info({ filePath, fileSize }, 'Report JSON saved to disk');
+				}
 			} catch (fileErr) {
 				logger.warn({ error: fileErr.message }, 'Failed to save JSON file');
 			}
 
-			// Upsert into sqp_download_urls for later JSON processing
-			await downloadUrls.storeDownloadUrl({
-				CronJobID: row.ID,
-				ReportID: reportId,
-				AmazonSellerID: row.AmazonSellerID,
-				ReportType: reportType,
-				DownloadURL: '',
-				ReportDocumentID: documentId,
-				CompressionAlgorithm: null,
-				Status: 'COMPLETED',
-				// FilePath and FileSize are tracked on sqp_download_urls, not in sqp_cron_logs
-			});
+			// Update the existing record in sqp_download_urls with file metadata and set status to COMPLETED
+			await downloadUrls.updateDownloadUrlStatusByCriteria(
+				row.ID, 
+				reportId, 
+				row.AmazonSellerID, 
+				reportType, 
+				'COMPLETED',
+				null,
+				filePath,
+				fileSize,
+				false // Don't increment attempts
+			);
 
-			// Mark download as completed
-			await model.updateSQPReportStatus(row.ID, reportType, 1, null, null, null, true);
+			// Mark download as completed - preserve existing ReportID and ReportDocumentID and set end date
+			await model.updateSQPReportStatus(row.ID, reportType, 1, reportId, null, documentId, true, null, new Date());
 			
 			await model.logCronActivity({ 
 				cronJobID: row.ID, 
@@ -331,15 +359,28 @@ async function downloadReportByType(row, reportType, field, authOverrides = {}) 
 				reportID: reportId,
 				reportDocumentID: documentId,
 				downloadCompleted: true,
-				fileSize: fileSize,
-				filePath: filePath
+				filePath: filePath,
+				fileSize: fileSize
 			});
 		} else {
 			// No data received - log this and update status
 			logger.warn({ reportId: documentId, reportType }, 'No data received from report download');
 			
-			// Mark download as completed even with no data
-			await model.updateSQPReportStatus(row.ID, reportType, 1, null, 'No data in report', null, true);
+			// Update download status to COMPLETED even with no data
+			await downloadUrls.updateDownloadUrlStatusByCriteria(
+				row.ID, 
+				reportId, 
+				row.AmazonSellerID, 
+				reportType, 
+				'COMPLETED',
+				'No data in report',
+				null,
+				null,
+				false // Don't increment attempts
+			);
+			
+			// Mark download as completed even with no data - preserve existing ReportID and ReportDocumentID and set end date
+			await model.updateSQPReportStatus(row.ID, reportType, 1, reportId, 'No data in report', documentId, true, null, new Date());
 			await model.logCronActivity({ 
 				cronJobID: row.ID, 
 				amazonSellerID: row.AmazonSellerID, 
@@ -355,46 +396,24 @@ async function downloadReportByType(row, reportType, field, authOverrides = {}) 
 		}
 	} catch (e) {
 		logger.error({ error: e.message, reportId, reportType }, 'Download failed');
+		// Mark failure and increment retry
+		await model.incrementRetryCount(row.ID, reportType);
+		// Update download status to FAILED (attempts already incremented when download started)
+		await downloadUrls.updateDownloadUrlStatusByCriteria(
+			row.ID, 
+			reportId, 
+			row.AmazonSellerID, 
+			reportType, 
+			'FAILED',
+			`Download failed: ${e.message}`,
+			null,
+			null,
+			false // Don't increment attempts again
+		);
+		await model.updateSQPReportStatus(row.ID, reportType, 2, null, `Download failed: ${e.message}`, null, null, null, new Date());
 		await model.logCronActivity({ cronJobID: row.ID, amazonSellerID: row.AmazonSellerID, reportType, action: 'Download Report', status: 2, message: `Report download failed: ${e.message}`, reportID: reportId });
 	}
 }
-
-async function storeSQPMetrics3Mo(row, reportType, data) {
-	try {
-		logger.info({ amazonSellerID: row.AmazonSellerID, reportType, recordCount: data.length }, 'Storing data in sqp_metrics_3mo');
-		
-		// Process each record and store in sqp_metrics_3mo table
-		for (const record of data) {
-			// Map SQP report fields to sqp_metrics_3mo table structure
-			const metricsData = {
-				amazon_seller_id: row.AmazonSellerID,
-				report_type: reportType,
-				asin: record.asin || record.ASIN,
-				query: record.query || record.searchTerm,
-				impressions: record.impressions || 0,
-				clicks: record.clicks || 0,
-				click_through_rate: record.clickThroughRate || 0,
-				cart_adds: record.cartAdds || 0,
-				cart_add_rate: record.cartAddRate || 0,
-				purchases: record.purchases || 0,
-				purchase_rate: record.purchaseRate || 0,
-				revenue: record.revenue || 0,
-				report_date: new Date(),
-				created_at: new Date()
-			};
-			
-			// Insert into sqp_metrics_3mo table
-			await model.insertSQPMetrics3Mo(metricsData);
-		}
-		
-		logger.info({ amazonSellerID: row.AmazonSellerID, reportType, stored: data.length }, 'Successfully stored in sqp_metrics_3mo');
-	} catch (error) {
-		logger.error({ error: error.message, amazonSellerID: row.AmazonSellerID, reportType }, 'Failed to store in sqp_metrics_3mo');
-		throw error;
-	}
-}
-
-// Removed legacy processAndStoreReportData; using sqp_metrics_3mo only
 
 module.exports = {
 	requestForSeller,

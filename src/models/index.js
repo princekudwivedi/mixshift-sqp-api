@@ -1,5 +1,5 @@
 const dbConfig = require('../config/db.config');
-const logger = require('../src/utils/logger');
+const logger = require('../src/utils/logger.utils');
 
 /**
  * Models Index

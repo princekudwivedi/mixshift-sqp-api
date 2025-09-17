@@ -1,4 +1,4 @@
-const logger = require('../utils/logger');
+const logger = require('../utils/logger.utils');
 const config = require('../config/env.config');
 const axios = require('axios');
 const zlib = require('zlib');
@@ -36,9 +36,9 @@ function getSPAPIBaseUrl(merchantRegion) {
 async function buildReportsClient(opts = {}) {
 	const { ReportsSpApi } = await getReportsApiModule();
 	
-	// Use config defaults with per-user overrides
-	const clientId = opts.clientId || config.developer.ClientId;
-	const clientSecret = opts.clientSecret || config.developer.ClientSecret;
+	// Use config defaults with per-user overrides (LWA credentials)
+	const clientId = opts.clientId || config.LWA_CLIENT_ID;
+	const clientSecret = opts.clientSecret || config.LWA_CLIENT_SECRET;
 	const accessToken = opts.accessToken; // Use access_token like PHP
 	const merchantRegion = opts.merchantRegion || 'NA';
 	

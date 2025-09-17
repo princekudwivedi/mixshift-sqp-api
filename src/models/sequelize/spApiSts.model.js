@@ -1,11 +1,12 @@
 const { DataTypes } = require('sequelize');
 const sequelize = require('../../config/sequelize.config');
-const { env } = require('../../config/env.config');
+const { TBL_STS_TOKENS } = require('../../config/env.config');
 const { makeReadOnly } = require('./utils');
+const { getTenantSequelizeForCurrentDb } = require('../../db/tenant.db');
 
-const table = env('TBL_SPAPI_STS_TOKEN', 'sp_api_sts');
+const table = TBL_STS_TOKENS;
 
-const SpApiSts = sequelize.define(table, {
+let BaseModel = sequelize.define(table, {
     id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
     accessKeyId: { type: DataTypes.TEXT, allowNull: false },
     secretAccessKey: { type: DataTypes.TEXT, allowNull: false },
@@ -16,6 +17,12 @@ const SpApiSts = sequelize.define(table, {
     timestamps: false
 });
 
-module.exports = makeReadOnly(SpApiSts);
+function getModel() {
+    const tenantSequelize = getTenantSequelizeForCurrentDb();
+    const model = tenantSequelize.models[table] || tenantSequelize.define(table, BaseModel.getAttributes(), { tableName: table, timestamps: false, freezeTableName: true });
+    return makeReadOnly(model);
+}
+
+module.exports = { getModel };
 
 

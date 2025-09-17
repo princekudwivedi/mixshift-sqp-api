@@ -1,9 +1,9 @@
 const { DataTypes } = require('sequelize');
 const sequelize = require('../../config/sequelize.config');
-const { env } = require('../../config/env.config');
+const { TBL_MWS_OAUTH_TOKEN } = require('../../config/env.config');
 const { makeReadOnly } = require('./utils');
 
-const table = env('TBL_MWS_OAUTH_TOKEN', 'tbl_mws_oauth_token');
+const table = TBL_MWS_OAUTH_TOKEN;
 
 const MwsOauthToken = sequelize.define(table, {
     id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },

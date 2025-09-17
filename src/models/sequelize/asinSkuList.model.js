@@ -1,9 +1,9 @@
 const { DataTypes } = require('sequelize');
 const sequelize = require('../../config/sequelize.config');
-const { env } = require('../../config/env.config');
+const { TBL_ASIN_SKU_LIST } = require('../../config/env.config');
 const { makeReadOnly } = require('./utils');
 
-const table = env('TBL_ASIN_SKU_LIST', 'ASIN_SKU_list');
+const table = TBL_ASIN_SKU_LIST;
 
 const AsinSkuList = sequelize.define(table, {
     ID: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },

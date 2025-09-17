@@ -1,11 +1,12 @@
 const { DataTypes } = require('sequelize');
 const sequelize = require('../../config/sequelize.config');
-const { env } = require('../../config/env.config');
+const { getTenantSequelizeForCurrentDb } = require('../../db/tenant.db');
+const { TBL_SELLER_ASIN_LIST } = require('../../config/env.config');
 
-const table = env('TBL_SELLER_ASIN_LIST', 'seller_ASIN_list');
+const table = TBL_SELLER_ASIN_LIST;
 
 // Write-allowed model (insert/update/delete/truncate permitted)
-const SellerAsinList = sequelize.define(table, {
+let BaseModel = sequelize.define(table, {
     ID: { type: DataTypes.INTEGER.UNSIGNED, primaryKey: true, autoIncrement: true },
     SellerID: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false },
     AmazonSellerID: { type: DataTypes.STRING(100), allowNull: false },
@@ -21,6 +22,11 @@ const SellerAsinList = sequelize.define(table, {
     timestamps: false
 });
 
-module.exports = SellerAsinList;
+function getModel() {
+    const tenantSequelize = getTenantSequelizeForCurrentDb();
+    return tenantSequelize.models[table] || tenantSequelize.define(table, BaseModel.getAttributes(), { tableName: table, timestamps: false, freezeTableName: true });
+}
+
+module.exports = { getModel };
 
 

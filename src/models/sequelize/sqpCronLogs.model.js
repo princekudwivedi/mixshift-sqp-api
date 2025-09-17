@@ -1,13 +1,14 @@
 const { DataTypes } = require('sequelize');
 const sequelize = require('../../config/sequelize.config');
-const { env } = require('../../config/env.config');
+const { getTenantSequelizeForCurrentDb } = require('../../db/tenant.db');
+const { TBL_SQP_CRON_LOGS } = require('../../config/env.config');
 
-const table = env('TBL_SQP_CRON_LOGS', 'sqp_cron_logs');
+const table = TBL_SQP_CRON_LOGS;
 
-const SqpCronLogs = sequelize.define(table, {
+let BaseModel = sequelize.define(table, {
     ID: { type: DataTypes.BIGINT, primaryKey: true, autoIncrement: true },
     CronJobID: { type: DataTypes.BIGINT },
-    AmazonSellerID: { type: DataTypes.BIGINT },
+    AmazonSellerID: { type: DataTypes.STRING(100) },
     ReportType: { type: DataTypes.STRING(32) },
     Action: { type: DataTypes.STRING(64) },
     Status: { type: DataTypes.TINYINT },
@@ -25,6 +26,11 @@ const SqpCronLogs = sequelize.define(table, {
     timestamps: false
 });
 
-module.exports = SqpCronLogs;
+function getModel() {
+    const tenantSequelize = getTenantSequelizeForCurrentDb();
+    return tenantSequelize.models[table] || tenantSequelize.define(table, BaseModel.getAttributes(), { tableName: table, timestamps: false, freezeTableName: true });
+}
+
+module.exports = { getModel };
 
 

@@ -1,16 +1,12 @@
-const dbConfig = require('../config/db.config');
-const { TBL_STS_TOKENS } = require('../config/env.config');
-const logger = require('../src/utils/logger');
+const { getModel: getSpApiSts } = require('./sequelize/spApiSts.model');
+const logger = require('../utils/logger.utils');
 
 /**
  * StsToken Model
  * ORM model for STS tokens
  */
 class StsToken {
-    constructor() {
-        this.tableName = TBL_STS_TOKENS;
-        this.primaryKey = 'id';
-    }
+    constructor() {}
 
     /**
      * Find all STS tokens with options
@@ -25,32 +21,9 @@ class StsToken {
                 offset = 0
             } = options;
 
-            let sql = `SELECT ${attributes} FROM ${this.tableName}`;
-            const params = [];
-
-            // Add WHERE clause
-            if (Object.keys(where).length > 0) {
-                const whereClause = Object.keys(where).map(key => `${key} = ?`).join(' AND ');
-                sql += ` WHERE ${whereClause}`;
-                params.push(...Object.values(where));
-            }
-
-            // Add ORDER BY clause
-            if (order && order.length > 0) {
-                const orderClause = order.map(([field, direction]) => `${field} ${direction}`).join(', ');
-                sql += ` ORDER BY ${orderClause}`;
-            }
-
-            // Add LIMIT clause
-            if (limit) {
-                sql += ` LIMIT ${limit}`;
-                if (offset > 0) {
-                    sql += ` OFFSET ${offset}`;
-                }
-            }
-
-            const results = await dbConfig.query(sql, params);
-            logger.debug({ table: this.tableName, count: results.length }, 'StsToken.findAll');
+            const SpApiSts = getSpApiSts();
+            const results = await SpApiSts.findAll({ where, attributes: Array.isArray(attributes) ? attributes : undefined, order, limit, offset });
+            logger.debug({ count: results.length }, 'StsToken.findAll');
             return results;
         } catch (error) {
             logger.error({ error: error.message, table: this.tableName }, 'Error in StsToken.findAll');
@@ -69,28 +42,9 @@ class StsToken {
                 order = [['id', 'DESC']]
             } = options;
 
-            let sql = `SELECT ${attributes} FROM ${this.tableName}`;
-            const params = [];
-
-            // Add WHERE clause
-            if (Object.keys(where).length > 0) {
-                const whereClause = Object.keys(where).map(key => `${key} = ?`).join(' AND ');
-                sql += ` WHERE ${whereClause}`;
-                params.push(...Object.values(where));
-            }
-
-            // Add ORDER BY clause
-            if (order && order.length > 0) {
-                const orderClause = order.map(([field, direction]) => `${field} ${direction}`).join(', ');
-                sql += ` ORDER BY ${orderClause}`;
-            }
-
-            sql += ' LIMIT 1';
-
-            const results = await dbConfig.query(sql, params);
-            const token = results[0] || null;
-            
-            logger.debug({ table: this.tableName, found: !!token }, 'StsToken.findOne');
+            const SpApiSts = getSpApiSts();
+            const token = await SpApiSts.findOne({ where, attributes: Array.isArray(attributes) ? attributes : undefined, order });
+            logger.debug({ found: !!token }, 'StsToken.findOne');
             return token;
         } catch (error) {
             logger.error({ error: error.message, table: this.tableName }, 'Error in StsToken.findOne');
@@ -111,7 +65,7 @@ class StsToken {
             logger.debug({ found: !!token }, 'StsToken.getLatestTokenDetails');
             return token;
         } catch (error) {
-            logger.warn({ error: error.message, table: this.tableName }, 'STS token table not found or accessible');
+            logger.warn({ error: error.message }, 'STS token table not found or accessible');
             return null;
         }
     }
@@ -134,19 +88,9 @@ class StsToken {
      */
     async count(where = {}) {
         try {
-            let sql = `SELECT COUNT(*) as count FROM ${this.tableName}`;
-            const params = [];
-
-            if (Object.keys(where).length > 0) {
-                const whereClause = Object.keys(where).map(key => `${key} = ?`).join(' AND ');
-                sql += ` WHERE ${whereClause}`;
-                params.push(...Object.values(where));
-            }
-
-            const results = await dbConfig.query(sql, params);
-            const count = results[0].count;
-            
-            logger.debug({ table: this.tableName, where, count }, 'StsToken.count');
+            const SpApiSts = getSpApiSts();
+            const count = await SpApiSts.count({ where });
+            logger.debug({ where, count }, 'StsToken.count');
             return count;
         } catch (error) {
             logger.error({ error: error.message, table: this.tableName, where }, 'Error in StsToken.count');
@@ -160,12 +104,10 @@ class StsToken {
     async getActiveTokens() {
         try {
             const now = new Date();
-            const tokens = await this.findAll({
-                where: { expire_at: { operator: '>', value: now } },
-                order: [['id', 'DESC']]
-            });
-
-            logger.debug({ table: this.tableName, count: tokens.length }, 'StsToken.getActiveTokens');
+            const SpApiSts = getSpApiSts();
+            const { Op } = require('sequelize');
+            const tokens = await SpApiSts.findAll({ where: { expire_at: { [Op.gt]: now } }, order: [['id','DESC']] });
+            logger.debug({ count: tokens.length }, 'StsToken.getActiveTokens');
             return tokens;
         } catch (error) {
             logger.error({ error: error.message, table: this.tableName }, 'Error in StsToken.getActiveTokens');

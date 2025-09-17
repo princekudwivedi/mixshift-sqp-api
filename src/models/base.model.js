@@ -1,5 +1,5 @@
 const { query } = require('../db/mysql.db');
-const logger = require('../utils/logger');
+const logger = require('../utils/logger.utils');
 
 /**
  * Base ORM Model Class

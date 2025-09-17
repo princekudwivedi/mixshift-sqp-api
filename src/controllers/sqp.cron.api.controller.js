@@ -1,10 +1,12 @@
 const { SuccessHandler, ErrorHandler } = require('../middleware/response.handlers');
 const { ValidationHelpers } = require('../helpers/sqp.helpers');
 const { loadDatabase } = require('../db/tenant.db');
-const master = require('../models/master.model');
-const sellerModel = require('../models/seller.model');
-const ctrl = require('./sqpCronController');
-const fileProcessingService = require('../services/sqpFileProcessingService');
+const master = require('../models/sequelize/user.model');
+const AuthToken = require('../models/authToken.model');
+const StsToken = require('../models/stsToken.model');
+const sellerModel = require('../models/sequelize/seller.model');
+const ctrl = require('./sqp.cron.controller');
+const fileProcessingService = require('../services/sqp.json.processing.service');
 const logger = require('../utils/logger.utils');
 
 /**
@@ -18,7 +20,7 @@ class SqpCronApiController {
     async buildAuthOverrides(amazonSellerID) {
         try {
             const authOverrides = {};
-            const tokenRow = await master.getSavedToken(amazonSellerID);
+            const tokenRow = await AuthToken.getSavedToken(amazonSellerID);
             
             if (tokenRow && tokenRow.access_token) {
                 authOverrides.accessToken = tokenRow.access_token;
@@ -33,7 +35,7 @@ class SqpCronApiController {
             }
             
             // Get AWS STS credentials for SigV4 signing
-            const sts = await master.getStsTokenDetails();
+            const sts = await StsToken.getLatestTokenDetails();
             if (sts) {
                 authOverrides.awsAccessKeyId = sts.accessKeyId;
                 authOverrides.awsSecretAccessKey = sts.secretAccessKey;
@@ -70,13 +72,12 @@ class SqpCronApiController {
             let totalProcessed = 0;
             let totalErrors = 0;
 
-            for (const user of users) { 
+            for (const user of users) {                 
                 try {
                     await loadDatabase(user.ID);
                     const sellers = validatedSellerId
                         ? await sellerModel.getSellersProfilesForCronAdvanced({ idSellerAccount: validatedSellerId, pullAll: 1 })
                         : await sellerModel.getSellersProfilesForCronAdvanced({ pullAll: 0 });
-                    
                     for (const s of sellers) {         
                         if (!s) continue;
                         try {
@@ -99,13 +100,21 @@ class SqpCronApiController {
                     totalErrors++;
                 }
             }
-
-            return SuccessHandler.sendProcessingSuccess(
-                res, 
-                totalProcessed, 
-                totalErrors, 
-                'Report requests processed successfully'
-            );
+			if (totalErrors > 0) {
+				return ErrorHandler.sendProcessingError(
+					res,
+					new Error('One or more report requests failed'),
+					totalProcessed,
+					totalErrors,
+					'Report requests failed'
+				);
+			}
+			return SuccessHandler.sendProcessingSuccess(
+				res, 
+				totalProcessed, 
+				totalErrors, 
+				'Report requests processed successfully'
+			);
 
         } catch (error) {
             logger.error({ 
@@ -143,7 +152,7 @@ class SqpCronApiController {
                 try {
                     await loadDatabase(user.ID);
                     
-                    const sts = await master.getStsTokenDetails();
+                    const sts = await StsToken.getLatestTokenDetails();
                     const authOverrides = sts ? {
                         awsAccessKeyId: sts.accessKeyId,
                         awsSecretAccessKey: sts.secretAccessKey,
@@ -204,7 +213,7 @@ class SqpCronApiController {
                 try {
                     await loadDatabase(user.ID);
                     
-                    const sts = await master.getStsTokenDetails();
+                    const sts = await StsToken.getLatestTokenDetails();
                     const authOverrides = sts ? {
                         awsAccessKeyId: sts.accessKeyId,
                         awsSecretAccessKey: sts.secretAccessKey,
@@ -222,12 +231,21 @@ class SqpCronApiController {
                 }
             }
 
-            return SuccessHandler.sendProcessingSuccess(
-                res, 
-                totalProcessed, 
-                totalErrors, 
-                'Report downloads completed successfully'
-            );
+			if (totalErrors > 0) {
+				return ErrorHandler.sendProcessingError(
+					res,
+					new Error('One or more report downloads failed'),
+					totalProcessed,
+					totalErrors,
+					'Report downloads failed'
+				);
+			}
+			return SuccessHandler.sendProcessingSuccess(
+				res, 
+				totalProcessed, 
+				totalErrors, 
+				'Report downloads completed successfully'
+			);
 
         } catch (error) {
             logger.error({ 
@@ -361,8 +379,13 @@ class SqpCronApiController {
                 try {
                     await loadDatabase(user.ID);
                     const result = await fileProcessingService.processSavedJsonFiles();
-                    totalProcessed += result.processed;
-                    totalErrors += result.errors;
+                    if (!result) {
+                        logger.error({ userId: user.ID }, 'processSavedJsonFiles returned no result');
+                        totalErrors += 1;
+                        continue;
+                    }
+                    totalProcessed += (typeof result.processed === 'number' ? result.processed : 0);
+                    totalErrors += (typeof result.errors === 'number' ? result.errors : 0);
                 } catch (error) {
                     logger.error({ 
                         error: error.message, 
@@ -372,6 +395,16 @@ class SqpCronApiController {
                 }
             }
             
+            if (totalErrors > 0) {
+                return ErrorHandler.sendProcessingError(
+                    res,
+                    new Error('One or more JSON files failed to process'),
+                    totalProcessed,
+                    totalErrors,
+                    'JSON file processing failed'
+                );
+            }
+
             return SuccessHandler.sendProcessingSuccess(
                 res, 
                 totalProcessed, 

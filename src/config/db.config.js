@@ -1,6 +1,6 @@
 const mysql = require('mysql2/promise');
 const { env } = require('./env.config');
-const logger = require('../src/utils/logger');
+const logger = require('../utils/logger.utils');
 
 /**
  * Database Configuration
@@ -27,9 +27,7 @@ class DatabaseConfig {
                 connectionLimit: 10,
                 queueLimit: 0,
                 charset: 'utf8mb4',
-                acquireTimeout: 60000,
-                timeout: 60000,
-                reconnect: true
+                connectTimeout: 60000
             });
 
             // Test connection

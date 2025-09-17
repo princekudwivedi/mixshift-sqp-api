@@ -37,8 +37,8 @@ app.use('/api/v1/cron/sqp', ipAllowlist, cronRoutes);
 // Global error handler
 app.use(AsyncErrorHandler.globalErrorHandler);
 
-// 404 handler for undefined routes
-app.use('*', (req, res) => {
+// 404 handler for undefined routes (Express 5: no wildcard string)
+app.use((req, res) => {
     res.status(404).json({
         success: false,
         message: 'Route not found',

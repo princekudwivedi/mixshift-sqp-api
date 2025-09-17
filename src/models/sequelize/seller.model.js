@@ -1,11 +1,17 @@
-const { DataTypes } = require('sequelize');
+const { DataTypes, Op } = require('sequelize');
 const sequelize = require('../../config/sequelize.config');
-const { env } = require('../../config/env.config');
+const { getTenantSequelizeForCurrentDb } = require('../../db/tenant.db');
+const { TBL_SELLER } = require('../../config/env.config');
 const { makeReadOnly } = require('./utils');
+const SellerMarketplacesMapping = require('./sellerMarketplacesMapping.model');
+const Marketplace = require('./marketplace.model');
+const MwsOauthToken = require('./mwsOauthToken.model');
+const MwsAccessKeys = require('./mwsAccessKeys.model');
 
-const table = env('TBL_SELLER', 'seller');
+const table = TBL_SELLER;
 
-const Seller = sequelize.define(table, {
+// Define model on the base sequelize (structure only); we'll rebind per-tenant for queries
+let Seller = sequelize.define(table, {
     ID: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
     AgencyName: { type: DataTypes.STRING(255) },
     MerchantAlias: { type: DataTypes.STRING(100) },
@@ -107,4 +113,122 @@ const Seller = sequelize.define(table, {
 
 module.exports = makeReadOnly(Seller);
 
+
+
+// Attach read-only helper methods for cron needs
+function getBoundModel() {
+    // Create/return a model bound to the current tenant sequelize
+    const tenantSequelize = getTenantSequelizeForCurrentDb();
+    return tenantSequelize.models[table] || tenantSequelize.define(table, Seller.getAttributes(), { tableName: table, timestamps: false, freezeTableName: true });
+}
+
+async function getProfileDetailsByID(idSellerAccount) {
+    const BoundSeller = getBoundModel();
+    const s = await BoundSeller.findOne({ where: { ID: Number(idSellerAccount) } });
+    if (!s) return null;
+    let mp = null;
+    const mapping = await SellerMarketplacesMapping.findOne({ where: { SellerId: s.ID } }).catch(() => null);
+    if (mapping) {
+        mp = await Marketplace.findOne({ where: { ID: mapping.MarketId } }).catch(() => null);
+    }
+    if (!mp && s.MarketPlaceID) {
+        mp = await Marketplace.findOne({ where: { ID: s.MarketPlaceID } }).catch(() => null);
+    }
+    const la = await MwsOauthToken.findOne({ where: { AmazonSellerID: s.AmazonSellerID } }).catch(() => null);
+    const ma = await MwsAccessKeys.findOne({ where: { MerchantRegion: s.MerchantRegion } }).catch(() => null);
+    return {
+        idSellerAccount: s.ID,
+        SellerName: s.Name,
+        MerchantRegion: s.MerchantRegion,
+        AmazonSellerID: s.AmazonSellerID,
+        ProfileId: s.ProfileId,
+        idUserAccount: s.idUserAccount,
+        MerchantType: s.MerchantType,
+        IsActive: s.IsActive,
+        isMwsUser: s.isMwsUser,
+        idMarketPlaceAccount: mp ? mp.ID : null,
+        MarketPlaceName: mp ? mp.Name : null,
+        CountryCode: mp ? mp.CountryCode : null,
+        AmazonMarketplaceId: mp ? mp.AmazonMarketplaceId : (s.AmazonMarketplaceId || null),
+        CurrencyCode: mp ? mp.CurrencyCode : null,
+        iPriorityFlag: s.iPriorityFlag,
+        dtMwsActivatedOn: s.dtMwsActivatedOn,
+        isSpApiBackfillPull: s.isSpApiBackfillPull,
+        pull60DaysReportFlag: s.pull60DaysReportFlag,
+        isMwsInitialReportDataPulled: s.isMwsInitialPullVerified,
+        dateFromToPullMwsData: s.dateFromToPullMwsData,
+        iRunningInitialPull: s.iRunningInitialPull,
+        iLostAccess: la ? la.iLostAccess : null,
+        auth_token: la ? la.auth_token : null,
+        developerId: ma ? ma.developerId : null,
+    };
+}
+
+async function getProfileDetailsByAmazonSellerID(amazonSellerID) {
+    const BoundSeller = getBoundModel();
+    const s = await BoundSeller.findOne({ where: { AmazonSellerID: amazonSellerID } });
+    if (!s) return null;
+    return getProfileDetailsByID(s.ID);
+}
+
+async function getSellersProfilesForCronAdvanced({ idSellerAccount = 0, pullAll = 0, AmazonSellerID = '', marketplacename = '', marketplaceAry = [], isCustomPull = 0 } = {}) {
+    const where = { isMwsUser: 1 };
+    if (idSellerAccount > 0) where.ID = Number(idSellerAccount);
+    if (AmazonSellerID) where.AmazonSellerID = AmazonSellerID;
+    if (isCustomPull === 1) where.isCustomInitialPull = 1;
+
+    const order = [['dtMwsActivatedOn', 'ASC']];
+
+    const BoundSeller = getBoundModel();
+    const sellers = await BoundSeller.findAll({ where, order });
+
+    const results = [];
+    for (const s of sellers) {
+        let mp = null;
+        const mapping = await SellerMarketplacesMapping.findOne({ where: { SellerId: s.ID } }).catch(() => null);
+        if (mapping) {
+            mp = await Marketplace.findOne({ where: { ID: mapping.MarketId } }).catch(() => null);
+        }
+        if (!mp && s.MarketPlaceID) {
+            mp = await Marketplace.findOne({ where: { ID: s.MarketPlaceID } }).catch(() => null);
+        }
+        // Optional marketplace filters
+        if (marketplacename && (!mp || mp.Name !== marketplacename)) continue;
+        if (Array.isArray(marketplaceAry) && marketplaceAry.length && (!mp || !marketplaceAry.map(Number).includes(Number(mp.ID)))) continue;
+
+        const row = {
+            idSellerAccount: s.ID,
+            SellerName: s.Name,
+            MerchantRegion: s.MerchantRegion,
+            AmazonSellerID: s.AmazonSellerID,
+            ProfileId: s.ProfileId,
+            IsActive: s.IsActive,
+            isMwsUser: s.isMwsUser,
+            MarketPlaceID: s.MarketPlaceID,
+            idUserAccount: s.idUserAccount,
+            dtMwsActivatedOn: s.dtMwsActivatedOn,
+            MerchantType: s.MerchantType,
+            isSpApiBackfillPull: s.isSpApiBackfillPull,
+            pull60DaysReportFlag: s.pull60DaysReportFlag,
+            isMwsInitialPullVerified: s.isOrderInitialPullVerified,
+            dateFromToPullMwsData: s.dateFromToPullMwsData,
+            AgencyName: s.AgencyName,
+            idMarketPlaceAccount: mp ? mp.ID : null,
+            MarketPlaceName: mp ? mp.Name : null,
+            CountryCode: mp ? mp.CountryCode : null,
+            AmazonMarketplaceId: mp ? mp.AmazonMarketplaceId : (s.AmazonMarketplaceId || null),
+        };
+        results.push(row);
+    }
+
+    if (pullAll === 0) {
+        const seen = new Set();
+        return results.filter(r => { if (seen.has(r.AmazonSellerID)) return false; seen.add(r.AmazonSellerID); return true; });
+    }
+    return results;
+}
+
+module.exports.getProfileDetailsByID = getProfileDetailsByID;
+module.exports.getProfileDetailsByAmazonSellerID = getProfileDetailsByAmazonSellerID;
+module.exports.getSellersProfilesForCronAdvanced = getSellersProfilesForCronAdvanced;
 

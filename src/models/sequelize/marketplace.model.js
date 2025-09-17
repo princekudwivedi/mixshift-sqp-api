@@ -1,9 +1,9 @@
 const { DataTypes } = require('sequelize');
 const sequelize = require('../../config/sequelize.config');
-const { env } = require('../../config/env.config');
+const { TBL_MARKET_PLACE } = require('../../config/env.config');
 const { makeReadOnly } = require('./utils');
 
-const table = env('TBL_MARKET_PLACE', 'marketplace');
+const table = TBL_MARKET_PLACE;
 
 const Marketplace = sequelize.define(table, {
     ID: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },

@@ -14,12 +14,12 @@ router.use(AuthMiddleware.sanitizeInput);
 router.use(AuthMiddleware.rateLimit(50, 15 * 60 * 1000)); // 50 requests per 15 minutes for cron endpoints
 
 // Cron operation routes (use GET, direct controller calls)
-router.get('/request', sqpCronApiController.requestReports);
-router.get('/status', sqpCronApiController.checkReportStatuses);
-router.get('/download', sqpCronApiController.downloadCompletedReports);
-router.get('/all', sqpCronApiController.runAllCronOperations);
-router.get('/process-json', sqpCronApiController.processJsonFiles);
-router.get('/stats', sqpCronApiController.getProcessingStats);
+router.get('/request', (req, res) => sqpCronApiController.requestReports(req, res));
+router.get('/status', (req, res) => sqpCronApiController.checkReportStatuses(req, res));
+router.get('/download', (req, res) => sqpCronApiController.downloadCompletedReports(req, res));
+router.get('/all', (req, res) => sqpCronApiController.runAllCronOperations(req, res));
+router.get('/process-json', (req, res) => sqpCronApiController.processJsonFiles(req, res));
+router.get('/stats', (req, res) => sqpCronApiController.getProcessingStats(req, res));
 
 // Error handling middleware for routes
 router.use((err, req, res, next) => {
@@ -32,7 +32,7 @@ router.use((err, req, res, next) => {
 });
 
 // 404 handler for undefined routes
-router.use('*', (req, res) => {
+router.use((req, res) => {
     res.status(404).json({
         success: false,
         message: 'Cron route not found',

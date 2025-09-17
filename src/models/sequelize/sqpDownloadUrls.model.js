@@ -1,14 +1,15 @@
 const { DataTypes } = require('sequelize');
 const sequelize = require('../../config/sequelize.config');
-const { env } = require('../../config/env.config');
+const { getTenantSequelizeForCurrentDb } = require('../../db/tenant.db');
+const { TBL_SQP_DOWNLOAD_URLS } = require('../../config/env.config');
 
-const table = env('TBL_SQP_DOWNLOAD_URLS', 'sqp_download_urls');
+const table = TBL_SQP_DOWNLOAD_URLS;
 
-const SqpDownloadUrls = sequelize.define(table, {
+let BaseModel = sequelize.define(table, {
     ID: { type: DataTypes.BIGINT, primaryKey: true, autoIncrement: true },
     CronJobID: { type: DataTypes.BIGINT },
     ReportID: { type: DataTypes.STRING(128) },
-    AmazonSellerID: { type: DataTypes.BIGINT },
+    AmazonSellerID: { type: DataTypes.STRING(100) },
     ReportType: { type: DataTypes.STRING(32) },
     DownloadURL: { type: DataTypes.TEXT },
     ReportDocumentID: { type: DataTypes.STRING(128) },
@@ -37,6 +38,11 @@ const SqpDownloadUrls = sequelize.define(table, {
     timestamps: false
 });
 
-module.exports = SqpDownloadUrls;
+function getModel() {
+    const tenantSequelize = getTenantSequelizeForCurrentDb();
+    return tenantSequelize.models[table] || tenantSequelize.define(table, BaseModel.getAttributes(), { tableName: table, timestamps: false, freezeTableName: true });
+}
+
+module.exports = { getModel };
 
 
