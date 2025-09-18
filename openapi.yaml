@@ -1,0 +1,54 @@
+openapi: 3.0.3
+info:
+  title: MixShift SQP Cron API
+  version: 1.0.0
+servers:
+  - url: /api/v1/cron/sqp
+paths:
+  /copy-metrics:
+    get:
+      summary: Copy metrics from 3mo table to main metrics
+      parameters:
+        - in: query
+          name: userId
+          schema: { type: integer }
+        - in: query
+          name: batchSize
+          schema: { type: integer, default: 1000 }
+        - in: query
+          name: dryRun
+          schema: { type: boolean, default: false }
+        - in: query
+          name: force
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: Copy completed
+        '500':
+          description: Error
+  /request:
+    get:
+      summary: Request reports
+      responses:
+        '200': { description: OK }
+  /status:
+    get:
+      summary: Check report statuses
+      responses:
+        '200': { description: OK }
+  /download:
+    get:
+      summary: Download completed reports
+      responses:
+        '200': { description: OK }
+  /process-json:
+    get:
+      summary: Process saved JSON files (legacy)
+      responses:
+        '200': { description: OK }
+  /stats:
+    get:
+      summary: Get processing stats (legacy)
+      responses:
+        '200': { description: OK }
+

@@ -30,6 +30,23 @@ app.set('trust proxy', 1);
 const requestId = require('./middleware/request.id.middleware');
 app.use(requestId);
 
+// Health and readiness endpoints
+const { getTenantSequelizeForCurrentDb } = require('./db/tenant.db');
+app.get('/healthz', (req, res) => {
+    res.status(200).json({ status: 'ok', time: new Date().toISOString() });
+});
+app.get('/readyz', async (req, res) => {
+    try {
+        const sequelize = getTenantSequelizeForCurrentDb();
+        if (sequelize && sequelize.authenticate) {
+            await sequelize.authenticate();
+        }
+        res.status(200).json({ ready: true, time: new Date().toISOString() });
+    } catch (e) {
+        res.status(503).json({ ready: false, error: e.message, time: new Date().toISOString() });
+    }
+});
+
 // Cron routes mounted at versioned prefix
 const ipAllowlist = require('./middleware/ip.allowlist.middleware');
 app.use('/api/v1/cron/sqp', ipAllowlist, cronRoutes);
