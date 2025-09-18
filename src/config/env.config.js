@@ -39,6 +39,9 @@ const config = {
     JWT_SECRET: env('JWT_SECRET'),
     JWT_EXPIRES_IN: env('JWT_EXPIRES_IN', '24h'),
     JWT_REFRESH_EXPIRES_IN: env('JWT_REFRESH_EXPIRES_IN', '7d'),
+
+    // API Token (for cron endpoints)
+    API_ACCESS_TOKEN: env('API_ACCESS_TOKEN'),
     
     // CORS
     ALLOWED_ORIGINS: env('ALLOWED_ORIGINS', 'http://localhost:3000,http://localhost:3001'),
