@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "jest --runInBand",
     "start": "node src/server.js",
     "dev": "nodemon --watch src --ext js,json --exec node src/server.js",
     "serve": "node src/server.js"
@@ -30,6 +30,7 @@
     "pino-pretty": "^13.1.1"
   },
   "devDependencies": {
+    "jest": "^29.7.0",
     "nodemon": "^3.1.10"
   }
 }
