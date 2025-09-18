@@ -339,19 +339,81 @@ class DataProcessingHelpers {
 /**
  * Notification helpers
  */
+const nodemailer = require('nodemailer');
+const { env } = require('../config/env.config');
+
 class NotificationHelpers {
+    static buildTransporter() {
+        const host = env.SMTP_HOST;
+        const port = env.SMTP_PORT;
+        const user = env.SMTP_USER;
+        const pass = env.SMTP_PASS;
+        if (!host || !port || !user || !pass) {
+            logger.warn('SMTP not configured; skipping email sending');
+            return null;
+        }
+        return nodemailer.createTransport({
+            host,
+            port,
+            secure: Number(port) === 465,
+            auth: { user, pass }
+        });
+    }
+
+    static parseList(raw) {
+        if (!raw) return [];
+        return String(raw).split(',').map(s => s.trim()).filter(Boolean);
+    }
+
+    static async sendEmail({ subject, html, to, cc, bcc, from }) {
+        try {
+            const transporter = this.buildTransporter();
+            if (!transporter) return false;
+            const mailOptions = {
+                from: from || env.FROM_EMAIL || 'noreply@example.com',
+                to: Array.isArray(to) ? to.join(',') : to,
+                cc: Array.isArray(cc) ? cc.join(',') : cc,
+                bcc: Array.isArray(bcc) ? bcc.join(',') : bcc,
+                subject,
+                html
+            };
+            await transporter.sendMail(mailOptions);
+            logger.info({ subject, to: mailOptions.to }, 'Notification email sent');
+            return true;
+        } catch (error) {
+            logger.error({ error: error.message, subject }, 'Failed to send notification email');
+            return false;
+        }
+    }
     /**
      * Send max retry notification
      */
     static async sendMaxRetryNotification(download, result) {
-        logger.error({ 
-            downloadID: download.ID, 
-            reportID: download.ReportID, 
-            attempts: (download.ProcessAttempts || 0) + 1, 
-            result 
-        }, 'Max retry attempts reached for SQP processing');
-        
-        // TODO: Implement actual notification service (email, webhook, etc.)
+        const attempts = (download.ProcessAttempts || 0) + 1;
+        logger.error({ downloadID: download.ID, reportID: download.ReportID, attempts, result }, 'Max retry attempts reached for SQP processing');
+
+        const to = this.parseList(env.NOTIFY_TO);
+        const cc = this.parseList(env.NOTIFY_CC);
+        const bcc = this.parseList(env.NOTIFY_BCC);
+        if ((to.length + cc.length + bcc.length) === 0) {
+            logger.warn('Notification recipients not configured (NOTIFY_TO/CC/BCC)');
+            return false;
+        }
+
+        const subject = `SQP Processing Failed after ${attempts} attempts [ReportID: ${download.ReportID}]`;
+        const html = `
+            <h3>Max Retry Attempts Reached</h3>
+            <p><strong>Download ID:</strong> ${download.ID}</p>
+            <p><strong>Report ID:</strong> ${download.ReportID}</p>
+            <p><strong>Seller:</strong> ${download.AmazonSellerID || ''}</p>
+            <p><strong>File:</strong> ${download.FilePath || ''}</p>
+            <p><strong>Attempts:</strong> ${attempts}</p>
+            <p><strong>Last Error:</strong> ${result?.lastError || 'N/A'}</p>
+            <p><strong>Totals:</strong> total=${result?.total || 0}, success=${result?.success || 0}, failed=${result?.failed || 0}</p>
+            <p>Time: ${new Date().toISOString()}</p>
+        `;
+
+        return this.sendEmail({ subject, html, to, cc, bcc });
     }
 }
 
