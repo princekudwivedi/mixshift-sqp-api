@@ -42,7 +42,8 @@ const config = {
 
     // API Token (for cron endpoints)
     API_ACCESS_TOKEN: env('API_ACCESS_TOKEN'),
-    
+    API_TOKEN_ROLES: env('API_TOKEN_ROLES'),
+
     // CORS
     ALLOWED_ORIGINS: env('ALLOWED_ORIGINS', 'http://localhost:3000,http://localhost:3001'),
     

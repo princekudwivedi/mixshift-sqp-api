@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const sqpCronApiController = require('../controllers/sqp.cron.api.controller');
 const AuthMiddleware = require('../middleware/auth.middleware');
+const { requireRole } = require('../middleware/authz.middleware');
 
 // Apply middleware to all routes
 router.use(AuthMiddleware.requestLogger);
@@ -19,7 +20,7 @@ router.get('/status', (req, res) => sqpCronApiController.checkReportStatuses(req
 router.get('/download', (req, res) => sqpCronApiController.downloadCompletedReports(req, res));
 router.get('/all', (req, res) => sqpCronApiController.runAllCronOperations(req, res));
 router.get('/process-json', (req, res) => sqpCronApiController.processJsonFiles(req, res));
-router.get('/copy-metrics', (req, res) => sqpCronApiController.copyMetricsData(req, res));
+router.get('/copy-metrics', requireRole(['operator','admin']), (req, res) => sqpCronApiController.copyMetricsData(req, res));
 router.get('/stats', (req, res) => sqpCronApiController.getProcessingStats(req, res));
 
 // Error handling middleware for routes
