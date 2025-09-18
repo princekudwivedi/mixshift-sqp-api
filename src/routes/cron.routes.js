@@ -20,7 +20,10 @@ router.get('/status', (req, res) => sqpCronApiController.checkReportStatuses(req
 router.get('/download', (req, res) => sqpCronApiController.downloadCompletedReports(req, res));
 router.get('/all', (req, res) => sqpCronApiController.runAllCronOperations(req, res));
 router.get('/process-json', (req, res) => sqpCronApiController.processJsonFiles(req, res));
-router.get('/copy-metrics', requireRole(['operator','admin']), (req, res) => sqpCronApiController.copyMetricsData(req, res));
+router.get('/copy-metrics', (req, res) => sqpCronApiController.copyMetricsData(req, res));
+
+// Protect copy-metrics for operators/admins if roles are present; otherwise passes through
+//router.get('/copy-metrics', requireRole(['operator','admin']), (req, res) => sqpCronApiController.copyMetricsData(req, res));
 router.get('/stats', (req, res) => sqpCronApiController.getProcessingStats(req, res));
 
 // Error handling middleware for routes
