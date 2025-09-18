@@ -17,9 +17,10 @@ router.use(AuthMiddleware.rateLimit(50, 15 * 60 * 1000)); // 50 requests per 15 
 router.get('/request', (req, res) => sqpCronApiController.requestReports(req, res));
 router.get('/status', (req, res) => sqpCronApiController.checkReportStatuses(req, res));
 router.get('/download', (req, res) => sqpCronApiController.downloadCompletedReports(req, res));
-router.get('/all', (req, res) => sqpCronApiController.runAllCronOperations(req, res));
+//router.get('/all', (req, res) => sqpCronApiController.runAllCronOperations(req, res));
 router.get('/process-json', (req, res) => sqpCronApiController.processJsonFiles(req, res));
-router.get('/stats', (req, res) => sqpCronApiController.getProcessingStats(req, res));
+router.get('/copy-metrics', (req, res) => sqpCronApiController.copyMetricsData(req, res));
+//router.get('/stats', (req, res) => sqpCronApiController.getProcessingStats(req, res));
 
 // Error handling middleware for routes
 router.use((err, req, res, next) => {

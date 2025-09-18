@@ -1,5 +1,6 @@
 const { Op, literal } = require('sequelize');
 const { getModel: getSqpDownloadUrls } = require('./sequelize/sqpDownloadUrls.model');
+const logger = require('../utils/logger.utils');
 
 async function getPendingDownloadUrls(limit = 50) {
 	const SqpDownloadUrls = getSqpDownloadUrls();
@@ -15,6 +16,7 @@ async function getCompletedDownloadsWithFiles(limit = 50) {
 	return SqpDownloadUrls.findAll({
 		where: {
 			Status: 'COMPLETED',
+			FullyImported: { [Op.ne]: 1, [Op.ne]: 2 },
 			FilePath: { [Op.ne]: null },
 			[Op.and]: [
 				{
@@ -119,6 +121,39 @@ async function getDownloadUrlStats() {
 	return { total, pending, completed, failed };
 }
 
+/**
+ * Mark reports as having data copied to main metrics table
+ */
+async function markDataCopiedToMain(reportIds) {
+	try {
+		const SqpDownloadUrls = getSqpDownloadUrls();
+		
+		const result = await SqpDownloadUrls.update(
+			{ 
+				FullyImported: 2, // Use 2 to indicate data copied to main table
+				UpdatedDate: new Date()
+			},
+			{ 
+				where: { 
+					ReportID: { [Op.in]: reportIds },
+					Status: 'COMPLETED',
+					ProcessStatus: 'SUCCESS'
+				}
+			}
+		);
+		
+		logger.info({ 
+			reportIds: reportIds.length,
+			updatedRows: result[0] 
+		}, 'Marked reports as data copied to main table');
+		
+		return result[0];
+	} catch (error) {
+		logger.error({ error: error.message, reportIds }, 'Error marking data as copied to main table');
+		throw error;
+	}
+}
+
 module.exports = {
 	getPendingDownloadUrls,
 	getCompletedDownloadsWithFiles,
@@ -128,6 +163,7 @@ module.exports = {
 	storeDownloadUrl,
 	updateProcessStatusById,
 	getDownloadUrlStats,
+	markDataCopiedToMain
 };
 
 

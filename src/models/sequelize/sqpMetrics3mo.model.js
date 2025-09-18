@@ -49,7 +49,6 @@ let BaseModel = sequelize.define(table, {
 	TotalOneDayShippingPurchaseCount: { type: DataTypes.BIGINT },
 	TotalTwoDayShippingPurchaseCount: { type: DataTypes.BIGINT },
 	ASIN: { type: DataTypes.STRING(32) },
-	SourceFile: { type: DataTypes.STRING(255) },
 	CreatedDate: { type: DataTypes.DATE },
 }, {
 	tableName: TBL_SQP_METRICS_3MO,

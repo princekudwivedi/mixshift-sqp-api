@@ -6,226 +6,173 @@ const { ValidationHelpers, DateHelpers, FileHelpers, DataProcessingHelpers, Noti
 const logger = require('../utils/logger.utils');
 
 /**
- * Process JSON files that are already saved to disk
+ * Copy data from sqp_metrics_3mo to sqp_metrics with bulk insert for better performance
  */
-async function processSavedJsonFiles(options = {}) {
+async function copyDataWithBulkInsert(options = {}) {
     try {
-        // Get all completed download URLs that have file paths
-        const completedDownloads = await sqpDownloadUrlsModel.getCompletedDownloadsWithFiles();        
-        if (!completedDownloads || completedDownloads.length === 0) {
-            logger.info('No completed JSON files to process');
-            return { processed: 0, errors: 0 };
+        const { 
+            batchSize = 1000, 
+            force = false, 
+            dryRun = false 
+        } = options;
+        
+        logger.info({ batchSize, force, dryRun }, 'Starting bulk copy process');
+        
+        // Get reportIDs from sqp_download_urls that have data in sqp_metrics_3mo
+        const reportIdsWithData = await sqpMetricsModel.getReportIdsWithDataIn3mo();        
+        if (reportIdsWithData.length === 0) {
+            logger.info('No reports with data found in 3mo table');
+            return { processed: 0, copied: 0, errors: 0 };
         }
+        
+        logger.info({ reportCount: reportIdsWithData.length }, 'Found reports with data in 3mo table');
+        
+        if (dryRun) {
+            return await performDryRun(reportIdsWithData);
+        }
+        
+        const { getModel: getSqpMetrics3mo } = require('../models/sequelize/sqpMetrics3mo.model');
+        const { getModel: getSqpMetrics } = require('../models/sequelize/sqpMetrics.model');
+        const SqpMetrics3mo = getSqpMetrics3mo();
+        const SqpMetrics = getSqpMetrics();
+        
+        let totalCopied = 0;
+        let totalErrors = 0;
+        let processedReports = 0;
+        let successfullyCopiedReportIds = [];
+        
+        // Process reports in batches
+        for (let i = 0; i < reportIdsWithData.length; i += batchSize) {
+            const batch = reportIdsWithData.slice(i, i + batchSize);
+            
+            for (const reportID of batch) {
+                try {
+                    // Get all records from 3mo table for this report
+                    const records3mo = await SqpMetrics3mo.findAll({ 
+                        where: { ReportID: reportID },
+                        raw: true 
+                    });
+                    
+                    if (records3mo.length === 0) {
+                        logger.debug({ reportID }, 'No records found in 3mo table for this report');
+                        continue;
+                    }
+                    
+                    // Check if data already exists in main table (unless force is enabled)
+                    if (!force) {
+                        const existingCount = await SqpMetrics.count({ where: { ReportID: reportID } });
+                        if (existingCount > 0) {
+                            logger.debug({ 
+                                reportID, 
+                                existingCount 
+                            }, 'Records already exist in main table, skipping');
+                            continue;
+                        }
+                    }
+                    
+                    // Dedupe records on logical key (ASIN + SearchQuery + ReportDate)
+                    const makeKey = (r) => `${r.ASIN || ''}|${r.SearchQuery || ''}|${r.ReportDate || ''}`;
+                    const uniqueMap = new Map();
+                    for (const r of records3mo) {
+                        uniqueMap.set(makeKey(r), r);
+                    }
 
-        logger.info(`Processing ${completedDownloads.length} completed JSON files`);
-
-        let processed = 0;
-        let errors = 0;
-
-        for (const download of completedDownloads) {
+                    // Prepare records for bulk insert (remove ID fields)
+                    const recordsToInsert = Array.from(uniqueMap.values()).map(record => {
+                        const { ID, ...recordData } = record;
+                        return recordData;
+                    });
+                    
+                    // Bulk insert into main table
+                    await SqpMetrics.bulkCreate(recordsToInsert);
+                    
+                    totalCopied += recordsToInsert.length;
+                    processedReports++;
+                    successfullyCopiedReportIds.push(reportID);
+                    
+                    logger.info({ 
+                        reportID, 
+                        recordsCopied: recordsToInsert.length 
+                    }, 'Successfully copied report data');
+                    
+                } catch (error) {
+                    logger.error({ 
+                        error: error.message,
+                        stack: error.stack,
+                        reportID
+                    }, 'Error copying report data');
+                    totalErrors++;
+                }
+            }
+        }
+        
+        // Update download URLs to mark data as copied to main table
+        if (successfullyCopiedReportIds.length > 0) {
             try {
-                await processSingleSavedJsonFile(download);
-                processed++;
+                await sqpDownloadUrlsModel.markDataCopiedToMain(successfullyCopiedReportIds);
+                logger.info({ 
+                    reportCount: successfullyCopiedReportIds.length 
+                }, 'Updated download URLs to mark data as copied to main table');
             } catch (error) {
                 logger.error({ 
-                    error: error.message, 
-                    reportID: download.ReportID,
-                    filePath: download.FilePath 
-                }, 'Error processing saved JSON file');
-                errors++;
+                    error: error.message,
+                    reportIds: successfullyCopiedReportIds 
+                }, 'Error updating download URLs copy flag');
+                // Don't fail the entire process if flag update fails
             }
         }
-
-        logger.info({ processed, errors }, 'Completed processing saved JSON files');
-        return { processed, errors };
-
-    } catch (error) {
-        logger.error({ error: error.message }, 'Error processing saved JSON files');
-        throw error;
-    }
-}
-
-/**
- * Get completed downloads that have file paths
- */
-async function getCompletedDownloadsWithFiles() {
-    try {
-        return await sqpDownloadUrlsModel.getCompletedDownloadsWithFiles();
-    } catch (error) {
-        logger.error({ error: error.message }, 'Error getting completed downloads with files');
-        throw error;
-    }
-}
-
-/**
- * Process a single saved JSON file
- */
-async function processSingleSavedJsonFile(download) {
-    logger.info({ 
-        reportID: download.ReportID, 
-        filePath: download.FilePath 
-    }, 'Processing saved JSON file');
-
-    try {
-        const currentAttempt = (download.ProcessAttempts || 0) + 1;
-        const maxAttempts = download.MaxProcessAttempts || 3;
-        await sqpDownloadUrlsModel.markProcessingStart(download.ID);
         
-        // Check if file exists
-        if (!(await FileHelpers.fileExists(download.FilePath))) {
-            throw new Error(`File not found: ${download.FilePath}`);
-        }
-        
-        // Read the JSON file
-        const data = await FileHelpers.readJsonFile(download.FilePath);
-        
-        // Parse and store data in database
-        const { total, success, failed, lastError } = await parseAndStoreJsonData(download, data, download.FilePath);
-
-        await sqpDownloadUrlsModel.updateProcessingResult(download.ID, total, success, failed, lastError);
-
-        // If still not fully imported and attempts exhausted, send notification
-        if ((failed > 0 || total === 0) && currentAttempt >= maxAttempts) {
-            await NotificationHelpers.sendMaxRetryNotification(download, { total, success, failed, lastError });
-        }
-
         logger.info({ 
-            reportID: download.ReportID,
-            filePath: download.FilePath 
-        }, 'Successfully processed saved JSON file');
-
-    } catch (error) {
-        if (error.code === 'ENOENT') {
-            logger.warn({ 
-                reportID: download.ReportID,
-                filePath: download.FilePath 
-            }, 'JSON file not found on disk');
-        } else {
-            await sqpDownloadUrlsModel.markProcessingFailure(download.ID, error.message);
-            const currentAttemptFail = (download.ProcessAttempts || 0) + 1;
-            const maxAttemptsFail = download.MaxProcessAttempts || 3;
-            if (currentAttemptFail >= maxAttemptsFail) {
-                await NotificationHelpers.sendMaxRetryNotification(download, { total: 0, success: 0, failed: 0, lastError: error.message });
-            }
-        }
-    }
-}
-
-/**
- * Parse JSON content and store in sqp_metrics_3mo table
- */
-async function parseAndStoreJsonData(download, jsonContent, filePath) {
-    try {
-        // Resolve report type and report date
-        const reportType = FileHelpers.resolveReportTypeFromPath(filePath);
-        const reportDate = DateHelpers.getReportDateForPeriod(reportType);
-
-        // Extract records from JSON content
-        const records = DataProcessingHelpers.extractRecords(jsonContent);
-
-        if (records.length === 0) {
-            logger.warn({ 
-                reportID: download.ReportID,
-                filePath: path.basename(filePath)
-            }, 'No records found in JSON file');
-            return { total: 0, success: 0, failed: 0, lastError: null };
-        }
-
-        // Remove existing data for this report to avoid duplicates
-        await sqpMetricsModel.removeExistingReportData(download.ReportID);
-
-        // Process each record and store a comprehensive row per entry
-        let success = 0;
-        let failed = 0;
-        let lastError = null;
-        for (const record of records) {
-            try {
-                await storeSingleReportRecord(download, reportType, reportDate, record, filePath);
-                success++;
-            } catch (err) {
-                failed++;
-                lastError = err.message;
-            }
-        }
-
-        logger.info({ 
-            reportID: download.ReportID,
-            recordsProcessed: records.length,
-            filePath: path.basename(filePath)
-        }, 'Completed parsing and storing records');
-
-        return { total: records.length, success, failed, lastError };
-
-    } catch (error) {
-        return { total: 0, success: 0, failed: 0, lastError: error.message };
-    }
-}
-
-/**
- * Store a single report record in the sqp_metrics_3mo table
- */
-async function storeSingleReportRecord(download, reportType, reportDate, record, filePath) {
-    try {
-        // Validate SQP record structure
-        DataProcessingHelpers.validateSqpRecord(record);
-
-        // Prepare metrics data using helper
-        const metricsData = DataProcessingHelpers.prepareMetricsData(download, reportType, reportDate, record, filePath);
+            processedReports,
+            totalCopied, 
+            totalErrors 
+        }, 'Bulk copy process completed');
         
-        if (!metricsData) {
-            // Skip records with no meaningful data
-            return;
-        }
-
-        // Store in sqp_metrics_3mo table using ORM
-        await sqpMetricsModel.storeMetrics3Mo(metricsData);
-
-        logger.debug({ 
-            reportID: download.ReportID,
-            asin: metricsData.ASIN,
-            query: metricsData.SearchQuery,
-            impressions: metricsData.AsinImpressionCount,
-            clicks: metricsData.AsinClickCount,
-            purchases: metricsData.AsinPurchaseCount
-        }, 'Stored SQP record');
-
+        return { processed: processedReports, copied: totalCopied, errors: totalErrors };
+        
     } catch (error) {
-        logger.error({ 
-            error: error.message,
-            reportID: download.ReportID,
-            asin: record.asin,
-            query: record.searchQueryData?.searchQuery
-        }, 'Error storing single report record');
+        logger.error({ error: error.message }, 'Error in bulk copy process');
         throw error;
     }
 }
 
-
-
-
 /**
- * Get processing statistics
+ * Perform a dry run to show what would be copied
  */
-async function getProcessingStats(options = {}) {
+async function performDryRun(reportIdsWithData) {
     try {
-        const downloadStats = await sqpDownloadUrlsModel.getProcessingStats();
-        const metricsStats = await sqpMetricsModel.getMetricsStats();
+        logger.info({ reportCount: reportIdsWithData.length }, 'Performing dry run');
         
-        return {
-            downloads: downloadStats,
-            metrics: metricsStats
-        };
+        const { getModel: getSqpMetrics3mo } = require('../models/sequelize/sqpMetrics3mo.model');
+        const SqpMetrics3mo = getSqpMetrics3mo();
+        
+        let totalRecords = 0;
+        
+        for (const reportID of reportIdsWithData) {
+            // Count distinct logical rows (ASIN + SearchQuery). Adjust if needed.
+            const rows = await SqpMetrics3mo.findAll({
+                where: { ReportID: reportID },
+                attributes: ['ASIN', 'SearchQuery'],
+                group: ['ASIN', 'SearchQuery'],
+                raw: true
+            });
+            totalRecords += rows.length;
+        }
+        
+        logger.info({ 
+            totalReports: reportIdsWithData.length,
+            totalRecords 
+        }, 'Dry run completed');
+        
+        return { processed: reportIdsWithData.length, copied: totalRecords, errors: 0 };
+        
     } catch (error) {
-        logger.error({ error: error.message }, 'Error getting processing stats');
+        logger.error({ error: error.message }, 'Error in dry run');
         throw error;
     }
 }
 
 module.exports = {
-    processSavedJsonFiles,
-    processSingleSavedJsonFile,
-    getCompletedDownloadsWithFiles,
-    parseAndStoreJsonData,
-    storeSingleReportRecord,
-    getProcessingStats
+    copyDataWithBulkInsert,
+    performDryRun
 };

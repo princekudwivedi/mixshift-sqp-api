@@ -1,3 +1,4 @@
+const jwt = require('jsonwebtoken');
 const { ErrorHandler } = require('./response.handlers');
 const logger = require('../utils/logger.utils');
 const { ValidationHelpers } = require('../helpers/sqp.helpers');
