@@ -41,7 +41,8 @@ Mounted at: `/api/v1/cron/sqp`
 - `GET /download` – Download completed reports
 - `GET /process-json` – Legacy JSON processing
 - `GET /stats` – Processing stats
-- `GET /copy-metrics` – Copy from 3mo to main metrics (bulk)
+- `GET /all` – Run all legacy cron operations (request → status → download)
+- `GET /copy-metrics` – Copy from 3mo to main metrics (bulk) [RBAC protected]
 
 Health/Readiness:
 - `GET /healthz` – Liveness (always 200 when server up)
@@ -49,13 +50,19 @@ Health/Readiness:
 
 Query params commonly supported: `userId`, and for copy job: `batchSize`, `dryRun`, `force`.
 
-Examples:
+Examples (Dev, token optional except where noted):
 ```bash
 curl -H "Authorization: Bearer <TOKEN>" \
   "http://localhost:3001/api/v1/cron/sqp/copy-metrics?userId=3&batchSize=500&dryRun=true"
 
 curl -H "Authorization: Bearer <TOKEN>" \
   "http://localhost:3001/api/v1/cron/sqp/copy-metrics?userId=3&batchSize=500&force=true"
+
+# Request/status/download/all (token optional with default setup, IP-allowlisted)
+curl "http://localhost:3001/api/v1/cron/sqp/request?userId=3"
+curl "http://localhost:3001/api/v1/cron/sqp/status?userId=3"
+curl "http://localhost:3001/api/v1/cron/sqp/download?userId=3"
+curl "http://localhost:3001/api/v1/cron/sqp/all?userId=3&sellerId=71"
 
 # Health checks
 curl "http://localhost:3001/healthz"
@@ -87,9 +94,11 @@ curl "http://localhost:3001/readyz"
   - IP allowlist: `src/middleware/ip.allowlist.middleware.js`
   - Rate limit: `AuthMiddleware.rateLimit()`
   - Headers & CSP: Helmet + custom headers
-  - RBAC (optional): `src/middleware/authz.middleware.js` (`requireRole([...])`)
+  - RBAC (enabled for copy-metrics): `src/middleware/authz.middleware.js` (`requireRole([...])`)
 
-Add roles to JWT as `roles` claim (e.g., `{"roles":["admin","operator"]}`) or attach `req.user.roles` in your auth flow.
+Tokens & roles:
+- Static token: set `API_ACCESS_TOKEN` and `API_TOKEN_ROLES=operator,admin` on the server; pass token via `Authorization: Bearer` or `?token=`
+- JWT: include `roles` claim and sign with `JWT_SECRET`
 
 ### 8) Database
 - Schemas (SQL samples): `src/database/*.sql`
