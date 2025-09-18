@@ -13,7 +13,8 @@ async function copyDataWithBulkInsert(options = {}) {
         const { 
             batchSize = 1000, 
             force = false, 
-            dryRun = false 
+            dryRun = false,
+            insertChunkSize = 2000
         } = options;
         
         logger.info({ batchSize, force, dryRun }, 'Starting bulk copy process');
@@ -47,6 +48,7 @@ async function copyDataWithBulkInsert(options = {}) {
             
             for (const reportID of batch) {
                 try {
+                    const reportStart = Date.now();
                     // Get all records from 3mo table for this report
                     const records3mo = await SqpMetrics3mo.findAll({ 
                         where: { ReportID: reportID },
@@ -83,16 +85,34 @@ async function copyDataWithBulkInsert(options = {}) {
                         return recordData;
                     });
                     
-                    // Bulk insert into main table
-                    await SqpMetrics.bulkCreate(recordsToInsert);
+                    // Determine fields for updateOnDuplicate when force=true
+                    const updatableFields = Object.keys(SqpMetrics.rawAttributes || {})
+                        .filter(f => f !== 'ID');
+
+                    // Insert in chunks inside a transaction for atomicity per report
+                    const sequelize = SqpMetrics.sequelize;
+                    await sequelize.transaction(async (t) => {
+                        for (let start = 0; start < recordsToInsert.length; start += insertChunkSize) {
+                            const chunk = recordsToInsert.slice(start, start + insertChunkSize);
+                            if (chunk.length === 0) continue;
+                            await SqpMetrics.bulkCreate(chunk, {
+                                transaction: t,
+                                validate: false,
+                                ignoreDuplicates: !force,
+                                updateOnDuplicate: force ? updatableFields : undefined
+                            });
+                        }
+                    });
                     
                     totalCopied += recordsToInsert.length;
                     processedReports++;
                     successfullyCopiedReportIds.push(reportID);
                     
+                    const ms = Date.now() - reportStart;
                     logger.info({ 
                         reportID, 
-                        recordsCopied: recordsToInsert.length 
+                        recordsCopied: recordsToInsert.length,
+                        ms
                     }, 'Successfully copied report data');
                     
                 } catch (error) {
