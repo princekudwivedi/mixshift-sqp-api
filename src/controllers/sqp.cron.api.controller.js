@@ -1,7 +1,7 @@
 const { SuccessHandler, ErrorHandler } = require('../middleware/response.handlers');
 const { ValidationHelpers } = require('../helpers/sqp.helpers');
 const { loadDatabase } = require('../db/tenant.db');
-const master = require('../models/sequelize/user.model');
+const { getAllAgencyUserList } = require('../models/sequelize/user.model');
 const AuthToken = require('../models/authToken.model');
 const StsToken = require('../models/stsToken.model');
 const sellerModel = require('../models/sequelize/seller.model');
@@ -68,8 +68,7 @@ class SqpCronApiController {
             }, 'Request reports for sellers');
 
             await loadDatabase(0);
-            const users = validatedUserId ? [{ ID: validatedUserId }] : await master.getAllAgencyUserList();
-            
+            const users = validatedUserId ? [{ ID: validatedUserId }] : await getAllAgencyUserList();
             let totalProcessed = 0;
             let totalErrors = 0;
 
@@ -160,7 +159,7 @@ class SqpCronApiController {
             }, 'Check report statuses');
 
             await loadDatabase(0);
-            const users = validatedUserId ? [{ ID: validatedUserId }] : await master.getAllAgencyUserList();
+            const users = validatedUserId ? [{ ID: validatedUserId }] : await getAllAgencyUserList();
             
             let totalProcessed = 0;
             let totalErrors = 0;
@@ -221,7 +220,7 @@ class SqpCronApiController {
             }, 'Download completed reports');
 
             await loadDatabase(0);
-            const users = validatedUserId ? [{ ID: validatedUserId }] : await master.getAllAgencyUserList();
+            const users = validatedUserId ? [{ ID: validatedUserId }] : await getAllAgencyUserList();
             let totalProcessed = 0;
             let totalErrors = 0;
             
@@ -292,7 +291,7 @@ class SqpCronApiController {
             }, 'Run all cron operations');
 
             await loadDatabase(0);
-            const users = validatedUserId ? [{ ID: validatedUserId }] : await master.getAllAgencyUserList();
+            const users = validatedUserId ? [{ ID: validatedUserId }] : await getAllAgencyUserList();
             
             let totalProcessed = 0;
             let totalErrors = 0;
@@ -386,7 +385,7 @@ class SqpCronApiController {
             }, 'Process JSON files (legacy)');
 
             await loadDatabase(0);
-            const users = validatedUserId ? [{ ID: validatedUserId }] : await master.getAllAgencyUserList();
+            const users = validatedUserId ? [{ ID: validatedUserId }] : await getAllAgencyUserList();
             
             let totalProcessed = 0;
             let totalErrors = 0;
@@ -467,7 +466,7 @@ class SqpCronApiController {
             }, 'Copy metrics data from 3mo to main table');
 
             await loadDatabase(0);
-            const users = validatedUserId ? [{ ID: validatedUserId }] : await master.getAllAgencyUserList();
+            const users = validatedUserId ? [{ ID: validatedUserId }] : await getAllAgencyUserList();
             
             let totalProcessed = 0;
             let totalCopied = 0;
@@ -544,7 +543,7 @@ class SqpCronApiController {
             }, 'Get processing stats (legacy)');
 
             await loadDatabase(0);
-            const users = validatedUserId ? [{ ID: validatedUserId }] : await master.getAllAgencyUserList();
+            const users = validatedUserId ? [{ ID: validatedUserId }] : await getAllAgencyUserList();
             
             const stats = await jsonProcessingService.getProcessingStats();
             

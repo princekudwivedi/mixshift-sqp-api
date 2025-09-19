@@ -50,6 +50,107 @@ const User = sequelize.define(table, {
     timestamps: false
 });
 
-module.exports = makeReadOnly(User);
+
+
+// Export functions similar to sqp.cron.model.js pattern
+async function getAllAgencyUserList() {
+    try {
+        const { QueryTypes } = require('sequelize');
+        const sequelize = require('../../config/sequelize.config');
+        
+        // First check if any agency user has active cron priority flag
+        const hasActiveCronPriorityFlag = await checkCronPriorityFlagActiveOrNotForAnyAgencyUser();
+        
+        let query;
+        if (hasActiveCronPriorityFlag) {
+            // Order by priority flag DESC, then by MWS updated date ASC, then by ID ASC
+            query = `
+                SELECT 
+                    user.ID,
+                    user.AgencyName,
+                    user.FirstName,
+                    user.LastName,
+                    user.Email,
+                    user.iTimezoneID,
+                    user.iMwsCronPriorityFlag,
+                    user.dtMwsUpdatedOn,
+                    time.Timezone,
+                    time.GMT_Value
+                FROM ${require('../../config/env.config').TBL_USERS} as user
+                LEFT JOIN ${require('../../config/env.config').TBL_TIMEZONES} as time ON user.iTimezoneID = time.ID
+                WHERE user.iActive = 1 
+                    AND user.iParentID = 0 
+                    AND user.iUserType != 4 
+                    AND user.isDeleted = 0 
+                    AND user.isDemoUser = 0
+                ORDER BY user.iMwsCronPriorityFlag DESC, user.dtMwsUpdatedOn ASC, user.ID ASC
+            `;
+        } else {
+            // Order by timezone GMT value DESC, then by ID ASC
+            query = `
+                SELECT 
+                    user.ID,
+                    user.AgencyName,
+                    user.FirstName,
+                    user.LastName,
+                    user.Email,
+                    user.iTimezoneID,
+                    user.iMwsCronPriorityFlag,
+                    user.dtMwsUpdatedOn,
+                    time.Timezone,
+                    time.GMT_Value
+                FROM ${require('../../config/env.config').TBL_USERS} as user
+                LEFT JOIN ${require('../../config/env.config').TBL_TIMEZONES} as time ON user.iTimezoneID = time.ID
+                WHERE user.iActive = 1 
+                    AND user.iParentID = 0 
+                    AND user.iUserType != 4 
+                    AND user.isDeleted = 0 
+                    AND user.isDemoUser = 0
+                ORDER BY time.GMT_Value DESC, user.ID ASC
+            `;
+        }
+        
+        const users = await sequelize.query(query, {
+            type: QueryTypes.SELECT
+        });
+        
+        return users;
+    } catch (error) {
+        console.error('Error getting agency user list:', error);
+        throw error;
+    }
+}
+
+async function checkCronPriorityFlagActiveOrNotForAnyAgencyUser() {
+    try {
+        const { QueryTypes } = require('sequelize');
+        const sequelize = require('../../config/sequelize.config');
+        
+        const query = `
+            SELECT user.ID
+            FROM ${require('../../config/env.config').TBL_USERS} as user
+            WHERE user.iMwsCronPriorityFlag = 1
+                AND user.iParentID = 0
+                AND user.iUserType != 4
+                AND user.iActive = 1
+                AND user.isDeleted = 0
+            LIMIT 1
+        `;
+        
+        const result = await sequelize.query(query, {
+            type: QueryTypes.SELECT
+        });
+        
+        return result.length > 0;
+    } catch (error) {
+        console.error('Error checking cron priority flag:', error);
+        throw error;
+    }
+}
+
+module.exports = makeReadOnly({
+    getAllAgencyUserList,
+    checkCronPriorityFlagActiveOrNotForAnyAgencyUser
+});
 
 
