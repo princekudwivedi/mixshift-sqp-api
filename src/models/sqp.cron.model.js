@@ -42,7 +42,21 @@ async function getRetryCount(cronDetailID, reportType) {
 async function incrementRetryCount(cronDetailID, reportType) {
     const prefix = mapPrefix(reportType);
     const SqpCronDetails = getSqpCronDetails();
-    await SqpCronDetails.update({ [`RetryCount_${prefix}`]: literal(`COALESCE(${`RetryCount_${prefix}`},0)+1`) }, { where: { ID: cronDetailID } });
+    
+    try {
+        const result = await SqpCronDetails.update({ 
+            [`RetryCount_${prefix}`]: literal(`COALESCE(${`RetryCount_${prefix}`},0)+1`),
+            UpdatedDate: new Date()
+        }, { 
+            where: { ID: cronDetailID } 
+        });
+        
+        console.log(`Incremented retry count for ID ${cronDetailID}, type ${reportType}, result:`, result);
+        return result;
+    } catch (error) {
+        console.error(`Error incrementing retry count for ID ${cronDetailID}, type ${reportType}:`, error);
+        throw error;
+    }
 }
 
 async function updateSQPReportStatus(cronDetailID, reportType, status, reportId = null, lastError = null, documentId = null, downloadCompleted = null, startDate = undefined, endDate = undefined) {
@@ -73,7 +87,7 @@ async function updateSQPReportStatus(cronDetailID, reportType, status, reportId 
     console.log(`Update result for ID ${cronDetailID}:`, result);
 }
 
-async function logCronActivity({ cronJobID, amazonSellerID, reportType, action, status, message, reportID = null, reportDocumentID = null, retryCount = null, downloadCompleted = null, fileSize = null, filePath = null, recordsProcessed = null }) {
+async function logCronActivity({ cronJobID, amazonSellerID, reportType, action, status, message, reportID = null, reportDocumentID = null, retryCount = null, downloadCompleted = null, fileSize = null, filePath = null, recordsProcessed = null, executionTime = null }) {
     const SqpCronLogs = getSqpCronLogs();
     const where = { CronJobID: cronJobID, AmazonSellerID: amazonSellerID, ReportType: reportType };
     const payload = {
@@ -85,6 +99,7 @@ async function logCronActivity({ cronJobID, amazonSellerID, reportType, action, 
         RetryCount: retryCount,
         DownloadCompleted: downloadCompleted ? 1 : 0,
         RecordsProcessed: recordsProcessed,
+        ExecutionTime: executionTime !== null && executionTime !== undefined ? Number(executionTime) : undefined,
         UpdatedDate: new Date()
     };
     
@@ -138,6 +153,43 @@ async function getReportsForDownload() {
     return rows;
 }
 
+/**
+ * Comprehensive error handling that updates both cron details and logs
+ */
+async function handleCronError(cronDetailID, amazonSellerID, reportType, action, error, reportId = null) {
+    const prefix = mapPrefix(reportType);
+    
+    try {
+        // Increment retry count
+        await incrementRetryCount(cronDetailID, reportType);
+        
+        // Update status to error (2)
+        await updateSQPReportStatus(cronDetailID, reportType, 2, reportId, error.message, null, null, null, new Date());
+        
+        // Get current retry count for logging
+        const retryCount = await getRetryCount(cronDetailID, reportType);
+        
+        // Log to cron logs
+        await logCronActivity({
+            cronJobID: cronDetailID,
+            amazonSellerID: amazonSellerID,
+            reportType: reportType,
+            action: action,
+            status: retryCount < 3 ? 3 : 2, // 3 = will retry, 2 = failed
+            message: retryCount < 3 ? `${action} failed (will retry): ${error.message}` : `${action} failed: ${error.message}`,
+            reportID: reportId,
+            retryCount: retryCount,
+            executionTime: 0
+        });
+        
+        console.log(`Error handled for ID ${cronDetailID}, type ${reportType}, retry count: ${retryCount}`);
+        
+    } catch (logError) {
+        console.error(`Failed to handle cron error for ID ${cronDetailID}:`, logError);
+        throw logError;
+    }
+}
+
 module.exports = {
     splitASINsIntoChunks,
     mapPrefix,
@@ -148,7 +200,8 @@ module.exports = {
     updateSQPReportStatus,
     logCronActivity,
     getReportsForStatusCheck,
-    getReportsForDownload
+    getReportsForDownload,
+    handleCronError
 };
 
 

@@ -92,6 +92,10 @@ const config = {
     SMTP_USER: env('SMTP_USER'),
     SMTP_PASS: env('SMTP_PASS'),
     FROM_EMAIL: env('FROM_EMAIL'),
+    NOTIFY_TO: env('NOTIFY_TO'),
+    NOTIFY_CC: env('NOTIFY_CC'),
+    NOTIFY_BCC: env('NOTIFY_BCC'),
+
     
     // Redis (if needed for caching)
     REDIS_HOST: env('REDIS_HOST', 'localhost'),

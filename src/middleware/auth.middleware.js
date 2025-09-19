@@ -14,7 +14,7 @@ class AuthMiddleware {
     static validateToken(req, res, next) {
         try {
             const authHeader = req.headers.authorization;
-            const token = req.query.token || req.body.token;
+            const token = (req.query && req.query.token) || (req.body && req.body.token);
 
             if (!authHeader && !token) {
                 return ErrorHandler.sendAuthError(res, 'No token provided');

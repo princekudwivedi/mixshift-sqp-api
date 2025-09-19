@@ -90,6 +90,22 @@ class SqpCronApiController {
                                 error: error.message, 
                                 sellerId: s.AmazonSellerID 
                             }, 'Error requesting report for seller');
+                            
+                            // Log error to cron logs for this seller
+                            try {
+                                await ctrl.logCronActivity({
+                                    cronJobID: 0, // Use 0 for API-level errors
+                                    amazonSellerID: s.AmazonSellerID,
+                                    reportType: 'ALL',
+                                    action: 'Request Report',
+                                    status: 2, // Error status
+                                    message: `API Error: ${error.message}`,
+                                    retryCount: 0
+                                });
+                            } catch (logError) {
+                                logger.error({ logError: logError.message }, 'Failed to log cron activity');
+                            }
+                            
                             totalErrors++;
                         }
                     }
@@ -206,7 +222,6 @@ class SqpCronApiController {
 
             await loadDatabase(0);
             const users = validatedUserId ? [{ ID: validatedUserId }] : await master.getAllAgencyUserList();
-            
             let totalProcessed = 0;
             let totalErrors = 0;
             

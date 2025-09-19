@@ -3,6 +3,258 @@ const path = require('path');
 const logger = require('../utils/logger.utils');
 
 /**
+ * Retry execution helper for cron operations
+ */
+class RetryHelpers {
+    /**
+     * Universal retry function for all cron operations
+     * @param {Object} options - Configuration object
+     * @param {number} options.cronDetailID - Cron detail ID
+     * @param {string} options.amazonSellerID - Amazon seller ID
+     * @param {string} options.reportType - Report type (WEEK, MONTH, QUARTER)
+     * @param {string} options.action - Action name for logging
+     * @param {Function} options.operation - The operation function to retry
+     * @param {Object} options.context - Additional context data
+     * @param {number} options.maxRetries - Maximum number of retries (default: 3)
+     * @param {boolean} options.skipIfMaxRetriesReached - Skip if already at max retries (default: true)
+     * @param {Object} options.model - Model object for database operations
+     * @param {Function} options.sendFailureNotification - Function to send failure notifications
+     * @returns {Promise<Object>} Result object with success, data, and error information
+     */
+    static async executeWithRetry(options) {
+        const {
+            cronDetailID,
+            amazonSellerID,
+            reportType,
+            action,
+            operation,
+            context = {},
+            maxRetries = 3,
+            skipIfMaxRetriesReached = true,
+            model,
+            sendFailureNotification
+        } = options;
+
+        if (!model) {
+            throw new Error('Model object is required for retry operations');
+        }
+
+        logger.info({
+            cronDetailID,
+            amazonSellerID,
+            reportType,
+            action,
+            maxRetries
+        }, `Starting ${action} with retry logic`);
+
+        // Check if this report type has already reached max retries
+        if (skipIfMaxRetriesReached) {
+            const currentRetryCount = await model.getRetryCount(cronDetailID, reportType);
+            if (currentRetryCount >= maxRetries) {
+                logger.info({
+                    cronDetailID,
+                    reportType,
+                    retryCount: currentRetryCount
+                }, `Max retries already reached for ${action}, skipping`);
+                return {
+                    success: false,
+                    skipped: true,
+                    reason: 'Max retries already reached',
+                    retryCount: currentRetryCount
+                };
+            }
+        }
+
+        let attempt = 0;
+        let lastError = null;
+
+        while (attempt < maxRetries) {
+            attempt++;
+            const currentRetry = await model.getRetryCount(cronDetailID, reportType);
+
+            logger.info({
+                cronDetailID,
+                reportType,
+                action,
+                attempt,
+                currentRetry,
+                maxRetries
+            }, `${action} attempt ${attempt} of ${maxRetries}`);
+
+            try {
+                const t0 = Date.now();
+
+                // Log attempt start
+                await model.logCronActivity({
+                    cronJobID: cronDetailID,
+                    amazonSellerID: amazonSellerID,
+                    reportType: reportType,
+                    action: action,
+                    status: 0,
+                    message: `Attempt ${attempt}/${maxRetries}: Starting ${action}`,
+                    reportID: (context && (context.reportId || context.reportID)) || null,
+                    retryCount: currentRetry
+                });
+
+                // Execute the operation
+                const result = await operation({
+                    attempt,
+                    currentRetry,
+                    context,
+                    startTime: t0
+                });
+
+                // Success! Log and return
+                await model.logCronActivity({
+                    cronJobID: cronDetailID,
+                    amazonSellerID: amazonSellerID,
+                    reportType: reportType,
+                    action: action,
+                    status: 1,
+                    message: result.message || `${action} successful on attempt ${attempt}`,
+                    reportID: result.reportID || (context && (context.reportId || context.reportID)) || null,
+                    reportDocumentID: result.reportDocumentID || null,
+                    retryCount: currentRetry,
+                    executionTime: (Date.now() - t0) / 1000,
+                    ...result.logData
+                });
+
+                logger.info({
+                    cronDetailID,
+                    reportType,
+                    action,
+                    attempt
+                }, `${action} successful, exiting retry loop`);
+
+                return {
+                    success: true,
+                    attempt,
+                    retryCount: currentRetry,
+                    data: result.data,
+                    executionTime: (Date.now() - t0) / 1000
+                };
+
+            } catch (error) {
+                lastError = error;
+                logger.error({
+                    error: error.message,
+                    stack: error.stack,
+                    cronDetailID,
+                    reportType,
+                    action,
+                    attempt,
+                    maxRetries
+                }, `Error in ${action} attempt ${attempt}`);
+
+                // Increment retry count for this attempt
+                await model.incrementRetryCount(cronDetailID, reportType);
+                const newRetryCount = await model.getRetryCount(cronDetailID, reportType);
+
+                // Check if this was the last attempt
+                if (attempt >= maxRetries) {
+                    logger.error({
+                        cronDetailID,
+                        reportType,
+                        action,
+                        attempt,
+                        retryCount: newRetryCount
+                    }, `Max attempts reached for ${action}, marking as failed`);
+
+                    // Final failure - set status to error and EndDate, but do NOT clear existing ReportID fields
+                    try {
+                        const existingReportId = (context && (context.reportId || context.reportID)) || null;
+                        await model.updateSQPReportStatus(
+                            cronDetailID,
+                            reportType,
+                            2, // error
+                            existingReportId,
+                            error.message,
+                            null, // reportDocumentId unchanged
+                            null, // isCompleted unchanged
+                            null, // startDate unchanged
+                            new Date() // endDate set on failure
+                        );
+                    } catch (updateErr) {
+                        logger.error({ error: updateErr.message, cronDetailID, reportType }, 'Failed to set EndDate on failure');
+                    }
+
+                    // Also log the failure row
+                    await model.logCronActivity({
+                        cronJobID: cronDetailID,
+                        amazonSellerID: amazonSellerID,
+                        reportType: reportType,
+                        action: action,
+                        status: 2,
+                        message: `${action} failed after ${maxRetries} attempts: ${error.message}`,
+                        reportID: (context && (context.reportId || context.reportID)) || null,
+                        retryCount: newRetryCount,
+                        executionTime: 0
+                    });
+
+                    // Send notification for final failure if function is provided
+                    if (sendFailureNotification && typeof sendFailureNotification === 'function') {
+                        const reportId = (context && (context.reportId || context.reportID)) || null;
+                        logger.info({
+                            cronDetailID,
+                            reportType,
+                            action,
+                            contextKeys: context ? Object.keys(context) : 'no context',
+                            reportId,
+                            contextReportId: context?.reportId,
+                            contextReportID: context?.reportID
+                        }, 'Sending failure notification with reportId');
+                        await sendFailureNotification(cronDetailID, amazonSellerID, reportType, error.message, newRetryCount, reportId);
+                    }
+
+                    return {
+                        success: false,
+                        attempt,
+                        retryCount: newRetryCount,
+                        error: error.message,
+                        finalFailure: true
+                    };
+                } else {
+                    // Not the last attempt - log retry and continue
+                    logger.warn({
+                        cronDetailID,
+                        reportType,
+                        action,
+                        attempt,
+                        nextAttempt: attempt + 1,
+                        retryCount: newRetryCount
+                    }, `${action} attempt ${attempt} failed, will retry (${attempt + 1}/${maxRetries})`);
+
+                    await model.logCronActivity({
+                        cronJobID: cronDetailID,
+                        amazonSellerID: amazonSellerID,
+                        reportType: reportType,
+                        action: action,
+                        status: 3, // Will retry
+                        message: `${action} attempt ${attempt} failed, will retry (${attempt + 1}/${maxRetries}): ${error.message}`,
+                        reportID: (context && (context.reportId || context.reportID)) || null,
+                        retryCount: newRetryCount,
+                        executionTime: 0
+                    });
+
+                    // Wait before retry (exponential backoff)
+                    const waitTime = Math.min(1000 * Math.pow(2, attempt - 1), 10000); // Max 10 seconds
+                    logger.info({ waitTime, attempt, action }, 'Waiting before retry');
+                    await new Promise(resolve => setTimeout(resolve, waitTime));
+                }
+            }
+        }
+
+        // This should never be reached, but just in case
+        return {
+            success: false,
+            attempt,
+            error: lastError?.message || 'Unknown error',
+            finalFailure: true
+        };
+    }
+}
+
+/**
  * Input validation and sanitization helpers
  */
 class ValidationHelpers {
@@ -340,7 +592,7 @@ class DataProcessingHelpers {
  * Notification helpers
  */
 const nodemailer = require('nodemailer');
-const { env } = require('../config/env.config');
+const env = require('../config/env.config');
 
 class NotificationHelpers {
     static buildTransporter() {
@@ -418,6 +670,7 @@ class NotificationHelpers {
 }
 
 module.exports = {
+    RetryHelpers,
     ValidationHelpers,
     DateHelpers,
     FileHelpers,
