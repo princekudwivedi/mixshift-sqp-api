@@ -2,6 +2,8 @@ const { SuccessHandler, ErrorHandler } = require('../middleware/response.handler
 const { ValidationHelpers } = require('../helpers/sqp.helpers');
 const { loadDatabase } = require('../db/tenant.db');
 const { getAllAgencyUserList } = require('../models/sequelize/user.model');
+const { getModel: getSellerAsinList } = require('../models/sequelize/sellerAsinList.model');
+const { getModel: getAsinSkuList } = require('../models/sequelize/asinSkuList.model');
 const AuthToken = require('../models/authToken.model');
 const StsToken = require('../models/stsToken.model');
 const sellerModel = require('../models/sequelize/seller.model');
@@ -9,6 +11,7 @@ const ctrl = require('./sqp.cron.controller');
 const jsonProcessingService = require('../services/sqp.json.processing.service');
 const sqpfileProcessingService = require('../services/sqp.file.processing.service');
 const logger = require('../utils/logger.utils');
+const env = require('../config/env.config');
 
 /**
  * SQP Cron API Controller
@@ -557,6 +560,376 @@ class SqpCronApiController {
             }, 'Error in get processing stats');
             
             return ErrorHandler.sendError(res, error, 'Failed to retrieve statistics');
+        }
+    }
+
+    /**
+     * Sync ASINs from ASIN_SKU_list into seller_ASIN_list for a single seller
+     * GET: /cron/sqp/syncSellerAsins/{userId}/{sellerID}
+     */
+    async syncSellerAsins(req, res) {
+        try {
+            const { userId, sellerID } = req.params;
+            
+            // Validate parameters
+            const validatedUserId = ValidationHelpers.sanitizeNumber(userId);
+            const validatedSellerID = ValidationHelpers.sanitizeNumber(sellerID);
+
+            if (!validatedUserId || !validatedSellerID || validatedUserId <= 0 || validatedSellerID <= 0) {
+                return ErrorHandler.sendError(res, 'Invalid userId/sellerID', 400);
+            }
+
+            // Load tenant database
+            await loadDatabase(validatedUserId);
+
+            // Use the helper function
+            const result = await this._syncSellerAsinsInternal(validatedSellerID);
+
+            if (result.error) {
+                return ErrorHandler.sendError(res, result.error, 500);
+            }
+
+            // Get seller info for response
+            // Use sellerModel directly for tenant-aware operations
+            const seller = await sellerModel.getProfileDetailsByID(validatedSellerID);
+
+            const response = {
+                success: true,
+                seller: {
+                    id: seller.idSellerAccount,
+                    amazon_seller_id: seller.AmazonSellerID,
+                    name: seller.SellerName
+                },
+                inserted_asins: result.insertedCount,
+                total_seller_asins: result.totalCount,
+                message: result.insertedCount > 0 
+                    ? `Sync complete: ${result.insertedCount} new ASINs inserted, ${result.totalCount} total ASINs`
+                    : `Sync complete: No new ASINs to insert, ${result.totalCount} total ASINs`
+            };
+
+            logger.info({
+                userId: validatedUserId,
+                sellerID: validatedSellerID,
+                insertedCount: result.insertedCount,
+                totalCount: result.totalCount
+            }, 'syncSellerAsins completed successfully');
+
+            return SuccessHandler.sendSuccess(res, response);
+
+        } catch (error) {
+            logger.error({ error: error.message, userId: req.params.userId, sellerID: req.params.sellerID }, 'syncSellerAsins failed');
+            return ErrorHandler.sendError(res, error, 'Internal server error', 500);
+        }
+    }
+
+    /**
+     * Sync ASINs for all sellers under a specific user
+     * GET: /cron/sqp/cronSyncAllSellerAsins/{userId}
+     */
+    async cronSyncAllSellerAsins(req, res) {
+        try {
+            const { userId } = req.params;
+            
+            // Validate parameters
+            const validatedUserId = ValidationHelpers.sanitizeNumber(userId);
+
+            if (!validatedUserId || validatedUserId <= 0) {
+                return ErrorHandler.sendError(res, 'Invalid userId', 400);
+            }
+
+            // Load tenant database
+            await loadDatabase(validatedUserId);
+
+            // Get all active sellers
+            // Use sellerModel directly for tenant-aware operations
+            const sellers = await sellerModel.getSellersProfilesForCronAdvanced({ pullAll: 0 });
+
+            const results = [];
+            let totalInserted = 0;
+            let totalErrors = 0;
+
+            for (const seller of sellers) {
+                const sellerID = seller.idSellerAccount;
+
+                // Use the helper function (set IsActive = 0 for cron sync)
+                const result = await this._syncSellerAsinsInternal(sellerID);
+
+                if (result.error) {
+                    totalErrors++;
+                    results.push({
+                        seller_id: sellerID,
+                        status: 'error',
+                        error: result.error,
+                        inserted_asins: 0,
+                        total_seller_asins: 0
+                    });
+                } else {
+                    totalInserted += result.insertedCount;
+                    results.push({
+                        seller_id: sellerID,
+                        status: 'success',
+                        inserted_asins: result.insertedCount,
+                        total_seller_asins: result.totalCount
+                    });
+                }
+            }
+
+            const response = {
+                success: true,
+                userId: validatedUserId,
+                sellers_processed: sellers.length,
+                total_asins_inserted: totalInserted,
+                total_errors: totalErrors,
+                summary: results
+            };
+
+            logger.info({
+                userId: validatedUserId,
+                sellersProcessed: sellers.length,
+                totalInserted,
+                totalErrors
+            }, 'cronSyncAllSellerAsins completed successfully');
+
+            return SuccessHandler.sendSuccess(res, response);
+
+        } catch (error) {
+            logger.error({ error: error.message, userId: req.params.userId }, 'cronSyncAllSellerAsins failed');
+            return ErrorHandler.sendError(res, error, 'Internal server error', 500);
+        }
+    }
+
+    /**
+     * Sync ASINs for all users (cron job)
+     * GET: /cron/sqp/cronSyncAllUsersSellerAsins
+     */
+    async cronSyncAllUsersSellerAsins(req, res) {
+        try {
+            // Get all agency users
+            const userList = await getAllAgencyUserList();
+            const isDevEnv = ["local", "development"].includes(env.NODE_ENV);
+            const allowedUsers = [8, 3];
+            const summary = [];
+            if (userList && userList.length > 0) {
+                for (const user of userList) {
+                    const userId = user.ID;
+                    if (isDevEnv && !allowedUsers.includes(userId)) {
+                        continue;
+                    } 
+                    try {
+                        // Execute per-tenant seller ASIN sync
+                        const result = await this.cronSyncAllSellerAsins({ params: { userId } }, { 
+                            json: (data) => {
+                                // Capture the response data
+                                return data;
+                            },
+                            status: () => ({
+                                json: (data) => data
+                            })
+                        });
+
+                        summary.push({
+                            userId: userId,
+                            agency: user.AgencyName || '',
+                            cron: result
+                        });
+
+                    } catch (error) {
+                        summary.push({
+                            userId: userId,
+                            agency: user.AgencyName || '',
+                            cron: { success: false, error: error.message }
+                        });
+                    }
+                }
+            }
+
+            const response = {
+                success: true,
+                users_processed: summary.length,
+                summary: summary
+            };
+
+            logger.info({
+                usersProcessed: summary.length
+            }, 'cronSyncAllUsersSellerAsins completed successfully');
+
+            return SuccessHandler.sendSuccess(res, response);
+
+        } catch (error) {
+            logger.error({ error: error.message }, 'cronSyncAllUsersSellerAsins failed');
+            return ErrorHandler.sendError(res, 'Internal server error', 500);
+        }
+    }
+
+    /**
+     * Private helper function to sync ASINs for a seller (reusable)
+     * @param {number} sellerID 
+     * @param {number} isActive Default ASIN status (1=Active, 0=Inactive)
+     * @returns {Promise<{insertedCount: number, totalCount: number, error: string|null}>}
+     */
+    async _syncSellerAsinsInternal(sellerID, isActive = 0) {
+        try {
+            // Get models
+            // Use sellerModel directly for tenant-aware operations
+            const SellerAsinList = getSellerAsinList();
+            const AsinSkuList = getAsinSkuList();
+
+            // Get seller info for validation
+            logger.info({ sellerID }, 'Getting seller profile details');
+            const seller = await sellerModel.getProfileDetailsByID(sellerID);
+
+            if (!seller) {
+                logger.error({ sellerID }, 'Seller not found');
+                return { insertedCount: 0, totalCount: 0, error: 'Seller not found or inactive' };
+            }
+
+            if (!seller.AmazonSellerID) {
+                logger.error({ sellerID, seller }, 'Seller AmazonSellerID is missing');
+                return { insertedCount: 0, totalCount: 0, error: 'Seller AmazonSellerID is missing' };
+            }
+
+            logger.info({ sellerID, amazonSellerID: seller.AmazonSellerID }, 'Seller validation passed');
+
+            // Count existing ASINs before sync
+            const beforeCount = await SellerAsinList.count({
+                where: { SellerID: sellerID }
+            });
+
+            // Get ASINs from ASIN_SKU_list that don't exist in seller_ASIN_list
+            const existingAsins = await SellerAsinList.findAll({
+                where: { SellerID: sellerID },
+                attributes: ['ASIN']
+            });
+
+            const existingAsinSet = new Set(existingAsins.map(item => item.ASIN.toUpperCase()));
+            
+            logger.info({ 
+                sellerID, 
+                beforeCount, 
+                existingAsinsCount: existingAsins.length,
+                existingAsinsSample: existingAsins.slice(0, 5).map(item => item.ASIN)
+            }, 'Existing ASINs check completed');
+
+            // Get new ASINs from ASIN_SKU_list
+            logger.info({ sellerID }, 'Fetching ASINs from ASIN_SKU_list');
+            const newAsins = await AsinSkuList.findAll({
+                where: {
+                    SellerID: sellerID,
+                    ASIN: {
+                        [require('sequelize').Op.ne]: null,
+                        [require('sequelize').Op.ne]: ''
+                    }
+                },
+                attributes: ['ASIN'],
+                raw: true,
+                group: ['ASIN']
+            });
+            logger.info({ sellerID, newAsinsCount: newAsins.length }, 'Retrieved ASINs from ASIN_SKU_list');
+
+            // Filter out existing ASINs and prepare for bulk insert
+            const asinsToInsert = newAsins
+                .filter(item => {
+                    const asin = item.ASIN ? item.ASIN.trim().toUpperCase() : '';
+                    return asin && asin.length > 0 && asin.length <= 20 && !existingAsinSet.has(asin);
+                })
+                .map(item => {
+                    const asin = item.ASIN.trim().toUpperCase();
+                    return {
+                        SellerID: sellerID,
+                        AmazonSellerID: seller.AmazonSellerID,
+                        ASIN: asin,
+                        IsActive: isActive,
+                        dtCreatedOn: new Date()
+                    };
+                });
+
+            logger.info({ 
+                sellerID, 
+                totalNewAsins: newAsins.length, 
+                existingAsins: existingAsinSet.size,
+                asinsToInsert: asinsToInsert.length 
+            }, 'Data preparation completed');
+
+            // Bulk insert new ASINs with chunks
+            let insertedCount = 0;
+            if (asinsToInsert.length > 0) {
+                const chunkSize = 50; // Process 50 records at a time
+                const chunks = [];
+                
+                // Split into chunks
+                for (let i = 0; i < asinsToInsert.length; i += chunkSize) {
+                    chunks.push(asinsToInsert.slice(i, i + chunkSize));
+                }
+                
+                logger.info({ 
+                    sellerID, 
+                    totalRecords: asinsToInsert.length, 
+                    chunkSize, 
+                    totalChunks: chunks.length 
+                }, 'Starting chunked bulk insert');
+                
+                // Process each chunk
+                for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+                    const chunk = chunks[chunkIndex];
+                    
+                    try {
+                        // Try bulk insert for this chunk
+                        await SellerAsinList.bulkCreate(chunk, {
+                            ignoreDuplicates: true, // Ignore duplicate key errors
+                            validate: true
+                        });
+                        insertedCount += chunk.length;
+                        logger.info({ 
+                            sellerID, 
+                            chunkIndex: chunkIndex + 1, 
+                            chunkSize: chunk.length,
+                            totalInserted: insertedCount 
+                        }, 'Chunk inserted successfully');
+                        
+                    } catch (chunkError) {
+                        logger.error({
+                            error: chunkError.message,
+                            sellerID: sellerID,
+                            chunkIndex: chunkIndex + 1,
+                            chunkSize: chunk.length,
+                            chunkSample: chunk.slice(0, 2)
+                        }, 'Chunk insert failed, trying individual inserts for this chunk');
+                        
+                        // If chunk fails, try individual inserts for this chunk
+                        for (let i = 0; i < chunk.length; i++) {
+                            try {
+                                await SellerAsinList.create(chunk[i], {
+                                    ignoreDuplicates: true
+                                });
+                                insertedCount++;
+                            } catch (individualError) {
+                                // Log but continue - likely duplicate key error
+                                logger.warn({
+                                    error: individualError.message,
+                                    record: chunk[i],
+                                    sellerID: sellerID
+                                }, 'Individual insert skipped (likely duplicate)');
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Count total ASINs after sync
+            const afterCount = await SellerAsinList.count({
+                where: { SellerID: sellerID }
+            });
+
+            return { insertedCount, totalCount: afterCount, error: null };
+
+        } catch (error) {
+            logger.error({
+                error: error.message,
+                stack: error.stack,
+                sellerID: sellerID,
+                isActive: isActive
+            }, 'syncSellerAsinsInternal failed');
+            return { insertedCount: 0, totalCount: 0, error: `Database error: ${error.message}` };
         }
     }
 }

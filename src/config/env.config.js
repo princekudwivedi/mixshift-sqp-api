@@ -78,6 +78,7 @@ const config = {
     TBL_OAUTH_TOKENS: env('TBL_MWS_OAUTH_TOKEN', 'tbl_mws_oauth_token'),
     TBL_MWS_ACCESS_KEYS: env('TBL_MWS_ACCESS_KEYS', 'mws_access_keys'),
     TBL_STS_TOKENS: env('TBL_SPAPI_STS_TOKEN', 'sp_api_sts'),
+    TBL_ASIN_SKU_LIST: env('TBL_ASIN_SKU_LIST', 'ASIN_SKU_list'),
     
     // Logging
     LOG_LEVEL: env('LOG_LEVEL', 'info'),
