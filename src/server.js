@@ -3,7 +3,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const compression = require('compression');
 const logger = require('./utils/logger.utils');
-const cronRoutes = require('./routes/cron.routes');
+const apiRoutes = require('./routes/api.routes');
 const { AsyncErrorHandler } = require('./middleware/response.handlers');
 const AuthMiddleware = require('./middleware/auth.middleware');
 
@@ -47,9 +47,9 @@ app.get('/readyz', async (req, res) => {
     }
 });
 
-// Cron routes mounted at versioned prefix
+// All API routes mounted at versioned prefix
 const ipAllowlist = require('./middleware/ip.allowlist.middleware');
-app.use('/api/v1/cron/sqp', ipAllowlist, cronRoutes);
+app.use('/api/v1', ipAllowlist, apiRoutes);
 
 // Global error handler
 app.use(AsyncErrorHandler.globalErrorHandler);
