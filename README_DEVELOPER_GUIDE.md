@@ -8,14 +8,14 @@ This guide explains the codebase, core flows, key modules, and how to run, test,
 - Run dev: `npm run dev`
 - Run prod: `NODE_ENV=production node src/server.js`
 
-Base URL: server mounts cron routes at `/api/v1/cron/sqp`. Health endpoints are at `/healthz` and `/readyz`.
+Base URL: server mounts all routes under `/api/v1`. Cron (reports) routes are under `/api/v1/cron/sqp`. ASIN sync cron routes are under `/api/v1/cron/asin`.
 
 ### 2) Architecture Overview
 - Web server: `src/server.js`
   - Security: Helmet, CORS, compression, request ID, global error handler
   - IP allowlist for cron routes
-- Routes: `src/routes/cron.routes.js`
-  - Controller: `src/controllers/sqp.cron.api.controller.js`
+- Routes: `src/routes/api.routes.js` (consolidated)
+  - Controllers: `src/controllers/sqp.cron.api.controller.js`, `src/controllers/sqp.api.controller.js`
 - Services:
   - JSON ingestion: `src/services/sqp.json.processing.service.js`
   - File-based processing & copy job: `src/services/sqp.file.processing.service.js`
@@ -35,20 +35,28 @@ Base URL: server mounts cron routes at `/api/v1/cron/sqp`. Health endpoints are 
 4. After successful copy, `sqp_download_urls.FullyImported` is updated to `2`.
 
 ### 4) Key Endpoints (Cron API + Health)
-Mounted at: `/api/v1/cron/sqp`
-- `GET /request` – Request new reports
-- `GET /status` – Check report statuses
-- `GET /download` – Download completed reports
-- `GET /process-json` – Legacy JSON processing
-- `GET /stats` – Processing stats
-- `GET /all` – Run all legacy cron operations (request → status → download)
-- `GET /copy-metrics` – Copy from 3mo to main metrics (bulk) [RBAC protected]
+Mounted at: `/api/v1`
+- Reports lifecycle (`/cron/sqp`):
+  - `GET /cron/sqp/request` – Request new reports (supports `userId`)
+  - `GET /cron/sqp/status` – Check report statuses (retries up to 3x per entry)
+  - `GET /cron/sqp/download` – Download completed reports
+  - `GET /cron/sqp/process-json` – JSON processing
+  - `GET /cron/sqp/stats` – Processing stats
+  - `GET /cron/sqp/all` – Run request → status → download pipeline
+  - `GET /cron/sqp/copy-metrics` – Copy from 3mo to main metrics (bulk)
+- ASIN sync (`/cron/asin`):
+  - `GET /cron/asin/syncSellerAsins/:userId/:sellerID`
+  - `GET /cron/asin/cronSyncAllSellerAsins/:userId`
+  - `GET /cron/asin/cronSyncAllUsersSellerAsins`
+- SQP APIs (non-cron) (`/sqp`):
+  - `GET /sqp/getAsinSkuList/:userId/:sellerID`
+  - `PUT /sqp/updateAsinStatus/:userId/:sellerID/:asin` (body `status` 0 or 1; JSON or form-data)
 
 Health/Readiness:
 - `GET /healthz` – Liveness (always 200 when server up)
 - `GET /readyz` – Readiness (checks DB connectivity, 200/503)
 
-Query params commonly supported: `userId`, and for copy job: `batchSize`, `dryRun`, `force`.
+Query params commonly supported: `userId`; for copy job: `batchSize`, `dryRun`, `force`.
 
 Examples (Dev, token optional except where noted):
 ```bash
@@ -58,15 +66,16 @@ curl -H "Authorization: Bearer <TOKEN>" \
 curl -H "Authorization: Bearer <TOKEN>" \
   "http://localhost:3001/api/v1/cron/sqp/copy-metrics?userId=3&batchSize=500&force=true"
 
-# Request/status/download/all (token optional with default setup, IP-allowlisted)
+# Request/status/download/all (token optional with default setup)
 curl "http://localhost:3001/api/v1/cron/sqp/request?userId=3"
 curl "http://localhost:3001/api/v1/cron/sqp/status?userId=3"
 curl "http://localhost:3001/api/v1/cron/sqp/download?userId=3"
-curl "http://localhost:3001/api/v1/cron/sqp/all?userId=3&sellerId=71"
+curl "http://localhost:3001/api/v1/cron/sqp/all?userId=3"
 
-# Health checks
-curl "http://localhost:3001/healthz"
-curl "http://localhost:3001/readyz"
+# ASIN sync
+curl "http://localhost:3001/api/v1/cron/asin/syncSellerAsins/3/71"
+curl "http://localhost:3001/api/v1/cron/asin/cronSyncAllSellerAsins/3"
+curl "http://localhost:3001/api/v1/cron/asin/cronSyncAllUsersSellerAsins"
 ```
 
 ### 5) Bulk Copy Logic (Where/How)
@@ -88,13 +97,12 @@ curl "http://localhost:3001/readyz"
 ### 7) Environment & Security
 - Env: `src/config/env.config.js`
   - Safe parsers, strict production checks (non-default secrets, explicit CORS)
-- Required vars (subset): `DB_HOST`, `DB_USER`, `DB_NAME`, `JWT_SECRET`, `SESSION_SECRET`
+- Required vars (subset): `DB_HOST`, `DB_USER`, `DB_NAME`, SMTP vars if notifications, SP-API/LWA creds
 - Security:
-  - Auth middleware: `src/middleware/auth.middleware.js` (JWT + token)
-  - IP allowlist: `src/middleware/ip.allowlist.middleware.js`
+  - Auth middleware: `src/middleware/auth.middleware.js` (optional token)
   - Rate limit: `AuthMiddleware.rateLimit()`
   - Headers & CSP: Helmet + custom headers
-  - RBAC (enabled for copy-metrics): `src/middleware/authz.middleware.js` (`requireRole([...])`)
+  - RBAC (optional): `src/middleware/authz.middleware.js`
 
 Tokens & roles:
 - Static token: set `API_ACCESS_TOKEN` and `API_TOKEN_ROLES=operator,admin` on the server; pass token via `Authorization: Bearer` or `?token=`
@@ -112,8 +120,8 @@ Tokens & roles:
 - Metrics (optional): add Prometheus exporter (copy timings, counts, errors)
 
 OpenAPI docs:
-- Spec file: `openapi.yaml`
-- You can serve with Swagger UI in dev or import into Postman.
+- Spec file: `openapi.yaml` (partial)
+- Import into Postman or serve with Swagger UI if desired.
 
 ### 10) Common Commands
 ```bash
@@ -155,7 +163,7 @@ router.get('/copy-metrics', requireRole(['operator','admin']), (req, res) => sqp
 
 ### 13) Key Files Map
 - Server: `src/server.js`
-- Routes: `src/routes/cron.routes.js`
+- Routes: `src/routes/api.routes.js`
 - Controller: `src/controllers/sqp.cron.api.controller.js`
 - Copy Service: `src/services/sqp.file.processing.service.js`
 - JSON Service: `src/services/sqp.json.processing.service.js`

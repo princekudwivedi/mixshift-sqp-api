@@ -1,21 +1,20 @@
-# SQP Cron API - Documentation
+# SQP Cron API - Documentation (Consolidated)
 
 This API provides legacy cron endpoints for SQP (Search Query Performance) operations.
 
 ## Available Endpoints
 
 ### 1. Request Reports
-**GET** `/cron/request`
+**GET** `/api/v1/cron/sqp/request`
 
 Request SQP reports for a specific seller.
 
 **Parameters:**
-- `userId` (required) - User ID
-- `sellerId` (required) - Seller ID
+- `userId` (optional) - Scope to one user; if omitted, processes all eligible users
 
 **Example:**
 ```
-GET http://localhost:3001/cron/request?userId=3&sellerId=71
+GET http://localhost:3001/api/v1/cron/sqp/request?userId=3
 ```
 
 **Response:**
@@ -31,16 +30,16 @@ GET http://localhost:3001/cron/request?userId=3&sellerId=71
 ```
 
 ### 2. Check Report Status
-**GET** `/cron/status`
+**GET** `/api/v1/cron/sqp/status`
 
 Check the status of requested reports.
 
 **Parameters:**
-- `userId` (required) - User ID
+- `userId` (optional) - Scope to one user
 
 **Example:**
 ```
-GET http://localhost:3001/cron/status?userId=3
+GET http://localhost:3001/api/v1/cron/sqp/status?userId=3
 ```
 
 **Response:**
@@ -58,16 +57,16 @@ GET http://localhost:3001/cron/status?userId=3
 ```
 
 ### 3. Download Reports
-**GET** `/cron/download`
+**GET** `/api/v1/cron/sqp/download`
 
 Download completed reports.
 
 **Parameters:**
-- `userId` (required) - User ID
+- `userId` (optional) - Scope to one user
 
 **Example:**
 ```
-GET http://localhost:3001/cron/download?userId=3
+GET http://localhost:3001/api/v1/cron/sqp/download?userId=3
 ```
 
 **Response:**
@@ -83,16 +82,16 @@ GET http://localhost:3001/cron/download?userId=3
 ```
 
 ### 4. Process JSON Files
-**GET** `/cron/process-json`
+**GET** `/api/v1/cron/sqp/process-json`
 
 Process downloaded JSON files and store metrics.
 
 **Parameters:**
-- `userId` (required) - User ID
+- `userId` (optional)
 
 **Example:**
 ```
-GET http://localhost:3001/cron/process-json?userId=3
+GET http://localhost:3001/api/v1/cron/sqp/process-json?userId=3
 ```
 
 **Response:**
@@ -130,41 +129,38 @@ All endpoints return standardized error responses:
 
 ## Rate Limiting
 
-- 50 requests per 15 minutes per IP address
-- Rate limit headers included in responses:
-  - `X-RateLimit-Limit`
-  - `X-RateLimit-Remaining`
-  - `X-RateLimit-Reset`
+- `/api/v1/cron/sqp/*`: 50 requests per 15 minutes per IP address
+- `/api/v1/sqp/*`: 100 requests per 15 minutes per IP address
 
 ## Security
 
 - Input sanitization and validation
 - Security headers (XSS protection, etc.)
 - Request logging
-- No authentication required (simplified for cron usage)
+- Optional auth token supported (Bearer or `token` query/body). If not provided, requests proceed by default.
 
 ## Usage Examples
 
-### Complete Workflow
+### Complete Workflow (HTTP)
 
 1. **Request Reports:**
    ```bash
-   curl "http://localhost:3001/cron/request?userId=3&sellerId=71"
+   curl "http://localhost:3001/api/v1/cron/sqp/request?userId=3"
    ```
 
 2. **Check Status:**
    ```bash
-   curl "http://localhost:3001/cron/status?userId=3"
+   curl "http://localhost:3001/api/v1/cron/sqp/status?userId=3"
    ```
 
 3. **Download Reports:**
    ```bash
-   curl "http://localhost:3001/cron/download?userId=3"
+   curl "http://localhost:3001/api/v1/cron/sqp/download?userId=3"
    ```
 
 4. **Process JSON Files:**
    ```bash
-   curl "http://localhost:3001/cron/process-json?userId=3"
+   curl "http://localhost:3001/api/v1/cron/sqp/process-json?userId=3"
    ```
 
 ### JavaScript/Node.js Example
@@ -172,34 +168,34 @@ All endpoints return standardized error responses:
 ```javascript
 const axios = require('axios');
 
-const baseURL = 'http://localhost:3001';
+const baseURL = 'http://localhost:3001/api/v1';
 
 async function runCronWorkflow(userId, sellerId) {
   try {
     // 1. Request reports
     console.log('Requesting reports...');
-    const requestResponse = await axios.get(`${baseURL}/cron/request`, {
-      params: { userId, sellerId }
+    const requestResponse = await axios.get(`${baseURL}/cron/sqp/request`, {
+      params: { userId }
     });
     console.log('Request result:', requestResponse.data);
 
     // 2. Check status
     console.log('Checking status...');
-    const statusResponse = await axios.get(`${baseURL}/cron/status`, {
+    const statusResponse = await axios.get(`${baseURL}/cron/sqp/status`, {
       params: { userId }
     });
     console.log('Status:', statusResponse.data);
 
     // 3. Download reports
     console.log('Downloading reports...');
-    const downloadResponse = await axios.get(`${baseURL}/cron/download`, {
+    const downloadResponse = await axios.get(`${baseURL}/cron/sqp/download`, {
       params: { userId }
     });
     console.log('Download result:', downloadResponse.data);
 
     // 4. Process JSON files
     console.log('Processing JSON files...');
-    const processResponse = await axios.get(`${baseURL}/cron/process-json`, {
+    const processResponse = await axios.get(`${baseURL}/cron/sqp/process-json`, {
       params: { userId }
     });
     console.log('Process result:', processResponse.data);
@@ -218,31 +214,31 @@ runCronWorkflow(3, 71);
 ```python
 import requests
 
-base_url = 'http://localhost:3001'
+base_url = 'http://localhost:3001/api/v1'
 
 def run_cron_workflow(user_id, seller_id):
     try:
         # 1. Request reports
         print('Requesting reports...')
-        request_response = requests.get(f'{base_url}/cron/request', 
-                                      params={'userId': user_id, 'sellerId': seller_id})
+        request_response = requests.get(f'{base_url}/cron/sqp/request', 
+                                      params={'userId': user_id})
         print('Request result:', request_response.json())
 
         # 2. Check status
         print('Checking status...')
-        status_response = requests.get(f'{base_url}/cron/status', 
+        status_response = requests.get(f'{base_url}/cron/sqp/status', 
                                      params={'userId': user_id})
         print('Status:', status_response.json())
 
         # 3. Download reports
         print('Downloading reports...')
-        download_response = requests.get(f'{base_url}/cron/download', 
+        download_response = requests.get(f'{base_url}/cron/sqp/download', 
                                        params={'userId': user_id})
         print('Download result:', download_response.json())
 
         # 4. Process JSON files
         print('Processing JSON files...')
-        process_response = requests.get(f'{base_url}/cron/process-json', 
+        process_response = requests.get(f'{base_url}/cron/sqp/process-json', 
                                       params={'userId': user_id})
         print('Process result:', process_response.json())
 
@@ -255,13 +251,13 @@ run_cron_workflow(3, 71)
 
 ## Health Check
 
-**GET** `/health`
+**GET** `/healthz`
 
 Check if the API is running.
 
 **Example:**
 ```
-GET http://localhost:3001/health
+GET http://localhost:3001/healthz
 ```
 
 **Response:**
@@ -293,23 +289,23 @@ GET http://localhost:3001/health
 mixshift-sqp-api/
 ├── src/
 │   ├── controllers/
-│   │   └── sqpCronApiController.js    # Cron API controller
+│   │   └── sqp.cron.api.controller.js    # Cron API controller
 │   ├── routes/
-│   │   └── cronRoutes.js              # Cron routes
+│   │   └── api.routes.js                 # Consolidated routes
 │   ├── services/
 │   │   └── sqpFileProcessingService.js # File processing service
 │   ├── models/
 │   │   ├── masterModel.js             # Master data model
 │   │   └── sellerModel.js             # Seller model
 │   ├── helpers/
-│   │   └── sqpHelpers.js              # Helper functions
+│   │   └── sqp.helpers.js              # Helper functions
 │   ├── middleware/
 │   │   ├── authMiddleware.js          # Authentication middleware
 │   │   └── responseHandlers.js        # Response handlers
 │   └── db/
-│       └── tenant.js                  # Database connection
+│       └── tenant.db.js               # Database connection
 ├── server.js                          # Main server file
-└── README_CRON.md                     # This documentation
+└── README_CRON.md                     # This documentation (legacy; see main README.md)
 ```
 
 ## Getting Started
