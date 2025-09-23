@@ -3,11 +3,28 @@ const { getModel: getSqpCronLogs } = require('./sequelize/sqpCronLogs.model');
 const { getModel: getSellerAsinList } = require('./sequelize/sellerAsinList.model');
 const { Op, literal } = require('sequelize');
 
-function splitASINsIntoChunks(asins, size) {
+function splitASINsIntoChunks(asins, maxChars = 200) {
+    // Split ASINs into space-separated chunks where each concatenated string <= maxChars
     const chunks = [];
-    for (let i = 0; i < asins.length; i += size) {
-        const part = asins.slice(i, i + size);
-        chunks.push({ asins: part, asin_string: part.join(' ') });
+    const normalized = (asins || []).map(a => String(a).trim()).filter(Boolean);
+    let current = [];
+    let currentLen = 0;
+
+    for (const asin of normalized) {
+        const addLen = current.length === 0 ? asin.length : asin.length + 1; // +1 space when not first
+        if (currentLen + addLen > maxChars) {
+            if (current.length > 0) {
+                chunks.push({ asins: current.slice(), asin_string: current.join(' ') });
+            }
+            current = [asin];
+            currentLen = asin.length;
+        } else {
+            current.push(asin);
+            currentLen += addLen;
+        }
+    }
+    if (current.length > 0) {
+        chunks.push({ asins: current.slice(), asin_string: current.join(' ') });
     }
     return chunks;
 }

@@ -160,12 +160,34 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 				throw new Error('Missing AmazonMarketplaceId; skipping report request');
 			}
 
-			const payload = {
+            // Build asin string within 200 chars (space-separated)
+            let asinString = '';
+            if (Array.isArray(chunk.asins) && chunk.asins.length > 0) {
+                const limit = 200;
+                const normalized = chunk.asins.map(a => String(a).trim()).filter(Boolean);
+                const parts = [];
+                let currentLen = 0;
+                for (const a of normalized) {
+                    const addLen = (parts.length === 0 ? a.length : a.length + 1);
+                    if (currentLen + addLen > limit) break;
+                    parts.push(a);
+                    currentLen += addLen;
+                }
+                asinString = parts.join(' ');
+            } else if (chunk.asin_string) {
+                asinString = String(chunk.asin_string).replace(/\s+/g, ' ').trim().slice(0, 200);
+            }
+
+            if (!asinString) {
+                throw new Error('No ASINs available for report request');
+            }
+
+            const payload = {
 				reportType: 'GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT',
 				dataStartTime: `${range.start}T00:00:00Z`,
 				dataEndTime: `${range.end}T23:59:59Z`,
 				marketplaceIds: [ marketplaceId ],
-				reportOptions: { asin: chunk.asin_string, reportPeriod: reportType },
+                reportOptions: { asin: asinString, reportPeriod: reportType },
 			};
 			
 			logger.info({ payload, attempt }, 'Payload created, calling SP-API');
@@ -182,7 +204,18 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 				}
 			}
 
-			const resp = await sp.createReport(seller, payload, currentAuthOverrides);
+            let resp;
+            try {
+                resp = await sp.createReport(seller, payload, currentAuthOverrides);
+            } catch (err) {
+                logger.error({
+                    status: err.status || err.statusCode,
+                    body: err.response && (err.response.body || err.response.text),
+                    message: err.message,
+                    payload
+                }, 'SP-API createReport failed');
+                throw err;
+            }
 			const reportId = resp.reportId;
 			
 			logger.info({ reportId, attempt }, 'Report created successfully');

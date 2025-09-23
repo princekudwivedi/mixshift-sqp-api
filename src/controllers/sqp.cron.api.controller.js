@@ -373,6 +373,81 @@ class SqpCronApiController {
     }
 
     /**
+     * Process JSON files (legacy endpoint)
+     */
+    async processJsonFiles(req, res) {
+        try {
+            const { userId } = req.query;
+            
+            // Validate inputs
+            const validatedUserId = userId ? ValidationHelpers.validateUserId(userId) : null;
+
+            logger.info({ 
+                userId: validatedUserId,
+                hasToken: !!req.authToken 
+            }, 'Process JSON files (legacy)');
+
+            await loadDatabase(0);
+            const users = validatedUserId ? [{ ID: validatedUserId }] : await getAllAgencyUserList();
+            
+            let totalProcessed = 0;
+            let totalErrors = 0;
+            
+            for (const user of users) {
+                try {
+                    await loadDatabase(user.ID);
+                    const result = await jsonProcessingService.processSavedJsonFiles();
+                    if (!result) {
+                        logger.error({ userId: user.ID }, 'processSavedJsonFiles returned no result');
+                        totalErrors += 1;
+                        continue;
+                    }
+                    totalProcessed += (typeof result.processed === 'number' ? result.processed : 0);
+                    totalErrors += (typeof result.errors === 'number' ? result.errors : 0);
+                } catch (error) {
+                    logger.error({ 
+                        error: error.message, 
+                        userId: user.ID 
+                    }, 'Error processing JSON files for user');
+                    totalErrors++;
+                }
+            }
+            
+            if (totalErrors > 0) {
+                return ErrorHandler.sendProcessingError(
+                    res,
+                    new Error('One or more JSON files failed to process'),
+                    totalProcessed,
+                    totalErrors,
+                    'JSON file processing failed'
+                );
+            }
+
+            return SuccessHandler.sendProcessingSuccess(
+                res, 
+                totalProcessed, 
+                totalErrors, 
+                'JSON files processed successfully'
+            );
+
+        } catch (error) {
+            logger.error({ 
+                error: error.message,
+                stack: error.stack,
+                query: req.query 
+            }, 'Error in process JSON files');
+            
+            return ErrorHandler.sendProcessingError(
+                res, 
+                error, 
+                0, 
+                0, 
+                'Failed to process JSON files'
+            );
+        }
+    }
+    
+    /**
      * Copy metrics data from sqp_metrics_3mo to sqp_metrics with bulk insert
      */
     async copyMetricsData(req, res) {
