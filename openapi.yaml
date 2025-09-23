@@ -45,10 +45,5 @@ paths:
     get:
       summary: Process saved JSON files (legacy)
       responses:
-        '200': { description: OK }
-  /stats:
-    get:
-      summary: Get processing stats (legacy)
-      responses:
-        '200': { description: OK }
+        '200': { description: OK }  
 

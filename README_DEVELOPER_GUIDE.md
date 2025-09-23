@@ -41,7 +41,6 @@ Mounted at: `/api/v1`
   - `GET /cron/sqp/status` – Check report statuses (retries up to 3x per entry)
   - `GET /cron/sqp/download` – Download completed reports
   - `GET /cron/sqp/process-json` – JSON processing
-  - `GET /cron/sqp/stats` – Processing stats
   - `GET /cron/sqp/all` – Run request → status → download pipeline
   - `GET /cron/sqp/copy-metrics` – Copy from 3mo to main metrics (bulk)
 - ASIN sync (`/cron/asin`):

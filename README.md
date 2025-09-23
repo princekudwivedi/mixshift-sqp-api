@@ -1,6 +1,6 @@
 ## MixShift SQP API (Node.js)
 
-Node.js service that implements the SQP cron flows and SQP-related APIs, ported from `dash-amazon-sp-api` PHP.
+Node.js service that implements the SQP cron flows and SQP-related APIs.
 
 ### Quick start
 
@@ -102,9 +102,6 @@ All routes are consolidated in `src/routes/api.routes.js` and share the same mid
 - GET `/cron/sqp/copy-metrics`
   - Copies metrics into summary tables.
 
-- GET `/cron/sqp/stats`
-  - Returns processing stats and counts.
-
 #### Cron APIs (ASIN sync)
 
 - GET `/cron/asin/syncSellerAsins/:userId/:sellerID`
@@ -181,6 +178,25 @@ Linux crontab examples (HTTP via curl):
 
 # ASIN sync all users daily @03:00
 0 3 * * * curl -fsS "http://localhost:3001/api/v1/cron/asin/cronSyncAllUsersSellerAsins" >> /var/log/sqp_asin_sync_all.log 2>&1
+```
+
+```bash
+Option 2: 24/7 Operation
+# Weekly - Request new reports (Sunday 2:00 AM)
+0 2 * * 0 curl "http://localhost:3001/api/v1/cron/sqp/request" >> /var/log/sqp_request.log 2>&1
+
+# Every 30 minutes - Check statuses
+*/30 * * * * curl "http://localhost:3001/api/v1/cron/sqp/status" >> /var/log/sqp_status.log 2>&1
+
+# Every 2 hours - Download reports
+0 */2 * * * curl "http://localhost:3001/api/v1/cron/sqp/download" >> /var/log/sqp_download.log 2>&1
+
+# Every 4 hours - Process JSON files
+0 */4 * * * curl "http://localhost:3001/api/v1/cron/sqp/process-json" >> /var/log/sqp_process.log 2>&1
+
+# Daily at 3:00 AM - Copy metrics data
+0 3 * * * curl "http://localhost:3001/api/v1/cron/sqp/copy-metrics?batchSize=2000&force=true" >> /var/log/sqp_copy.log 2>&1
+
 ```
 
 Windows Task Scheduler examples:
