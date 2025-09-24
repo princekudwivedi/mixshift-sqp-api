@@ -6,9 +6,7 @@ const table = 'sqp_monthly';
 
 let BaseModel = sequelize.define(table, {
     ID: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
-    ReportID: { type: DataTypes.BIGINT },
-    AmazonSellerID: { type: DataTypes.STRING(100) },
-    ReportType: { type: DataTypes.STRING(32) },
+    CronJobID: { type: DataTypes.BIGINT },
     ReportDate: { type: DataTypes.DATEONLY },
     StartDate: { type: DataTypes.DATEONLY },
     EndDate: { type: DataTypes.DATEONLY },

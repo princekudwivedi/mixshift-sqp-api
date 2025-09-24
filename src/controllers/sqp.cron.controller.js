@@ -74,8 +74,7 @@ async function sendFailureNotification(cronDetailID, amazonSellerID, reportType,
 function shouldRequestReport(row, reportType) {
 	const prefix = model.mapPrefix(reportType);
 	const status = row[`${prefix}SQPDataPullStatus`];
-	const retry = row[`RetryCount_${prefix}`] || 0;
-	return (status === 0 || status === 2) && retry < MAX_RETRIES;
+    return (status === 0 || status === 2);
 }
 
 function sellerProfileFromEnv() {
@@ -111,7 +110,10 @@ async function requestForSeller(seller, authOverrides = {}, spReportType = confi
 			
 			for (const type of ['WEEK', 'MONTH', 'QUARTER']) {
 				logger.info({ type }, 'Requesting report for type');
-				await requestSingleReport(chunk, seller, cronDetailID, type, authOverrides, spReportType);
+                // ProcessRunningStatus = 1 (Request Report)
+                await model.setProcessRunningStatus(cronDetailID, type, 1);
+                await model.logCronActivity({ cronJobID: cronDetailID, reportType: type, action: 'Request Report', status: 1, message: 'Requesting report' });
+                await requestSingleReport(chunk, seller, cronDetailID, type, authOverrides, spReportType);
 			}
 		}
 	} catch (error) {
@@ -222,6 +224,17 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 			
 			// Update with reportId but preserve the start date
 			await model.updateSQPReportStatus(cronDetailID, reportType, 0, reportId, null, null, null, startDate);
+			// Log report creation so status checker can fetch ReportID from logs
+			await model.logCronActivity({
+				cronJobID: cronDetailID,
+				reportType,
+				action: 'Request Report',
+				status: 1,
+				message: 'Report requested',
+				reportID: reportId,
+				retryCount: 0,
+				executionTime: 0
+			});
 			
 			return {
 				message: `Report requested successfully on attempt ${attempt}. Report ID: ${reportId}`,
@@ -251,20 +264,39 @@ async function checkReportStatuses(authOverrides = {}) {
 		logger.info('No reports found for status check');
 		return;
 	}
-	
-	for (const row of rows) {
-		logger.info({ rowId: row.ID }, 'Processing report row');
-		for (const [type, field] of [['WEEK', 'ReportID_Weekly'], ['MONTH', 'ReportID_Monthly'], ['QUARTER', 'ReportID_Quarterly']]) {
-			if (row[field] && row[`${model.mapPrefix(type)}SQPDataPullStatus`] === 0) {
-				logger.info({ type, reportId: row[field] }, 'Checking status for report');
-				await checkReportStatusByType(row, type, field, authOverrides);
+	let reportID = null;	
+    for (const row of rows) {
+        logger.info({ rowId: row.ID }, 'Processing report row');
+        for (const type of ['WEEK', 'MONTH', 'QUARTER']) {
+            if (row[`${model.mapPrefix(type)}SQPDataPullStatus`] === 0) {
+                // ProcessRunningStatus = 2 (Check Status)
+                await model.setProcessRunningStatus(row.ID, type, 2);
+				reportID = await model.getLatestReportId(row.ID, type);
+                await model.logCronActivity({ cronJobID: row.ID, reportType: type, action: 'Check Status', status: 1, message: 'Checking report status', reportID: reportID });
+                logger.info({ type }, 'Checking status for report');
+                await checkReportStatusByType(row, type, authOverrides, reportID);
 			}
 		}
 	}
 }
 
-async function checkReportStatusByType(row, reportType, field, authOverrides = {}) {
-	const reportId = row[field];
+async function checkReportStatusByType(row, reportType, authOverrides = {}, reportID = null) {
+    // Find latest ReportID from logs for this CronJobID + ReportType
+    const reportId = reportID || await model.getLatestReportId(row.ID, reportType);
+    if (!reportId) {
+        logger.warn({ cronDetailID: row.ID, reportType }, 'No ReportID found in logs yet; skipping status check for this type');
+        await model.logCronActivity({
+            cronJobID: row.ID,
+            reportType,
+            action: 'Check Status',
+            status: 3,
+            message: 'Skipping status check: ReportID not found in logs yet',
+            reportID: null,
+            retryCount: 0,
+            executionTime: 0
+        });
+        return { success: true, skipped: true, reason: 'No ReportID in logs yet' };
+    }
 	
 	// Get seller profile from database using AmazonSellerID from the row
 	const seller = await sellerModel.getProfileDetailsByAmazonSellerID(row.AmazonSellerID);
@@ -300,23 +332,22 @@ async function checkReportStatusByType(row, reportType, field, authOverrides = {
 			const res = await sp.getReportStatus(seller, reportId, currentAuthOverrides);
 			const status = res.processingStatus;
 			
-			if (status === 'DONE') {
+            if (status === 'DONE') {
 				// Keep ReportID_* as the original reportId; store documentId separately
 				const documentId = res.reportDocumentId || null;
-				await model.updateSQPReportStatus(row.ID, reportType, 1, reportId, null, documentId, false);
+                //await model.updateSQPReportStatus(row.ID, reportType, 1);
 				// Enqueue for download processing (store in sqp_download_urls as PENDING)
-				await downloadUrls.storeDownloadUrl({
+                await downloadUrls.storeDownloadUrl({
 					CronJobID: row.ID,
 					ReportID: reportId,
-					AmazonSellerID: row.AmazonSellerID,
 					ReportType: reportType,
 					DownloadURL: '',
-					ReportDocumentID: documentId,
-					CompressionAlgorithm: null,
 					Status: 'PENDING',
 					DownloadAttempts: 0,
 					MaxDownloadAttempts: 3,
 				});
+                // Log report ID and document ID in cron logs
+                await model.logCronActivity({ cronJobID: row.ID, reportType, action: 'Check Status', status: 1, message: 'Report ready', reportID: reportId, reportDocumentID: documentId });
 				
 				return {
 					message: `Report ready on attempt ${attempt}. Report ID: ${reportId}${documentId ? ' | Document ID: ' + documentId : ''}`,
@@ -350,27 +381,20 @@ async function checkReportStatusByType(row, reportType, field, authOverrides = {
 					noRetryNeeded: true
 				};
 				
-			} else if (status === 'FATAL' || status === 'CANCELLED') {
-				// These are permanent failures, don't retry
-				await model.incrementRetryCount(row.ID, reportType);
-				await model.updateSQPReportStatus(row.ID, reportType, 2, null, status, null, null, null, new Date());
-				const retry = await model.getRetryCount(row.ID, reportType);
-				
-				// Log the permanent failure
-				await model.logCronActivity({ 
-					cronJobID: row.ID, 
-					amazonSellerID: row.AmazonSellerID, 
-					reportType, 
-					action: 'Check Status', 
-					status: 2, 
-					message: `Report ${status} on attempt ${attempt}`, 
-					reportID: reportId, 
-					retryCount: retry, 
-					executionTime: (Date.now() - startTime) / 1000 
-				});
-				
-				// Send notification for permanent failure
-				await sendFailureNotification(row.ID, row.AmazonSellerID, reportType, `Report ${status}`, retry, reportId);
+            } else if (status === 'FATAL' || status === 'CANCELLED') {
+                // Permanent failure
+                await model.updateSQPReportStatus(row.ID, reportType, 2, null, status, null, null, null, new Date());
+                await model.logCronActivity({ 
+                    cronJobID: row.ID, 
+                    reportType, 
+                    action: 'Check Status', 
+                    status: 2, 
+                    message: `Report ${status} on attempt ${attempt}`, 
+                    reportID: reportId, 
+                    retryCount: 0, 
+                    executionTime: (Date.now() - startTime) / 1000 
+                });
+                await sendFailureNotification(row.ID, row.AmazonSellerID, reportType, `Report ${status}`, 0, reportId);
 				
 				// Throw error to trigger retry mechanism, but this will be caught and handled
 				throw new Error(`Report ${status} - permanent failure`);
@@ -398,18 +422,32 @@ async function checkReportStatusByType(row, reportType, field, authOverrides = {
 }
 
 async function downloadCompletedReports(authOverrides = {}) {
-	const rows = await model.getReportsForDownload();
-	for (const row of rows) {
-		for (const [type, field] of [['WEEK', 'ReportID_Weekly'], ['MONTH', 'ReportID_Monthly'], ['QUARTER', 'ReportID_Quarterly']]) {
-			if (row[field] && row[`${model.mapPrefix(type)}SQPDataPullStatus`] === 1) {
-				await downloadReportByType(row, type, field, authOverrides);
-			}
-		}
-	}
+    const rows = await model.getReportsForDownload();
+    for (const row of rows) {
+        for (const type of ['WEEK', 'MONTH', 'QUARTER']) {
+            if (row[`${model.mapPrefix(type)}SQPDataPullStatus`] === 0) {
+                const reportId = await model.getLatestReportId(row.ID, type);
+                if (!reportId) {
+                    await model.logCronActivity({ cronJobID: row.ID, reportType: type, action: 'Download Report', status: 3, message: 'Skipping download: ReportID not found in logs', reportID: null, retryCount: 0, executionTime: 0 });
+                    continue;
+                }
+                // ProcessRunningStatus = 3 (Download)
+                await model.setProcessRunningStatus(row.ID, type, 3);
+                await model.logCronActivity({ cronJobID: row.ID, reportType: type, action: 'Download Report', status: 1, message: 'Downloading report', reportID: reportId });
+                await downloadReportByType(row, type, authOverrides, reportId);
+            }
+        }
+    }
 }
 
-async function downloadReportByType(row, reportType, field, authOverrides = {}) {
-	const reportId = row[field];
+async function downloadReportByType(row, reportType, authOverrides = {}, reportId = null) {
+    if (!reportId) {
+        reportId = await model.getLatestReportId(row.ID, reportType);
+        if (!reportId) {
+            await model.logCronActivity({ cronJobID: row.ID, reportType, action: 'Download Report', status: 3, message: 'Skipping download: ReportID not found in logs', reportID: null, retryCount: 0, executionTime: 0 });
+            return { success: true, skipped: true, reason: 'No ReportID in logs' };
+        }
+    }
 	
 	// Load seller profile by AmazonSellerID (avoid env defaults)
 	const seller = await sellerModel.getProfileDetailsByAmazonSellerID(row.AmazonSellerID);
@@ -433,17 +471,15 @@ async function downloadReportByType(row, reportType, field, authOverrides = {}) 
 			logger.info({ reportId, reportType, attempt }, 'Starting download for report');
 			
 			// Update download status to DOWNLOADING and increment attempts
-			await downloadUrls.updateDownloadUrlStatusByCriteria(
-				row.ID, 
-				reportId, 
-				row.AmazonSellerID, 
-				reportType, 
-				'DOWNLOADING',
-				null,
-				null,
-				null,
-				true // Increment attempts
-			);
+            await downloadUrls.updateDownloadUrlStatusByCriteria(
+                row.ID,
+                reportType,
+                'DOWNLOADING',
+                null,
+                null,
+                null,
+                true
+            );
 			
 			// Ensure access token for download as well
 			let currentAuthOverrides = { ...authOverrides };
@@ -502,20 +538,18 @@ async function downloadReportByType(row, reportType, field, authOverrides = {}) 
 				}
 
 				// Update the existing record in sqp_download_urls with file metadata and set status to COMPLETED
-				await downloadUrls.updateDownloadUrlStatusByCriteria(
-					row.ID, 
-					reportId, 
-					row.AmazonSellerID, 
-					reportType, 
-					'COMPLETED',
-					null,
-					filePath,
-					fileSize,
-					false // Don't increment attempts
-				);
+                await downloadUrls.updateDownloadUrlStatusByCriteria(
+                    row.ID,
+                    reportType,
+                    'COMPLETED',
+                    null,
+                    filePath,
+                    fileSize,
+                    false
+                );
 
 				// Mark download as completed - preserve existing ReportID and ReportDocumentID and set end date
-				await model.updateSQPReportStatus(row.ID, reportType, 1, reportId, null, documentId, true, null, new Date());
+                await model.updateSQPReportStatus(row.ID, reportType, 0, null, null, null, null, null, new Date());
 				
 				return {
 					message: `Report downloaded successfully on attempt ${attempt} and file saved for later processing`,
@@ -535,20 +569,18 @@ async function downloadReportByType(row, reportType, field, authOverrides = {}) 
 				logger.warn({ reportId: documentId, reportType, attempt }, 'No data received from report download');
 				
 				// Update download status to COMPLETED even with no data
-				await downloadUrls.updateDownloadUrlStatusByCriteria(
-					row.ID, 
-					reportId, 
-					row.AmazonSellerID, 
-					reportType, 
-					'COMPLETED',
-					'No data in report',
-					null,
-					null,
-					false // Don't increment attempts
-				);
+                await downloadUrls.updateDownloadUrlStatusByCriteria(
+                    row.ID,
+                    reportType,
+                    'COMPLETED',
+                    'No data in report',
+                    null,
+                    null,
+                    false
+                );
 				
 				// Mark download as completed even with no data - preserve existing ReportID and ReportDocumentID and set end date
-				await model.updateSQPReportStatus(row.ID, reportType, 1, reportId, 'No data in report', documentId, true, null, new Date());
+                await model.updateSQPReportStatus(row.ID, reportType, 1, null, null, null, null, null, new Date());
 				
 				return {
 					message: `Report downloaded on attempt ${attempt} but contains no data`,

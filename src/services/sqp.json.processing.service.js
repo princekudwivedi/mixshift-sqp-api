@@ -69,13 +69,13 @@ async function processSingleJsonFile(download) {
 		// Set ReportDate to the time the report was requested
 		const reportDateOverride = await getRequestStartDate(download.CronJobID, download.ReportType);
 
-        // Mark cron detail as import in-progress (4)
+        // ProcessRunningStatus = 4 (Process Import) and mark cron detail as import in-progress (4)
         if (download.CronJobID && download.ReportType) {
-            await model.updateSQPReportStatus(download.CronJobID, download.ReportType, 4);
+            await model.setProcessRunningStatus(download.CronJobID, download.ReportType, 4);            
         }
 
         // Parse and store data in database with retry up to 3 attempts
-        const { total, success, failed } = await importJsonWithRetry(download, jsonContent, filePath, reportDateOverride);
+        const { total, success, failed, maxRange, minRange } = await importJsonWithRetry(download, jsonContent, filePath, reportDateOverride);
 
 		// Update status to COMPLETED
 		const fileStats = (!/^https?:\/\//i.test(filePath) && filePath)
@@ -95,6 +95,17 @@ async function processSingleJsonFile(download) {
         if (download.CronJobID && download.ReportType) {
             await model.updateSQPReportStatus(download.CronJobID, download.ReportType, 1, download.ReportID, null, null, null, null, new Date());
         }
+        // Update latest date range on seller_ASIN_list by ASIN list from sqp_cron_details (ASIN_List)
+        try {
+            await updateSellerAsinLatestRanges({
+                cronJobID: download.CronJobID,
+                amazonSellerID: download.AmazonSellerID,
+                reportType: download.ReportType,
+                minRange,
+                maxRange,
+                jsonAsins: Array.isArray(jsonContent) ? jsonContent.map(r => (r.asin || r.ASIN || '')).filter(Boolean) : []
+            });
+        } catch (_) {}
 
 		console.log(`Successfully processed JSON file for report ${download.ReportID}`);
 
@@ -189,10 +200,16 @@ async function parseAndStoreJsonData(download, jsonContent, filePath, reportDate
 			return { total: 0, success: 0, failed: 0 };
 		}
 
-		const rows = [];
+        const rows = [];
+        let minRange = null;
+        let maxRange = null;
 		for (const record of records) {
 			const row = buildMetricsRow(download, defaultReportDate, record, filePath, reportDateOverride);
 			if (row) rows.push(row);
+            const s = record.startDate || null;
+            const e = record.endDate || null;
+            if (s) minRange = !minRange || s < minRange ? s : minRange;
+            if (e) maxRange = !maxRange || e > maxRange ? e : maxRange;
 		}
 
 		const total = records.length;
@@ -210,14 +227,11 @@ async function parseAndStoreJsonData(download, jsonContent, filePath, reportDate
             } else if (type === 'QUARTER') {
                 const SqpQuarterly = getSqpQuarterly();
                 await SqpQuarterly.bulkCreate(rows, { validate: false, ignoreDuplicates: false });
-            } else {
-			const SqpMetrics3mo = getSqpMetrics3mo();
-			await SqpMetrics3mo.bulkCreate(rows, { validate: false, ignoreDuplicates: false });
-            }
+            } 
 		}
 
 		console.log(`Successfully parsed and stored ${rows.length}/${records.length} records for report ${download.ReportID}`);
-		return { total, success, failed };
+        return { total, success, failed, minRange, maxRange };
 
 	} catch (error) {
 		throw new Error(`JSON parsing failed: ${error.message}`);
@@ -271,9 +285,7 @@ function buildMetricsRow(download, reportDate, record, filePath, reportDateOverr
 			null;
 
 		return {
-			ReportID: download.ReportID,
-			AmazonSellerID: download.AmazonSellerID,
-			ReportType: download.ReportType,
+			ReportID: download.CronJobID,
 			ReportDate: reportDateOverride || endDate || reportDate,
 			StartDate: startDate,
 			EndDate: endDate,
@@ -362,6 +374,30 @@ async function getDownloadUrlStats() {
     }
 }
 
+// Update LatestRecordDateRange* on seller_ASIN_list for ASINs in ASIN_List (cron) or JSON
+async function updateSellerAsinLatestRanges({ cronJobID, amazonSellerID, reportType, minRange, maxRange, jsonAsins = [] }) {
+    if (!cronJobID || !reportType || !minRange || !maxRange) return;
+    const col = reportType === 'WEEK' ? 'LatestRecordDateRangeWeekly' : reportType === 'MONTH' ? 'LatestRecordDateRangeMonthly' : reportType === 'QUARTER' ? 'LatestRecordDateRangeQuarterly' : null;
+    if (!col) return;
+    const rangeStr = `${minRange} - ${maxRange}`;
+
+    // Retrieve ASIN_List from sqp_cron_details
+    const SqpCronDetails = getSqpCronDetails();
+    const cronRow = await SqpCronDetails.findOne({ where: { ID: cronJobID }, attributes: ['ASIN_List'] }).catch(() => null);
+    let asinSet = new Set();
+    if (cronRow && cronRow.ASIN_List) {
+        cronRow.ASIN_List.split(/\s+/).filter(Boolean).forEach(a => asinSet.add(a.trim()));
+    }
+    // Merge JSON ASINs
+    jsonAsins.forEach(a => asinSet.add(String(a).trim()));
+    const asins = Array.from(asinSet).filter(Boolean);
+    if (asins.length === 0) return;
+
+    const { getModel: getSellerAsinList } = require('../models/sequelize/sellerAsinList.model');
+    const SellerAsinList = getSellerAsinList();
+    await SellerAsinList.update({ [col]: rangeStr, dtUpdatedOn: new Date() }, { where: { AmazonSellerID: amazonSellerID, ASIN: asins } });
+}
+
 async function processSavedJsonFiles(limit = 25) {
 	const rows = await downloadUrls.getCompletedDownloadsWithFiles(limit);
 	if (!rows || rows.length === 0) {
@@ -385,9 +421,9 @@ async function processSavedJsonFiles(limit = 25) {
 			const reportDateOverride = await getRequestStartDate(row.CronJobID, row.ReportType);
 
             // Parse and store
-            // Mark cron detail as import in-progress (4)
+            // ProcessRunningStatus = 4 (Process Import) and mark cron detail as import in-progress (4)
             if (row.CronJobID && row.ReportType) {
-                await model.updateSQPReportStatus(row.CronJobID, row.ReportType, 4);
+                await model.setProcessRunningStatus(row.CronJobID, row.ReportType, 4);
             }
 
             const stats = await importJsonWithRetry({
@@ -404,9 +440,23 @@ async function processSavedJsonFiles(limit = 25) {
 				failCount: stats.failed
 			});
             // Mark cron detail import success (1) and set end date now
-            if (row.CronJobID && row.ReportType) {
-                await model.updateSQPReportStatus(row.CronJobID, row.ReportType, 1, row.ReportID, null, null, null, null, new Date());
-            }
+            // if (row.CronJobID && row.ReportType) {
+            //     await model.updateSQPReportStatus(row.CronJobID, row.ReportType, 1, row.ReportID, null, null, null, null, new Date());
+            // }			
+            // Update latest date range on seller_ASIN_list
+            try {
+                const jsonAsins = Array.isArray(json) ? json.map(r => (r.asin || r.ASIN || '')).filter(Boolean) : [];
+                const minRangeCalc = (jsonAsins.length && json[0]?.startDate) ? json.reduce((m, r) => m && m < r.startDate ? m : r.startDate, json[0].startDate) : null;
+                const maxRangeCalc = (jsonAsins.length && json[0]?.endDate) ? json.reduce((m, r) => m && m > r.endDate ? m : r.endDate, json[0].endDate) : null;
+                await updateSellerAsinLatestRanges({
+                    cronJobID: row.CronJobID,
+                    amazonSellerID: row.AmazonSellerID,
+                    reportType: row.ReportType,
+                    minRange: minRangeCalc,
+                    maxRange: maxRangeCalc,
+                    jsonAsins
+                });
+            } catch (_) {}
 			processed++;
 		} catch (e) {
 			console.error('Error processing saved file:', e.message);

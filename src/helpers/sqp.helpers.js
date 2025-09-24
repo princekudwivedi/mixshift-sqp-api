@@ -49,7 +49,7 @@ class RetryHelpers {
 
         // Check if this report type has already reached max retries
         if (skipIfMaxRetriesReached) {
-            const currentRetryCount = await model.getRetryCount(cronDetailID, reportType);
+            const currentRetryCount = 0;
             if (currentRetryCount >= maxRetries) {
                 logger.info({
                     cronDetailID,
@@ -70,7 +70,7 @@ class RetryHelpers {
 
         while (attempt < maxRetries) {
             attempt++;
-            const currentRetry = await model.getRetryCount(cronDetailID, reportType);
+            const currentRetry = attempt - 1;
 
             logger.info({
                 cronDetailID,
@@ -226,7 +226,6 @@ class RetryHelpers {
 
                     await model.logCronActivity({
                         cronJobID: cronDetailID,
-                        amazonSellerID: amazonSellerID,
                         reportType: reportType,
                         action: action,
                         status: 3, // Will retry

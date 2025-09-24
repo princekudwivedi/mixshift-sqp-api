@@ -15,6 +15,9 @@ let BaseModel = sequelize.define(table, {
     LastSQPDataPullStatus: { type: DataTypes.ENUM('Pending','InProgress','Completed','Failed'), allowNull: true },
     LastSQPDataPullStartTime: { type: DataTypes.DATE, allowNull: true },
     LastSQPDataPullEndTime: { type: DataTypes.DATE, allowNull: true },
+    LatestRecordDateRangeWeekly: { type: DataTypes.STRING(255), allowNull: true },
+    LatestRecordDateRangeMonthly: { type: DataTypes.STRING(255), allowNull: true },
+    LatestRecordDateRangeQuarterly: { type: DataTypes.STRING(255), allowNull: true },
     dtCreatedOn: { type: DataTypes.DATE, allowNull: false },
     dtUpdatedOn: { type: DataTypes.DATE, allowNull: true }
 }, {

@@ -62,24 +62,22 @@ async function updateDownloadUrlStatus(id, status, errorMessage = null, filePath
 	return updateDownloadStatus({ id }, { status, errorMessage, filePath, fileSize, incrementAttempts });
 }
 
-async function updateDownloadUrlStatusByCriteria(cronJobID, reportID, amazonSellerID, reportType, status, errorMessage = null, filePath = null, fileSize = null, incrementAttempts = false) {
-	const criteria = { CronJobID: cronJobID, ReportID: reportID, AmazonSellerID: amazonSellerID, ReportType: reportType };
-	return updateDownloadStatus({ criteria }, { status, errorMessage, filePath, fileSize, incrementAttempts });
+async function updateDownloadUrlStatusByCriteria(cronJobID, reportType, status, errorMessage = null, filePath = null, fileSize = null, incrementAttempts = false) {
+    const SqpDownloadUrls = getSqpDownloadUrls();
+    // Find latest row for this CronJobID+ReportType
+    const latest = await SqpDownloadUrls.findOne({
+        where: { CronJobID: cronJobID, ReportType: reportType },
+        order: [['UpdatedDate', 'DESC']]
+    });
+    if (!latest) return;
+    return updateDownloadStatus({ id: latest.ID }, { status, errorMessage, filePath, fileSize, incrementAttempts });
 }
 
 async function storeDownloadUrl(row) {
-	const SqpDownloadUrls = getSqpDownloadUrls();
-	const where = {
-		CronJobID: row.CronJobID,
-		ReportID: row.ReportID,
-		AmazonSellerID: row.AmazonSellerID,
-		ReportType: row.ReportType,
-	};
-	const payload = {
+    const SqpDownloadUrls = getSqpDownloadUrls();
+    const payload = {
 		// DownloadURL intentionally omitted; we rely on FilePath (local or S3 URL)
-		ReportDocumentID: row.ReportDocumentID || null,
-		CompressionAlgorithm: row.CompressionAlgorithm || null,
-		Status: row.Status || 'PENDING',
+        Status: row.Status || 'PENDING',
 		DownloadAttempts: row.DownloadAttempts || 0,
 		MaxDownloadAttempts: row.MaxDownloadAttempts || 3,
 		FilePath: row.FilePath || null,
@@ -89,11 +87,7 @@ async function storeDownloadUrl(row) {
 		LastProcessError: row.LastProcessError || null,
 		UpdatedDate: new Date()
 	};
-	const existing = await SqpDownloadUrls.findOne({ where });
-	if (existing) {
-		return existing.update(payload);
-	}
-	return SqpDownloadUrls.create({ ...where, ...payload, CreatedDate: new Date() });
+    return SqpDownloadUrls.create({ CronJobID: row.CronJobID, ReportType: row.ReportType, ...payload, CreatedDate: new Date() });
 }
 
 async function updateProcessStatusById(id, processStatus, extra = {}) {
