@@ -2,7 +2,11 @@ const axios = require('axios');
 const fs = require('fs').promises;
 const path = require('path');
 const { uploadJson } = require('../utils/s3.utils');
+const model = require('../models/sqp.cron.model');
 const { getModel: getSqpMetrics3mo } = require('../models/sequelize/sqpMetrics3mo.model');
+const { getModel: getSqpWeekly } = require('../models/sequelize/sqpWeekly.model');
+const { getModel: getSqpMonthly } = require('../models/sequelize/sqpMonthly.model');
+const { getModel: getSqpQuarterly } = require('../models/sequelize/sqpQuarterly.model');
 const { getModel: getSqpCronDetails } = require('../models/sequelize/sqpCronDetails.model');
 const { env } = require('../config/env.config');
 const nodeEnv = (env.NODE_ENV || 'development').toLowerCase();
@@ -65,8 +69,13 @@ async function processSingleJsonFile(download) {
 		// Set ReportDate to the time the report was requested
 		const reportDateOverride = await getRequestStartDate(download.CronJobID, download.ReportType);
 
-		// Parse and store data in database
-		const { total, success, failed } = await parseAndStoreJsonData(download, jsonContent, filePath, reportDateOverride);
+        // Mark cron detail as import in-progress (4)
+        if (download.CronJobID && download.ReportType) {
+            await model.updateSQPReportStatus(download.CronJobID, download.ReportType, 4);
+        }
+
+        // Parse and store data in database with retry up to 3 attempts
+        const { total, success, failed } = await importJsonWithRetry(download, jsonContent, filePath, reportDateOverride);
 
 		// Update status to COMPLETED
 		const fileStats = (!/^https?:\/\//i.test(filePath) && filePath)
@@ -82,12 +91,22 @@ async function processSingleJsonFile(download) {
 		// Mark processing success with counts
 		await downloadUrls.updateProcessStatusById(download.ID, 'SUCCESS', { fullyImported: 1, totalRecords: total, successCount: success, failCount: failed });
 
+        // Mark cron detail import success (1) and set end date now
+        if (download.CronJobID && download.ReportType) {
+            await model.updateSQPReportStatus(download.CronJobID, download.ReportType, 1, download.ReportID, null, null, null, null, new Date());
+        }
+
 		console.log(`Successfully processed JSON file for report ${download.ReportID}`);
 
 	} catch (error) {
 		console.error(`Error processing JSON file for report ${download.ReportID}:`, error.message);		
 		// Mark processing failed
 		await downloadUrls.updateProcessStatusById(download.ID, 'FAILED', { lastError: error.message });
+        // Mark cron detail import failed (2) or retry failed (3) if attempts already happened
+        if (download.CronJobID && download.ReportType) {
+            const status = (download.ProcessAttempts && Number(download.ProcessAttempts) > 0) ? 3 : 2;
+            await model.updateSQPReportStatus(download.CronJobID, download.ReportType, status, download.ReportID, error.message, null, null, null, new Date());
+        }
 	}
 }
 
@@ -181,8 +200,20 @@ async function parseAndStoreJsonData(download, jsonContent, filePath, reportDate
 		const failed = total - success;
 
 		if (rows.length > 0) {
+            const type = (download.ReportType || '').toUpperCase();
+            if (type === 'WEEK') {
+                const SqpWeekly = getSqpWeekly();
+                await SqpWeekly.bulkCreate(rows, { validate: false, ignoreDuplicates: false });
+            } else if (type === 'MONTH') {
+                const SqpMonthly = getSqpMonthly();
+                await SqpMonthly.bulkCreate(rows, { validate: false, ignoreDuplicates: false });
+            } else if (type === 'QUARTER') {
+                const SqpQuarterly = getSqpQuarterly();
+                await SqpQuarterly.bulkCreate(rows, { validate: false, ignoreDuplicates: false });
+            } else {
 			const SqpMetrics3mo = getSqpMetrics3mo();
 			await SqpMetrics3mo.bulkCreate(rows, { validate: false, ignoreDuplicates: false });
+            }
 		}
 
 		console.log(`Successfully parsed and stored ${rows.length}/${records.length} records for report ${download.ReportID}`);
@@ -191,6 +222,29 @@ async function parseAndStoreJsonData(download, jsonContent, filePath, reportDate
 	} catch (error) {
 		throw new Error(`JSON parsing failed: ${error.message}`);
 	}
+}
+
+/**
+ * Import with up to 3 retries. On interim failures, set status 3 (retry failed). On final failure, set 2.
+ */
+async function importJsonWithRetry(download, jsonContent, filePath, reportDateOverride, maxAttempts = 3) {
+    let lastError = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+            const stats = await parseAndStoreJsonData(download, jsonContent, filePath, reportDateOverride);
+            return stats;
+        } catch (e) {
+            lastError = e;
+            const isFinal = attempt === maxAttempts;
+            if (download.CronJobID && download.ReportType) {
+                const status = isFinal ? 2 : 3; // 3 while retrying, 2 on final fail
+                await model.updateSQPReportStatus(download.CronJobID, download.ReportType, status, download.ReportID, e.message, null, null, null, new Date());
+            }
+            if (isFinal) throw e;
+        }
+    }
+    // Should not reach here
+    throw lastError || new Error('Unknown import error');
 }
 
 /**
@@ -330,13 +384,18 @@ async function processSavedJsonFiles(limit = 25) {
 			// ReportDate from request start time
 			const reportDateOverride = await getRequestStartDate(row.CronJobID, row.ReportType);
 
-			// Parse and store
-			const stats = await parseAndStoreJsonData({
+            // Parse and store
+            // Mark cron detail as import in-progress (4)
+            if (row.CronJobID && row.ReportType) {
+                await model.updateSQPReportStatus(row.CronJobID, row.ReportType, 4);
+            }
+
+            const stats = await importJsonWithRetry({
 				ReportID: row.ReportID,
 				AmazonSellerID: row.AmazonSellerID,
 				ReportType: row.ReportType,
 				CronJobID: row.CronJobID,
-			}, json, filePath, reportDateOverride);
+            }, json, filePath, reportDateOverride);
 
 			await downloadUrls.updateProcessStatusById(row.ID, 'SUCCESS', {
 				fullyImported: 1,
@@ -344,10 +403,19 @@ async function processSavedJsonFiles(limit = 25) {
 				successCount: stats.success,
 				failCount: stats.failed
 			});
+            // Mark cron detail import success (1) and set end date now
+            if (row.CronJobID && row.ReportType) {
+                await model.updateSQPReportStatus(row.CronJobID, row.ReportType, 1, row.ReportID, null, null, null, null, new Date());
+            }
 			processed++;
 		} catch (e) {
 			console.error('Error processing saved file:', e.message);
 			await downloadUrls.updateProcessStatusById(row.ID, 'FAILED', { lastError: e.message });
+            // Mark cron detail import failed (2) or retry failed (3) if attempts already happened
+            if (row.CronJobID && row.ReportType) {
+                const status = (row.ProcessAttempts && Number(row.ProcessAttempts) > 0) ? 3 : 2;
+                await model.updateSQPReportStatus(row.CronJobID, row.ReportType, status, row.ReportID, e.message, null, null, null, new Date());
+            }
 			errors++;
 		}
 	}
@@ -376,6 +444,7 @@ module.exports = {
     downloadJsonFromUrl,
     saveReportJsonFile,
     parseAndStoreJsonData,
+    importJsonWithRetry,
     getReportDateForPeriod,
     getDownloadUrlStats
 };

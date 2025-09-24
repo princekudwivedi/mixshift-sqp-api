@@ -120,7 +120,7 @@ async function createReport(sellerProfile, payload, authOverrides = {}) {
 		};
 		const reportsApi = await buildReportsClient(clientOpts);
 		const body = {
-			reportType: 'GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT',
+			reportType: payload.reportType || config.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT,
 			marketplaceIds: payload.marketplaceIds,
 			dataStartTime: payload.dataStartTime,
 			dataEndTime: payload.dataEndTime,
@@ -130,7 +130,7 @@ async function createReport(sellerProfile, payload, authOverrides = {}) {
 		logger.info({ 
 			sellerId: sellerProfile.AmazonSellerID,
 			marketplaceIds: payload.marketplaceIds,
-			reportType: body.reportType,
+        	reportType: body.reportType,
 			dataStartTime: payload.dataStartTime,
 			dataEndTime: payload.dataEndTime
 		}, 'Creating SP-API report request');

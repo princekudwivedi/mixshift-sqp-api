@@ -88,7 +88,7 @@ function sellerProfileFromEnv() {
 	};
 }
 
-async function requestForSeller(seller, authOverrides = {}) {
+async function requestForSeller(seller, authOverrides = {}, spReportType = config.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT) {
 	logger.info({ seller: seller.idSellerAccount }, 'Requesting SQP reports for seller');
 	
 	try {
@@ -111,7 +111,7 @@ async function requestForSeller(seller, authOverrides = {}) {
 			
 			for (const type of ['WEEK', 'MONTH', 'QUARTER']) {
 				logger.info({ type }, 'Requesting report for type');
-				await requestSingleReport(chunk, seller, cronDetailID, type, authOverrides);
+				await requestSingleReport(chunk, seller, cronDetailID, type, authOverrides, spReportType);
 			}
 		}
 	} catch (error) {
@@ -124,7 +124,7 @@ async function requestForSeller(seller, authOverrides = {}) {
 	}
 }
 
-async function requestSingleReport(chunk, seller, cronDetailID, reportType, authOverrides = {}) {
+async function requestSingleReport(chunk, seller, cronDetailID, reportType, authOverrides = {}, spReportType = config.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT) {
 	logger.info({ 
 		cronDetailID, 
 		reportType, 
@@ -183,7 +183,7 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
             }
 
             const payload = {
-				reportType: 'GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT',
+                reportType: spReportType,
 				dataStartTime: `${range.start}T00:00:00Z`,
 				dataEndTime: `${range.end}T23:59:59Z`,
 				marketplaceIds: [ marketplaceId ],

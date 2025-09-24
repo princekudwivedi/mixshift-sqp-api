@@ -107,7 +107,7 @@ class SqpCronApiController {
                         if (!s) continue;
                         try {
                             const authOverrides = await this.buildAuthOverrides(s.AmazonSellerID);
-                            await ctrl.requestForSeller(s, authOverrides);
+                            await ctrl.requestForSeller(s, authOverrides, env.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT);
                             totalProcessed++;
                         } catch (error) {
                             logger.error({ 
@@ -340,7 +340,7 @@ class SqpCronApiController {
                         if (!s) continue;
                         try {
                             const authOverrides = await this.buildAuthOverrides(s.AmazonSellerID);
-                            await ctrl.requestForSeller(s, authOverrides);
+                            await ctrl.requestForSeller(s, authOverrides, env.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT);
                             totalProcessed++;
                         } catch (error) {
                             logger.error({ 
@@ -371,7 +371,7 @@ class SqpCronApiController {
                 totalErrors++;
             }
 
-            // Step 3: Download completed reports
+			// Step 3: Download completed reports
             try {
                 const authOverrides = {};
                 await ctrl.downloadCompletedReports(authOverrides);
@@ -382,6 +382,17 @@ class SqpCronApiController {
                 }, 'Error downloading reports in all operations');
                 totalErrors++;
             }
+
+			// Step 4: Process saved JSON into tables
+			try {
+				await jsonProcessingService.processSavedJsonFiles();
+				totalProcessed++;
+			} catch (error) {
+				logger.error({ 
+					error: error.message 
+				}, 'Error processing saved JSON files in all operations');
+				totalErrors++;
+			}
 
             return SuccessHandler.sendProcessingSuccess(
                 res, 
@@ -473,90 +484,6 @@ class SqpCronApiController {
                 0, 
                 'Failed to process JSON files'
             );
-        }
-    }    
-    /**
-     * Copy metrics data from sqp_metrics_3mo to sqp_metrics with bulk insert
-     */
-    async copyMetricsData(req, res) {
-        try {
-            const { userId, batchSize, force, dryRun } = req.query;
-            
-            // Validate inputs
-            const validatedUserId = userId ? ValidationHelpers.validateUserId(userId) : null;
-            const validatedBatchSize = batchSize ? parseInt(batchSize) || 1000 : 1000;
-            const validatedForce = force === 'true' || force === '1';
-            const validatedDryRun = dryRun === 'true' || dryRun === '1';
-
-            logger.info({ 
-                userId: validatedUserId,
-                batchSize: validatedBatchSize,
-                force: validatedForce,
-                dryRun: validatedDryRun,
-                hasToken: !!req.authToken 
-            }, 'Copy metrics data from 3mo to main table');
-
-            await loadDatabase(0);
-            const users = validatedUserId ? [{ ID: validatedUserId }] : await getAllAgencyUserList();
-            
-            let totalProcessed = 0;
-            let totalCopied = 0;
-            let totalErrors = 0;
-            
-            for (const user of users) {
-                try {
-                    await loadDatabase(user.ID);
-                    if (isDevEnv && !allowedUsers.includes(user.ID)) {
-                        continue;
-                    }
-                    const options = {
-                        batchSize: validatedBatchSize,
-                        force: validatedForce,
-                        dryRun: validatedDryRun
-                    };
-                    
-                    const result = await sqpfileProcessingService.copyDataWithBulkInsert(options);
-                    
-                    if (result) {
-                        totalProcessed += result.processed || 0;
-                        totalCopied += result.copied || 0;
-                        totalErrors += result.errors || 0;
-                    }
-                    
-                } catch (error) {
-                    logger.error({ 
-                        error: error.message, 
-                        userId: user.ID 
-                    }, 'Error copying metrics data for user');
-                    totalErrors++;
-                }
-            }
-            
-            if (totalErrors > 0) {
-                return ErrorHandler.sendProcessingError(
-                    res,
-                    new Error('One or more metrics copy operations failed'),
-                    totalProcessed,
-                    totalErrors,
-                    'Metrics data copy failed'
-                );
-            }
-
-            return SuccessHandler.sendProcessingSuccess(
-                res, 
-                totalProcessed, 
-                totalErrors, 
-                `Metrics data copy completed successfully. Copied ${totalCopied} records.`
-            );
-
-        } catch (error) {
-            logger.error({ 
-                error: error.message,
-                stack: error.stack,
-                query: req.query 
-            }, 'Error in copy metrics data');
-            
-            return ErrorHandler.sendError(res, error, 'Failed to copy metrics data');
         }
     }
 
