@@ -16,6 +16,27 @@ npm run dev   # or: npm start
 
 Base URL (local): `http://localhost:3001/api/v1`
 
+### Testing and maintenance
+
+- Run unit tests (retry helper + copy pipeline):
+  ```bash
+  npm run test:unit
+  ```
+
+### Performance/env tuning
+
+- Retries/circuit breaker:
+  - `RETRY_MAX_ATTEMPTS` (default 3)
+  - `RETRY_BASE_DELAY_MS` (default 1000)
+  - `RETRY_MAX_DELAY_MS` (default 10000)
+  - `CB_OPEN_MS` (default 30000)
+- Caching:
+  - `AUTH_CACHE_TTL_MS` (default 300000)
+  - `USER_LIST_CACHE_TTL_MS` (default 60000)
+- Copy pipeline:
+  - `COPY_PAGE_SIZE` (default 5000)
+  - `COPY_INSERT_CHUNK_SIZE` (default 2000)
+
 ### Environment (minimum)
 
 - MySQL master and tenant DB creds (see `src/config/sequelize.config.js` and `src/db/tenant.db.js`)

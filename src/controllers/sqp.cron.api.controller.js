@@ -12,6 +12,8 @@ const jsonProcessingService = require('../services/sqp.json.processing.service')
 const sqpfileProcessingService = require('../services/sqp.file.processing.service');
 const logger = require('../utils/logger.utils');
 const env = require('../config/env.config');
+const isDevEnv = ["local", "development"].includes(env.NODE_ENV);
+const allowedUsers = [8, 3];
 
 /**
  * SQP Cron API Controller
@@ -23,6 +25,16 @@ class SqpCronApiController {
      */
     async buildAuthOverrides(amazonSellerID) {
         try {
+            // Simple in-memory TTL cache for auth overrides
+            if (!this._authCache) this._authCache = new Map();
+            const ttlMs = Number(process.env.AUTH_CACHE_TTL_MS || 5 * 60 * 1000);
+            const cacheKey = `auth:${amazonSellerID}`;
+            const now = Date.now();
+            const cached = this._authCache.get(cacheKey);
+            if (cached && (now - cached.storedAt) < ttlMs) {
+                return cached.value;
+            }
+
             const authOverrides = {};
             const tokenRow = await AuthToken.getSavedToken(amazonSellerID);
             
@@ -46,6 +58,8 @@ class SqpCronApiController {
                 authOverrides.awsSessionToken = sts.SessionToken;
             }
             
+            // Store in cache
+            this._authCache.set(cacheKey, { value: authOverrides, storedAt: now });
             return authOverrides;
         } catch (error) {
             logger.error({ error: error.message, amazonSellerID }, 'Error building auth overrides');
@@ -71,13 +85,21 @@ class SqpCronApiController {
             }, 'Request reports for sellers');
 
             await loadDatabase(0);
-            const users = validatedUserId ? [{ ID: validatedUserId }] : await getAllAgencyUserList();
+            // Cache user list to avoid repeated master queries in high-frequency runs
+            if (!this._userListCache) this._userListCache = { data: null, at: 0 };
+            const userTtl = Number(process.env.USER_LIST_CACHE_TTL_MS || 60 * 1000);
+            const useCache = !validatedUserId && (Date.now() - this._userListCache.at) < userTtl;
+            const users = validatedUserId ? [{ ID: validatedUserId }] : (useCache && this._userListCache.data) || await getAllAgencyUserList();
+            if (!validatedUserId && !useCache) this._userListCache = { data: users, at: Date.now() };
             let totalProcessed = 0;
             let totalErrors = 0;
 
             for (const user of users) {                 
                 try {
                     await loadDatabase(user.ID);
+                    if (isDevEnv && !allowedUsers.includes(user.ID)) {
+                        continue;
+                    }
                     const sellers = validatedSellerId
                         ? await sellerModel.getSellersProfilesForCronAdvanced({ idSellerAccount: validatedSellerId, pullAll: 1 })
                         : await sellerModel.getSellersProfilesForCronAdvanced({ pullAll: 0 });
@@ -170,7 +192,9 @@ class SqpCronApiController {
             for (const user of users) {     
                 try {
                     await loadDatabase(user.ID);
-                    
+                    if (isDevEnv && !allowedUsers.includes(user.ID)) {
+                        continue;
+                    }
                     const sts = await StsToken.getLatestTokenDetails();
                     const authOverrides = sts ? {
                         awsAccessKeyId: sts.accessKeyId,
@@ -230,7 +254,9 @@ class SqpCronApiController {
             for (const user of users) {           
                 try {
                     await loadDatabase(user.ID);
-                    
+                    if (isDevEnv && !allowedUsers.includes(user.ID)) {
+                        continue;
+                    }
                     const sts = await StsToken.getLatestTokenDetails();
                     const authOverrides = sts ? {
                         awsAccessKeyId: sts.accessKeyId,
@@ -303,6 +329,9 @@ class SqpCronApiController {
             for (const user of users) {
                 try {
                     await loadDatabase(user.ID);
+                    if (isDevEnv && !allowedUsers.includes(user.ID)) {
+                        continue;
+                    }
                     const sellers = validatedSellerId
                         ? [await sellerModel.getProfileDetailsByID(validatedSellerId)]
                         : await sellerModel.getSellersProfilesForCronAdvanced({ pullAll: 0 });
@@ -445,8 +474,7 @@ class SqpCronApiController {
                 'Failed to process JSON files'
             );
         }
-    }
-    
+    }    
     /**
      * Copy metrics data from sqp_metrics_3mo to sqp_metrics with bulk insert
      */
@@ -478,7 +506,9 @@ class SqpCronApiController {
             for (const user of users) {
                 try {
                     await loadDatabase(user.ID);
-                    
+                    if (isDevEnv && !allowedUsers.includes(user.ID)) {
+                        continue;
+                    }
                     const options = {
                         batchSize: validatedBatchSize,
                         force: validatedForce,
@@ -531,52 +561,19 @@ class SqpCronApiController {
     }
 
     /**
-     * Get processing statistics (legacy endpoint)
-     */
-    async getProcessingStats(req, res) {
-        try {
-            const { userId } = req.query;
-            
-            // Validate inputs
-            const validatedUserId = userId ? ValidationHelpers.validateUserId(userId) : null;
-
-            logger.info({ 
-                userId: validatedUserId,
-                hasToken: !!req.authToken 
-            }, 'Get processing stats (legacy)');
-
-            await loadDatabase(0);
-            const users = validatedUserId ? [{ ID: validatedUserId }] : await getAllAgencyUserList();
-            
-            const stats = await jsonProcessingService.getProcessingStats();
-            
-            return SuccessHandler.sendStatsSuccess(res, stats, 'Statistics retrieved successfully');
-
-        } catch (error) {
-            logger.error({ 
-                error: error.message,
-                stack: error.stack,
-                query: req.query 
-            }, 'Error in get processing stats');
-            
-            return ErrorHandler.sendError(res, error, 'Failed to retrieve statistics');
-        }
-    }
-
-    /**
      * Sync ASINs from ASIN_SKU_list into seller_ASIN_list for a single seller
-     * GET: /cron/sqp/syncSellerAsins/{userId}/{sellerID}
+     * GET: /cron/sqp/syncSellerAsins/{userId}/{amazonSellerID}
      */
     async syncSellerAsins(req, res) {
         try {
-            const { userId, sellerID } = req.params;
+            const { userId, amazonSellerID } = req.params;
             
             // Validate parameters
             const validatedUserId = ValidationHelpers.sanitizeNumber(userId);
-            const validatedSellerID = ValidationHelpers.sanitizeNumber(sellerID);
+            const validatedSellerID = ValidationHelpers.sanitizeNumber(amazonSellerID);
 
             if (!validatedUserId || !validatedSellerID || validatedUserId <= 0 || validatedSellerID <= 0) {
-                return ErrorHandler.sendError(res, 'Invalid userId/sellerID', 400);
+                return ErrorHandler.sendError(res, 'Invalid userId/amazonSellerID', 400);
             }
 
             // Load tenant database
@@ -706,8 +703,6 @@ class SqpCronApiController {
         try {
             // Get all agency users
             const userList = await getAllAgencyUserList();
-            const isDevEnv = ["local", "development"].includes(env.NODE_ENV);
-            const allowedUsers = [8, 3];
             const summary = [];
             if (userList && userList.length > 0) {
                 for (const user of userList) {

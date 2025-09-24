@@ -36,6 +36,10 @@ async function copyDataWithBulkInsert(options = {}) {
         const { getModel: getSqpMetrics } = require('../models/sequelize/sqpMetrics.model');
         const SqpMetrics3mo = getSqpMetrics3mo();
         const SqpMetrics = getSqpMetrics();
+
+        // Tunables via env with sensible defaults
+        const PAGE_SIZE = Number(process.env.COPY_PAGE_SIZE || 5000);
+        const INSERT_CHUNK_SIZE = Number(process.env.COPY_INSERT_CHUNK_SIZE || insertChunkSize || 2000);
         
         let totalCopied = 0;
         let totalErrors = 0;
@@ -49,13 +53,29 @@ async function copyDataWithBulkInsert(options = {}) {
             for (const reportID of batch) {
                 try {
                     const reportStart = Date.now();
-                    // Get all records from 3mo table for this report
-                    const records3mo = await SqpMetrics3mo.findAll({ 
-                        where: { ReportID: reportID },
-                        raw: true 
-                    });
-                    
-                    if (records3mo.length === 0) {
+                    // Stream records from 3mo in pages to reduce memory usage
+                    let totalFetched = 0;
+                    let page = 0;
+                    const uniqueMap = new Map(); // key: ASIN|SearchQuery|ReportDate → record
+                    while (true) {
+                        const pageRecords = await SqpMetrics3mo.findAll({
+                            where: { ReportID: reportID },
+                            raw: true,
+                            offset: page * PAGE_SIZE,
+                            limit: PAGE_SIZE
+                        });
+                        if (!pageRecords || pageRecords.length === 0) break;
+                        totalFetched += pageRecords.length;
+
+                        // Build dedupe map incrementally (ASIN + SearchQuery + ReportDate)
+                        for (const r of pageRecords) {
+                            const key = `${r.ASIN || ''}|${r.SearchQuery || ''}|${r.ReportDate || ''}`;
+                            uniqueMap.set(key, r);
+                        }
+                        page += 1;
+                    }
+
+                    if (totalFetched === 0) {
                         logger.debug({ reportID }, 'No records found in 3mo table for this report');
                         continue;
                     }
@@ -72,13 +92,6 @@ async function copyDataWithBulkInsert(options = {}) {
                         }
                     }
                     
-                    // Dedupe records on logical key (ASIN + SearchQuery + ReportDate)
-                    const makeKey = (r) => `${r.ASIN || ''}|${r.SearchQuery || ''}|${r.ReportDate || ''}`;
-                    const uniqueMap = new Map();
-                    for (const r of records3mo) {
-                        uniqueMap.set(makeKey(r), r);
-                    }
-
                     // Prepare records for bulk insert (remove ID fields)
                     const recordsToInsert = Array.from(uniqueMap.values()).map(record => {
                         const { ID, ...recordData } = record;
@@ -92,8 +105,8 @@ async function copyDataWithBulkInsert(options = {}) {
                     // Insert in chunks inside a transaction for atomicity per report
                     const sequelize = SqpMetrics.sequelize;
                     await sequelize.transaction(async (t) => {
-                        for (let start = 0; start < recordsToInsert.length; start += insertChunkSize) {
-                            const chunk = recordsToInsert.slice(start, start + insertChunkSize);
+                        for (let start = 0; start < recordsToInsert.length; start += INSERT_CHUNK_SIZE) {
+                            const chunk = recordsToInsert.slice(start, start + INSERT_CHUNK_SIZE);
                             if (chunk.length === 0) continue;
                             await SqpMetrics.bulkCreate(chunk, {
                                 transaction: t,
@@ -109,11 +122,7 @@ async function copyDataWithBulkInsert(options = {}) {
                     successfullyCopiedReportIds.push(reportID);
                     
                     const ms = Date.now() - reportStart;
-                    logger.info({ 
-                        reportID, 
-                        recordsCopied: recordsToInsert.length,
-                        ms
-                    }, 'Successfully copied report data');
+                    logger.info({ reportID, recordsCopied: recordsToInsert.length, ms }, 'Successfully copied report data');
                     
                 } catch (error) {
                     logger.error({ 

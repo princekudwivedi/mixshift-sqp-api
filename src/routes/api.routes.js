@@ -26,7 +26,7 @@ router.get('/cron/sqp/process-json', (req, res) => sqpCronApiController.processJ
 router.get('/cron/sqp/copy-metrics', (req, res) => sqpCronApiController.copyMetricsData(req, res));
 
 // ASIN sync cron routes
-router.get('/cron/asin/syncSellerAsins/:userId/:sellerID', (req, res) => sqpCronApiController.syncSellerAsins(req, res));
+router.get('/cron/asin/syncSellerAsins/:userId/:amazonSellerID', (req, res) => sqpCronApiController.syncSellerAsins(req, res));
 router.get('/cron/asin/cronSyncAllSellerAsins/:userId', (req, res) => sqpCronApiController.cronSyncAllSellerAsins(req, res));
 router.get('/cron/asin/cronSyncAllUsersSellerAsins', (req, res) => sqpCronApiController.cronSyncAllUsersSellerAsins(req, res));
 
