@@ -122,46 +122,48 @@ function getBoundModel() {
     return tenantSequelize.models[table] || tenantSequelize.define(table, Seller.getAttributes(), { tableName: table, timestamps: false, freezeTableName: true });
 }
 
-async function getProfileDetailsByID(idSellerAccount) {
-    const BoundSeller = getBoundModel();
-    const s = await BoundSeller.findOne({ where: { ID: Number(idSellerAccount) } });
-    if (!s) return null;
-    let mp = null;
-    const mapping = await SellerMarketplacesMapping.findOne({ where: { SellerId: s.ID } }).catch(() => null);
-    if (mapping) {
-        mp = await Marketplace.findOne({ where: { ID: mapping.MarketId } }).catch(() => null);
-    }
-    if (!mp && s.MarketPlaceID) {
-        mp = await Marketplace.findOne({ where: { ID: s.MarketPlaceID } }).catch(() => null);
-    }
-    const la = await MwsOauthToken.findOne({ where: { AmazonSellerID: s.AmazonSellerID } }).catch(() => null);
-    const ma = await MwsAccessKeys.findOne({ where: { MerchantRegion: s.MerchantRegion } }).catch(() => null);
-    return {
-        idSellerAccount: s.ID,
-        SellerName: s.Name,
-        MerchantRegion: s.MerchantRegion,
-        AmazonSellerID: s.AmazonSellerID,
-        ProfileId: s.ProfileId,
-        idUserAccount: s.idUserAccount,
-        MerchantType: s.MerchantType,
-        IsActive: s.IsActive,
-        isMwsUser: s.isMwsUser,
-        idMarketPlaceAccount: mp ? mp.ID : null,
-        MarketPlaceName: mp ? mp.Name : null,
-        CountryCode: mp ? mp.CountryCode : null,
-        AmazonMarketplaceId: mp ? mp.AmazonMarketplaceId : (s.AmazonMarketplaceId || null),
-        CurrencyCode: mp ? mp.CurrencyCode : null,
-        iPriorityFlag: s.iPriorityFlag,
-        dtMwsActivatedOn: s.dtMwsActivatedOn,
-        isSpApiBackfillPull: s.isSpApiBackfillPull,
-        pull60DaysReportFlag: s.pull60DaysReportFlag,
-        isMwsInitialReportDataPulled: s.isMwsInitialPullVerified,
-        dateFromToPullMwsData: s.dateFromToPullMwsData,
-        iRunningInitialPull: s.iRunningInitialPull,
-        iLostAccess: la ? la.iLostAccess : null,
-        auth_token: la ? la.auth_token : null,
-        developerId: ma ? ma.developerId : null,
-    };
+async function getProfileDetailsByID(idSellerAccount, key = 'ID') {
+	const BoundSeller = getBoundModel();
+	const column = String(key) === 'AmazonSellerID' ? 'AmazonSellerID' : 'ID';
+	const value = column === 'ID' ? Number(idSellerAccount) : String(idSellerAccount);
+	const s = await BoundSeller.findOne({ where: { [column]: value } });
+	if (!s) return null;
+	let mp = null;
+	const mapping = await SellerMarketplacesMapping.findOne({ where: { SellerId: s.ID } }).catch(() => null);
+	if (mapping) {
+		mp = await Marketplace.findOne({ where: { ID: mapping.MarketId } }).catch(() => null);
+	}
+	if (!mp && s.MarketPlaceID) {
+		mp = await Marketplace.findOne({ where: { ID: s.MarketPlaceID } }).catch(() => null);
+	}
+	const la = await MwsOauthToken.findOne({ where: { AmazonSellerID: s.AmazonSellerID } }).catch(() => null);
+	const ma = await MwsAccessKeys.findOne({ where: { MerchantRegion: s.MerchantRegion } }).catch(() => null);
+	return {
+		idSellerAccount: s.ID,
+		SellerName: s.Name,
+		MerchantRegion: s.MerchantRegion,
+		AmazonSellerID: s.AmazonSellerID,
+		ProfileId: s.ProfileId,
+		idUserAccount: s.idUserAccount,
+		MerchantType: s.MerchantType,
+		IsActive: s.IsActive,
+		isMwsUser: s.isMwsUser,
+		idMarketPlaceAccount: mp ? mp.ID : null,
+		MarketPlaceName: mp ? mp.Name : null,
+		CountryCode: mp ? mp.CountryCode : null,
+		AmazonMarketplaceId: mp ? mp.AmazonMarketplaceId : (s.AmazonMarketplaceId || null),
+		CurrencyCode: mp ? mp.CurrencyCode : null,
+		iPriorityFlag: s.iPriorityFlag,
+		dtMwsActivatedOn: s.dtMwsActivatedOn,
+		isSpApiBackfillPull: s.isSpApiBackfillPull,
+		pull60DaysReportFlag: s.pull60DaysReportFlag,
+		isMwsInitialReportDataPulled: s.isMwsInitialPullVerified,
+		dateFromToPullMwsData: s.dateFromToPullMwsData,
+		iRunningInitialPull: s.iRunningInitialPull,
+		iLostAccess: la ? la.iLostAccess : null,
+		auth_token: la ? la.auth_token : null,
+		developerId: ma ? ma.developerId : null,
+	};
 }
 
 async function getProfileDetailsByAmazonSellerID(amazonSellerID) {

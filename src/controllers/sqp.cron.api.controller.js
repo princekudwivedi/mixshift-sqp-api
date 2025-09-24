@@ -3,7 +3,7 @@ const { ValidationHelpers } = require('../helpers/sqp.helpers');
 const { loadDatabase } = require('../db/tenant.db');
 const { getAllAgencyUserList } = require('../models/sequelize/user.model');
 const { getModel: getSellerAsinList } = require('../models/sequelize/sellerAsinList.model');
-const { getModel: getAsinSkuList } = require('../models/sequelize/asinSkuList.model');
+const { getModel: getMwsItems } = require('../models/sequelize/mwsItems.model');
 const AuthToken = require('../models/authToken.model');
 const StsToken = require('../models/stsToken.model');
 const sellerModel = require('../models/sequelize/seller.model');
@@ -561,7 +561,7 @@ class SqpCronApiController {
     }
 
     /**
-     * Sync ASINs from ASIN_SKU_list into seller_ASIN_list for a single seller
+     * Sync ASINs from mws_items into seller_ASIN_list for a single seller
      * GET: /cron/sqp/syncSellerAsins/{userId}/{amazonSellerID}
      */
     async syncSellerAsins(req, res) {
@@ -570,17 +570,15 @@ class SqpCronApiController {
             
             // Validate parameters
             const validatedUserId = ValidationHelpers.sanitizeNumber(userId);
-            const validatedSellerID = ValidationHelpers.sanitizeNumber(amazonSellerID);
+            const validatedAmazonSellerID = ValidationHelpers.validateAmazonSellerId(amazonSellerID);
 
-            if (!validatedUserId || !validatedSellerID || validatedUserId <= 0 || validatedSellerID <= 0) {
-                return ErrorHandler.sendError(res, 'Invalid userId/amazonSellerID', 400);
-            }
-
+            if (!validatedUserId || validatedUserId <= 0 || !validatedAmazonSellerID) {
+                return ErrorHandler.sendError(res, 'Invalid userId/AmazonSellerID', 400);
+            }            
             // Load tenant database
             await loadDatabase(validatedUserId);
-
             // Use the helper function
-            const result = await this._syncSellerAsinsInternal(validatedSellerID);
+            const result = await this._syncSellerAsinsInternal(validatedAmazonSellerID, 0, 'AmazonSellerID');
 
             if (result.error) {
                 return ErrorHandler.sendError(res, result.error, 500);
@@ -588,7 +586,7 @@ class SqpCronApiController {
 
             // Get seller info for response
             // Use sellerModel directly for tenant-aware operations
-            const seller = await sellerModel.getProfileDetailsByID(validatedSellerID);
+            const seller = await sellerModel.getProfileDetailsByID(validatedAmazonSellerID, 'AmazonSellerID');
 
             const response = {
                 success: true,
@@ -606,7 +604,7 @@ class SqpCronApiController {
 
             logger.info({
                 userId: validatedUserId,
-                sellerID: validatedSellerID,
+                sellerID: seller.idSellerAccount,
                 insertedCount: result.insertedCount,
                 totalCount: result.totalCount
             }, 'syncSellerAsins completed successfully');
@@ -614,7 +612,7 @@ class SqpCronApiController {
             return SuccessHandler.sendSuccess(res, response);
 
         } catch (error) {
-            logger.error({ error: error.message, userId: req.params.userId, sellerID: req.params.sellerID }, 'syncSellerAsins failed');
+            logger.error({ error: error.message, userId: req.params.userId, amazonSellerID: req.params.amazonSellerID }, 'syncSellerAsins failed');
             return ErrorHandler.sendError(res, error, 'Internal server error', 500);
         }
     }
@@ -757,24 +755,22 @@ class SqpCronApiController {
     }
 
     /**
-     * Private helper function to sync ASINs for a seller (reusable)
-     * @param {number} sellerID 
+     * Private helper function to sync ASINs for a seller from mws_items (reusable)
+     * @param {number} sellerID
      * @param {number} isActive Default ASIN status (1=Active, 0=Inactive)
      * @returns {Promise<{insertedCount: number, totalCount: number, error: string|null}>}
      */
-    async _syncSellerAsinsInternal(sellerID, isActive = 0) {
+    async _syncSellerAsinsInternal(sellerIdentifier, isActive = 0, key = 'ID') {
         try {
             // Get models
             // Use sellerModel directly for tenant-aware operations
             const SellerAsinList = getSellerAsinList();
-            const AsinSkuList = getAsinSkuList();
-
+            const MwsItems = getMwsItems();
             // Get seller info for validation
-            logger.info({ sellerID }, 'Getting seller profile details');
-            const seller = await sellerModel.getProfileDetailsByID(sellerID);
-
+            logger.info({ sellerIdentifier, key }, 'Getting seller profile details');
+            const seller = await sellerModel.getProfileDetailsByID(sellerIdentifier, key);
             if (!seller) {
-                logger.error({ sellerID }, 'Seller not found');
+                logger.error({ sellerIdentifier }, 'Seller not found');
                 return { insertedCount: 0, totalCount: 0, error: 'Seller not found or inactive' };
             }
 
@@ -783,33 +779,32 @@ class SqpCronApiController {
                 return { insertedCount: 0, totalCount: 0, error: 'Seller AmazonSellerID is missing' };
             }
 
-            logger.info({ sellerID, amazonSellerID: seller.AmazonSellerID }, 'Seller validation passed');
+            logger.info({ sellerID: seller.idSellerAccount, amazonSellerID: seller.AmazonSellerID }, 'Seller validation passed');
 
             // Count existing ASINs before sync
             const beforeCount = await SellerAsinList.count({
-                where: { SellerID: sellerID }
+                where: { SellerID: seller.idSellerAccount }
             });
-
-            // Get ASINs from ASIN_SKU_list that don't exist in seller_ASIN_list
+            // Get ASINs from mws_items that don't exist in seller_ASIN_list
             const existingAsins = await SellerAsinList.findAll({
-                where: { SellerID: sellerID },
+                where: { SellerID: seller.idSellerAccount },
                 attributes: ['ASIN']
             });
 
             const existingAsinSet = new Set(existingAsins.map(item => item.ASIN.toUpperCase()));
             
             logger.info({ 
-                sellerID, 
+                sellerID: seller.idSellerAccount, 
                 beforeCount, 
                 existingAsinsCount: existingAsins.length,
                 existingAsinsSample: existingAsins.slice(0, 5).map(item => item.ASIN)
             }, 'Existing ASINs check completed');
 
-            // Get new ASINs from ASIN_SKU_list
-            logger.info({ sellerID }, 'Fetching ASINs from ASIN_SKU_list');
-            const newAsins = await AsinSkuList.findAll({
+            // Get new ASINs from mws_items
+            logger.info({ sellerID: seller.idSellerAccount, amazonSellerID: seller.AmazonSellerID }, 'Fetching ASINs from mws_items');
+            const newAsins = await MwsItems.findAll({
                 where: {
-                    SellerID: sellerID,
+                    AmazonSellerID: seller.AmazonSellerID,
                     ASIN: {
                         [require('sequelize').Op.ne]: null,
                         [require('sequelize').Op.ne]: ''
@@ -819,7 +814,7 @@ class SqpCronApiController {
                 raw: true,
                 group: ['ASIN']
             });
-            logger.info({ sellerID, newAsinsCount: newAsins.length }, 'Retrieved ASINs from ASIN_SKU_list');
+            logger.info({ sellerID: seller.idSellerAccount, amazonSellerID: seller.AmazonSellerID, newAsinsCount: newAsins.length }, 'Retrieved ASINs from mws_items');
 
             // Filter out existing ASINs and prepare for bulk insert
             const asinsToInsert = newAsins
@@ -830,7 +825,7 @@ class SqpCronApiController {
                 .map(item => {
                     const asin = item.ASIN.trim().toUpperCase();
                     return {
-                        SellerID: sellerID,
+                        SellerID: seller.idSellerAccount,
                         AmazonSellerID: seller.AmazonSellerID,
                         ASIN: asin,
                         IsActive: isActive,
@@ -839,7 +834,7 @@ class SqpCronApiController {
                 });
 
             logger.info({ 
-                sellerID, 
+                sellerID: seller.idSellerAccount, 
                 totalNewAsins: newAsins.length, 
                 existingAsins: existingAsinSet.size,
                 asinsToInsert: asinsToInsert.length 
@@ -857,7 +852,7 @@ class SqpCronApiController {
                 }
                 
                 logger.info({ 
-                    sellerID, 
+                    sellerID: seller.idSellerAccount, 
                     totalRecords: asinsToInsert.length, 
                     chunkSize, 
                     totalChunks: chunks.length 
@@ -875,7 +870,7 @@ class SqpCronApiController {
                         });
                         insertedCount += chunk.length;
                         logger.info({ 
-                            sellerID, 
+                            sellerID: seller.idSellerAccount, 
                             chunkIndex: chunkIndex + 1, 
                             chunkSize: chunk.length,
                             totalInserted: insertedCount 
@@ -884,7 +879,7 @@ class SqpCronApiController {
                     } catch (chunkError) {
                         logger.error({
                             error: chunkError.message,
-                            sellerID: sellerID,
+                            sellerID: seller.idSellerAccount,
                             chunkIndex: chunkIndex + 1,
                             chunkSize: chunk.length,
                             chunkSample: chunk.slice(0, 2)
@@ -902,7 +897,7 @@ class SqpCronApiController {
                                 logger.warn({
                                     error: individualError.message,
                                     record: chunk[i],
-                                    sellerID: sellerID
+                                    sellerID: seller.idSellerAccount
                                 }, 'Individual insert skipped (likely duplicate)');
                             }
                         }
@@ -912,7 +907,7 @@ class SqpCronApiController {
 
             // Count total ASINs after sync
             const afterCount = await SellerAsinList.count({
-                where: { SellerID: sellerID }
+                where: { SellerID: seller.idSellerAccount }
             });
 
             return { insertedCount, totalCount: afterCount, error: null };
@@ -921,7 +916,7 @@ class SqpCronApiController {
             logger.error({
                 error: error.message,
                 stack: error.stack,
-                sellerID: sellerID,
+                sellerIdentifier,
                 isActive: isActive
             }, 'syncSellerAsinsInternal failed');
             return { insertedCount: 0, totalCount: 0, error: `Database error: ${error.message}` };
