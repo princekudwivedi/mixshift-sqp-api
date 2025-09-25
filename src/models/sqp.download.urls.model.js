@@ -16,7 +16,7 @@ async function getCompletedDownloadsWithFiles(limit = 50) {
 	return SqpDownloadUrls.findAll({
 		where: {
 			Status: 'COMPLETED',
-			FullyImported: { [Op.ne]: 1, [Op.ne]: 2 },
+			FullyImported: { [Op.ne]: 1 },
 			FilePath: { [Op.ne]: null },
 			[Op.and]: [
 				{
@@ -41,11 +41,12 @@ async function getCompletedDownloadsWithFiles(limit = 50) {
 }
 
 // Unified updater: pass either { id } or { criteria: {...} }
-async function updateDownloadStatus(selector, { status, errorMessage = null, filePath = null, fileSize = null, incrementAttempts = false }) {
+async function updateDownloadStatus(selector, { status, errorMessage = null, filePath = null, fileSize = null, incrementAttempts = false, reportDocumentID = null }) {
 	const data = { Status: status };
 	if (errorMessage !== null) data.ErrorMessage = errorMessage;
 	if (filePath !== null) data.FilePath = filePath;
 	if (fileSize !== null) data.FileSize = fileSize;
+	if (reportDocumentID !== null) data.ReportDocumentID = reportDocumentID;
 	if (status === 'DOWNLOADING') data.DownloadStartTime = new Date();
 	if (status === 'COMPLETED' || status === 'FAILED') data.DownloadEndTime = new Date();
 	if (incrementAttempts) data.DownloadAttempts = literal('COALESCE(DownloadAttempts, 0) + 1');
@@ -62,7 +63,7 @@ async function updateDownloadUrlStatus(id, status, errorMessage = null, filePath
 	return updateDownloadStatus({ id }, { status, errorMessage, filePath, fileSize, incrementAttempts });
 }
 
-async function updateDownloadUrlStatusByCriteria(cronJobID, reportType, status, errorMessage = null, filePath = null, fileSize = null, incrementAttempts = false) {
+async function updateDownloadUrlStatusByCriteria(cronJobID, reportType, status, errorMessage = null, filePath = null, fileSize = null, incrementAttempts = false, reportDocumentID = null) {
     const SqpDownloadUrls = getSqpDownloadUrls();
     // Find latest row for this CronJobID+ReportType
     const latest = await SqpDownloadUrls.findOne({
@@ -70,7 +71,14 @@ async function updateDownloadUrlStatusByCriteria(cronJobID, reportType, status, 
         order: [['UpdatedDate', 'DESC']]
     });
     if (!latest) return;
-    return updateDownloadStatus({ id: latest.ID }, { status, errorMessage, filePath, fileSize, incrementAttempts });
+    
+    // Update ReportDocumentID if provided and not null
+    const updateData = { status, errorMessage, filePath, fileSize, incrementAttempts };
+    if (reportDocumentID !== null) {
+        updateData.reportDocumentID = reportDocumentID;
+    }
+    
+    return updateDownloadStatus({ id: latest.ID }, updateData);
 }
 
 async function storeDownloadUrl(row) {
@@ -115,39 +123,6 @@ async function getDownloadUrlStats() {
 	return { total, pending, completed, failed };
 }
 
-/**
- * Mark reports as having data copied to main metrics table
- */
-async function markDataCopiedToMain(reportIds) {
-	try {
-		const SqpDownloadUrls = getSqpDownloadUrls();
-		
-		const result = await SqpDownloadUrls.update(
-			{ 
-				FullyImported: 2, // Use 2 to indicate data copied to main table
-				UpdatedDate: new Date()
-			},
-			{ 
-				where: { 
-					ReportID: { [Op.in]: reportIds },
-					Status: 'COMPLETED',
-					ProcessStatus: 'SUCCESS'
-				}
-			}
-		);
-		
-		logger.info({ 
-			reportIds: reportIds.length,
-			updatedRows: result[0] 
-		}, 'Marked reports as data copied to main table');
-		
-		return result[0];
-	} catch (error) {
-		logger.error({ error: error.message, reportIds }, 'Error marking data as copied to main table');
-		throw error;
-	}
-}
-
 module.exports = {
 	getPendingDownloadUrls,
 	getCompletedDownloadsWithFiles,
@@ -156,8 +131,7 @@ module.exports = {
 	updateDownloadUrlStatusByCriteria,
 	storeDownloadUrl,
 	updateProcessStatusById,
-	getDownloadUrlStats,
-	markDataCopiedToMain
+	getDownloadUrlStats
 };
 
 

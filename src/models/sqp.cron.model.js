@@ -72,11 +72,14 @@ async function logCronActivity({ cronJobID, reportType, action, status, message,
         Status: status,
         Message: message,
         ReportID: reportID,
-        ReportDocumentID: reportDocumentID,
         RetryCount: retryCount,
-        ExecutionTime: executionTime !== null && executionTime !== undefined ? Number(executionTime) : undefined,
+        ExecutionTime: executionTime != null ? Number(executionTime) : undefined,
         UpdatedDate: new Date()
     };
+      
+    if (reportDocumentID != null && reportDocumentID != undefined) {
+        payload.ReportDocumentID = reportDocumentID;
+    }
     
     const existing = await SqpCronLogs.findOne({ where });
     if (existing) {

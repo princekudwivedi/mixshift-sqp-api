@@ -65,8 +65,6 @@ const config = {
     TBL_SQP_DOWNLOAD_URLS: env('TBL_SQP_DOWNLOAD_URLS', 'sqp_download_urls'),
     TBL_SQP_CRON_DETAILS: env('TBL_SQP_CRON_DETAILS', 'sqp_cron_details'),
     TBL_SQP_CRON_LOGS: env('TBL_SQP_CRON_LOGS', 'sqp_cron_logs'),
-    TBL_SQP_METRICS_3MO: env('TBL_SQP_METRICS_3MO', 'sqp_metrics_3mo'),
-    TBL_SQP_METRICS: env('TBL_SQP_METRICS', 'sqp_metrics'),
     TBL_SELLER: env('TBL_SELLER', 'seller'),
     TBL_MARKET_PLACE: env('TBL_MARKET_PLACE', 'marketplace'),
     TBL_SELLER_MARKET_PLACES_MAPPING: env('TBL_SELLER_MARKET_PLACES_MAPPING', 'seller_marketplaces_mapping'),

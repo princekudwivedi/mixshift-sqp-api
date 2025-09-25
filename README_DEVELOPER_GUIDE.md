@@ -18,21 +18,20 @@ Base URL: server mounts all routes under `/api/v1`. Cron (reports) routes are un
   - Controllers: `src/controllers/sqp.cron.api.controller.js`, `src/controllers/sqp.api.controller.js`
 - Services:
   - JSON ingestion: `src/services/sqp.json.processing.service.js`
-  - File-based processing & copy job: `src/services/sqp.file.processing.service.js`
 - Models (Sequelize):
   - `src/models/sequelize/sqpDownloadUrls.model.js`
-  - `src/models/sequelize/sqpMetrics3mo.model.js`
-  - `src/models/sequelize/sqpMetrics.model.js`
-  - Thin wrappers/helpers: `src/models/sqp.download.urls.model.js`, `src/models/sqp.metrics.model.js`
+  - `src/models/sequelize/sqpWeekly.model.js`
+  - `src/models/sequelize/sqpMonthly.model.js`
+  - `src/models/sequelize/sqpQuarterly.model.js`
+  - Thin wrappers/helpers: `src/models/sqp.download.urls.model.js`
 - DB & tenancy: `src/db/tenant.db.js`, `src/config/sequelize.config.js`
 - Helpers: `src/helpers/sqp.helpers.js`
 - Middleware: `src/middleware/*` (auth, rate limit, security headers, input sanitization)
 
 ### 3) Data Flow (High-Level)
 1. Reports are downloaded and saved; entries live in `sqp_download_urls`.
-2. JSON files are parsed and each record stored into `sqp_metrics_3mo`.
-3. A bulk copy job moves data from `sqp_metrics_3mo` to `sqp_metrics`.
-4. After successful copy, `sqp_download_urls.FullyImported` is updated to `2`.
+2. JSON files are parsed and each record stored into `sqp_weekly`, `sqp_monthly`, or `sqp_quarterly` based on report type.
+3. After successful import, `sqp_download_urls.FullyImported` is updated to `1`.
 
 ### 4) Key Endpoints (Cron API + Health)
 Mounted at: `/api/v1`
@@ -77,23 +76,12 @@ curl "http://localhost:3001/api/v1/cron/asin/cronSyncAllSellerAsins/3"
 curl "http://localhost:3001/api/v1/cron/asin/cronSyncAllUsersSellerAsins"
 ```
 
-### 5) Bulk Copy Logic (Where/How)
-- Service: `src/services/sqp.file.processing.service.js`
-  - `copyDataWithBulkInsert({ batchSize, dryRun, force, insertChunkSize })`
-    - Discovers report IDs (via `sqp.metrics.model.getReportIdsWithDataIn3mo()`)
-    - Dry run: counts distinct logical rows (ASIN+SearchQuery) per `ReportID`
-    - Copy: loads 3mo records per `ReportID`, dedupes by ASIN+SearchQuery+ReportDate
-    - Chunked `bulkCreate` with transaction per report
-      - `ignoreDuplicates: !force`
-      - `updateOnDuplicate` when `force=true`
-    - Updates `sqp_download_urls` to mark copied (`FullyImported=2`)
-
-### 6) JSON Ingestion (3mo Table)
+### 5) JSON Ingestion (SQP Tables)
 - Service: `src/services/sqp.json.processing.service.js`
-- Writes to `sqp_metrics_3mo` via `src/models/sqp.metrics.model.js` and `sequelize/sqpMetrics3mo.model.js`
-- Duplicate prevention per report: the service clears old rows for `ReportID` before storing new batch
+- Writes to `sqp_weekly`, `sqp_monthly`, or `sqp_quarterly` based on report type
+- Data is inserted directly into the appropriate table with `CronJobID` reference
 
-### 7) Environment & Security
+### 6) Environment & Security
 - Env: `src/config/env.config.js`
   - Safe parsers, strict production checks (non-default secrets, explicit CORS)
 - Required vars (subset): `DB_HOST`, `DB_USER`, `DB_NAME`, SMTP vars if notifications, SP-API/LWA creds
@@ -107,13 +95,12 @@ Tokens & roles:
 - Static token: set `API_ACCESS_TOKEN` and `API_TOKEN_ROLES=operator,admin` on the server; pass token via `Authorization: Bearer` or `?token=`
 - JWT: include `roles` claim and sign with `JWT_SECRET`
 
-### 8) Database
+### 7) Database
 - Schemas (SQL samples): `src/database/*.sql`
 - Recommended indexes:
-  - On both metrics tables: composite `(ReportID, ASIN, SearchQuery, ReportDate)`
-  - Consider unique index on `sqp_metrics` composite key to avoid duplicates in main table
+  - On SQP tables: composite `(CronJobID, ASIN, SearchQuery, ReportDate)`
 
-### 9) Operations & Observability
+### 8) Operations & Observability
 - Logs: `src/utils/logger.utils.js` (pino)
 - Health (add if needed): implement `/health` and `/readiness`
 - Metrics (optional): add Prometheus exporter (copy timings, counts, errors)

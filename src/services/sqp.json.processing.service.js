@@ -3,7 +3,6 @@ const fs = require('fs').promises;
 const path = require('path');
 const { uploadJson } = require('../utils/s3.utils');
 const model = require('../models/sqp.cron.model');
-const { getModel: getSqpMetrics3mo } = require('../models/sequelize/sqpMetrics3mo.model');
 const { getModel: getSqpWeekly } = require('../models/sequelize/sqpWeekly.model');
 const { getModel: getSqpMonthly } = require('../models/sequelize/sqpMonthly.model');
 const { getModel: getSqpQuarterly } = require('../models/sequelize/sqpQuarterly.model');
@@ -97,6 +96,13 @@ async function processSingleJsonFile(download) {
         }
         // Update latest date range on seller_ASIN_list by ASIN list from sqp_cron_details (ASIN_List)
         try {
+            console.log(`Updating seller_ASIN_list date ranges for ${download.ReportType} report`, {
+                cronJobID: download.CronJobID,
+                amazonSellerID: download.AmazonSellerID,
+                minRange,
+                maxRange,
+                jsonAsinsCount: Array.isArray(jsonContent) ? jsonContent.length : 0
+            });
             await updateSellerAsinLatestRanges({
                 cronJobID: download.CronJobID,
                 amazonSellerID: download.AmazonSellerID,
@@ -105,7 +111,10 @@ async function processSingleJsonFile(download) {
                 maxRange,
                 jsonAsins: Array.isArray(jsonContent) ? jsonContent.map(r => (r.asin || r.ASIN || '')).filter(Boolean) : []
             });
-        } catch (_) {}
+            console.log(`Successfully updated seller_ASIN_list date ranges for ${download.ReportType} report`);
+        } catch (error) {
+            console.error(`Failed to update seller_ASIN_list date ranges for ${download.ReportType} report:`, error.message);
+        }
 
 		console.log(`Successfully processed JSON file for report ${download.ReportID}`);
 
@@ -216,6 +225,15 @@ async function parseAndStoreJsonData(download, jsonContent, filePath, reportDate
 		const success = rows.length;
 		const failed = total - success;
 
+		console.log(`parseAndStoreJsonData: Date range calculation`, { 
+			total, 
+			success, 
+			failed, 
+			minRange, 
+			maxRange,
+			recordsSample: records.slice(0, 2).map(r => ({ startDate: r.startDate, endDate: r.endDate }))
+		});
+
 		if (rows.length > 0) {
             const type = (download.ReportType || '').toUpperCase();
             if (type === 'WEEK') {
@@ -285,7 +303,7 @@ function buildMetricsRow(download, reportDate, record, filePath, reportDateOverr
 			null;
 
 		return {
-			ReportID: download.CronJobID,
+			CronJobID: download.CronJobID,
 			ReportDate: reportDateOverride || endDate || reportDate,
 			StartDate: startDate,
 			EndDate: endDate,
@@ -376,26 +394,78 @@ async function getDownloadUrlStats() {
 
 // Update LatestRecordDateRange* on seller_ASIN_list for ASINs in ASIN_List (cron) or JSON
 async function updateSellerAsinLatestRanges({ cronJobID, amazonSellerID, reportType, minRange, maxRange, jsonAsins = [] }) {
-    if (!cronJobID || !reportType || !minRange || !maxRange) return;
+    console.log(`updateSellerAsinLatestRanges called with:`, { cronJobID, amazonSellerID, reportType, minRange, maxRange, jsonAsinsCount: jsonAsins.length });
+    
+    if (!cronJobID || !reportType || !minRange || !maxRange) {
+        console.log(`updateSellerAsinLatestRanges: Missing required parameters`, { cronJobID: !!cronJobID, reportType: !!reportType, minRange: !!minRange, maxRange: !!maxRange });
+        return;
+    }
+    
     const col = reportType === 'WEEK' ? 'LatestRecordDateRangeWeekly' : reportType === 'MONTH' ? 'LatestRecordDateRangeMonthly' : reportType === 'QUARTER' ? 'LatestRecordDateRangeQuarterly' : null;
-    if (!col) return;
+    if (!col) {
+        console.log(`updateSellerAsinLatestRanges: Invalid reportType`, { reportType });
+        return;
+    }
+    
     const rangeStr = `${minRange} - ${maxRange}`;
+    console.log(`updateSellerAsinLatestRanges: Range string`, { rangeStr, column: col });
 
     // Retrieve ASIN_List from sqp_cron_details
     const SqpCronDetails = getSqpCronDetails();
-    const cronRow = await SqpCronDetails.findOne({ where: { ID: cronJobID }, attributes: ['ASIN_List'] }).catch(() => null);
+    console.log(`updateSellerAsinLatestRanges: Fetching cron details for ID`, { cronJobID });
+    const cronRow = await SqpCronDetails.findOne({ where: { ID: cronJobID }, attributes: ['ASIN_List'] }).catch((error) => {
+        console.error(`updateSellerAsinLatestRanges: Error fetching cron details`, { cronJobID, error: error.message });
+        return null;
+    });
+    
     let asinSet = new Set();
     if (cronRow && cronRow.ASIN_List) {
-        cronRow.ASIN_List.split(/\s+/).filter(Boolean).forEach(a => asinSet.add(a.trim()));
+        const cronAsins = cronRow.ASIN_List.split(/\s+/).filter(Boolean).map(a => a.trim());
+        cronAsins.forEach(a => asinSet.add(a));
+        console.log(`updateSellerAsinLatestRanges: Found ASINs from cron details`, { cronAsinsCount: cronAsins.length, cronAsins: cronAsins.slice(0, 5) });
+    } else {
+        console.log(`updateSellerAsinLatestRanges: No ASIN_List found in cron details`, { cronJobID, hasCronRow: !!cronRow });
     }
+    
     // Merge JSON ASINs
     jsonAsins.forEach(a => asinSet.add(String(a).trim()));
     const asins = Array.from(asinSet).filter(Boolean);
-    if (asins.length === 0) return;
+    console.log(`updateSellerAsinLatestRanges: Final ASIN list`, { asinsCount: asins.length, asins: asins.slice(0, 5) });
+    
+    if (asins.length === 0) {
+        console.log(`updateSellerAsinLatestRanges: No ASINs to update`);
+        return;
+    }
 
     const { getModel: getSellerAsinList } = require('../models/sequelize/sellerAsinList.model');
     const SellerAsinList = getSellerAsinList();
-    await SellerAsinList.update({ [col]: rangeStr, dtUpdatedOn: new Date() }, { where: { AmazonSellerID: amazonSellerID, ASIN: asins } });
+    console.log(`updateSellerAsinLatestRanges: Updating seller_ASIN_list`, { amazonSellerID, column: col, rangeStr, asinsCount: asins.length });
+    
+    // First, let's check what records exist for this AmazonSellerID and ASINs
+    const existingRecords = await SellerAsinList.findAll({
+        where: { AmazonSellerID: amazonSellerID, ASIN: asins },
+        attributes: ['ID', 'AmazonSellerID', 'ASIN', col],
+        raw: true
+    });
+    console.log(`updateSellerAsinLatestRanges: Found existing records`, { 
+        amazonSellerID, 
+        existingRecordsCount: existingRecords.length,
+        existingRecords: existingRecords.slice(0, 3)
+    });
+    
+    const result = await SellerAsinList.update(
+        { [col]: rangeStr, dtUpdatedOn: new Date() }, 
+        { where: { AmazonSellerID: amazonSellerID, ASIN: asins } }
+    );
+    
+    console.log(`updateSellerAsinLatestRanges: Update completed`, { 
+        amazonSellerID, 
+        column: col, 
+        rangeStr, 
+        asinsCount: asins.length,
+        updatedRows: result[0],
+        existingRecordsCount: existingRecords.length
+    });
 }
 
 async function processSavedJsonFiles(limit = 25) {
@@ -440,23 +510,60 @@ async function processSavedJsonFiles(limit = 25) {
 				failCount: stats.failed
 			});
             // Mark cron detail import success (1) and set end date now
-            // if (row.CronJobID && row.ReportType) {
-            //     await model.updateSQPReportStatus(row.CronJobID, row.ReportType, 1, row.ReportID, null, null, null, null, new Date());
-            // }			
-            // Update latest date range on seller_ASIN_list
-            try {
-                const jsonAsins = Array.isArray(json) ? json.map(r => (r.asin || r.ASIN || '')).filter(Boolean) : [];
-                const minRangeCalc = (jsonAsins.length && json[0]?.startDate) ? json.reduce((m, r) => m && m < r.startDate ? m : r.startDate, json[0].startDate) : null;
-                const maxRangeCalc = (jsonAsins.length && json[0]?.endDate) ? json.reduce((m, r) => m && m > r.endDate ? m : r.endDate, json[0].endDate) : null;
-                await updateSellerAsinLatestRanges({
-                    cronJobID: row.CronJobID,
-                    amazonSellerID: row.AmazonSellerID,
-                    reportType: row.ReportType,
-                    minRange: minRangeCalc,
-                    maxRange: maxRangeCalc,
-                    jsonAsins
+            if (row.CronJobID && row.ReportType) {
+                console.log(`Updating SQP report status to success for ${row.ReportType}`, { 
+                    cronJobID: row.CronJobID, 
+                    reportType: row.ReportType 
                 });
-            } catch (_) {}
+                await model.updateSQPReportStatus(row.CronJobID, row.ReportType, 1, null, null, null, null, null, new Date());
+                console.log(`Successfully updated SQP report status to success for ${row.ReportType}`);
+            }			
+            // Get AmazonSellerID from sqp_cron_details using CronJobID
+            let amazonSellerID = null;
+            try {
+                const SqpCronDetails = getSqpCronDetails();
+                const cronDetail = await SqpCronDetails.findOne({ 
+                    where: { ID: row.CronJobID }, 
+                    attributes: ['AmazonSellerID'] 
+                });
+                amazonSellerID = cronDetail ? cronDetail.AmazonSellerID : null;
+                console.log(`Retrieved AmazonSellerID for saved file processing`, { 
+                    cronJobID: row.CronJobID, 
+                    amazonSellerID 
+                });
+            } catch (error) {
+                console.error(`Failed to get AmazonSellerID for saved file processing:`, error.message);
+            }
+
+            // Update latest date range on seller_ASIN_list
+            if (amazonSellerID) {
+                try {
+                    const jsonAsins = Array.isArray(json) ? json.map(r => (r.asin || r.ASIN || '')).filter(Boolean) : [];
+                    const minRangeCalc = (jsonAsins.length && json[0]?.startDate) ? json.reduce((m, r) => m && m < r.startDate ? m : r.startDate, json[0].startDate) : null;
+                    const maxRangeCalc = (jsonAsins.length && json[0]?.endDate) ? json.reduce((m, r) => m && m > r.endDate ? m : r.endDate, json[0].endDate) : null;
+                    console.log(`Updating seller_ASIN_list date ranges for saved file processing`, {
+                        cronJobID: row.CronJobID,
+                        amazonSellerID,
+                        reportType: row.ReportType,
+                        minRange: minRangeCalc,
+                        maxRange: maxRangeCalc,
+                        jsonAsinsCount: jsonAsins.length
+                    });
+                    await updateSellerAsinLatestRanges({
+                        cronJobID: row.CronJobID,
+                        amazonSellerID,
+                        reportType: row.ReportType,
+                        minRange: minRangeCalc,
+                        maxRange: maxRangeCalc,
+                        jsonAsins
+                    });
+                    console.log(`Successfully updated seller_ASIN_list date ranges for saved file processing`);
+                } catch (error) {
+                    console.error(`Failed to update seller_ASIN_list date ranges for saved file processing:`, error.message);
+                }
+            } else {
+                console.warn(`Cannot update seller_ASIN_list date ranges: AmazonSellerID not found for CronJobID ${row.CronJobID}`);
+            }
 			processed++;
 		} catch (e) {
 			console.error('Error processing saved file:', e.message);

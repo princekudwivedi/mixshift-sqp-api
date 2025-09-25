@@ -478,7 +478,8 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
                 null,
                 null,
                 null,
-                true
+                true,
+                undefined  // Don't update ReportDocumentID during DOWNLOADING
             );
 			
 			// Ensure access token for download as well
@@ -545,11 +546,9 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
                     null,
                     filePath,
                     fileSize,
-                    false
+                    false,
+                    documentId
                 );
-
-				// Mark download as completed - preserve existing ReportID and ReportDocumentID and set end date
-                await model.updateSQPReportStatus(row.ID, reportType, 0, null, null, null, null, null, new Date());
 				
 				return {
 					message: `Report downloaded successfully on attempt ${attempt} and file saved for later processing`,
@@ -576,11 +575,9 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
                     'No data in report',
                     null,
                     null,
-                    false
+                    false,
+                    documentId
                 );
-				
-				// Mark download as completed even with no data - preserve existing ReportID and ReportDocumentID and set end date
-                await model.updateSQPReportStatus(row.ID, reportType, 1, null, null, null, null, null, new Date());
 				
 				return {
 					message: `Report downloaded on attempt ${attempt} but contains no data`,

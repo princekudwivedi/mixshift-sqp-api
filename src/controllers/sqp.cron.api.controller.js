@@ -9,7 +9,6 @@ const StsToken = require('../models/stsToken.model');
 const sellerModel = require('../models/sequelize/seller.model');
 const ctrl = require('./sqp.cron.controller');
 const jsonProcessingService = require('../services/sqp.json.processing.service');
-const sqpfileProcessingService = require('../services/sqp.file.processing.service');
 const logger = require('../utils/logger.utils');
 const env = require('../config/env.config');
 const isDevEnv = ["local", "development"].includes(env.NODE_ENV);

@@ -1,8 +1,6 @@
 const sequelize = require('../../config/sequelize.config');
 
 // Writable models
-const SqpMetrics3mo = require('./sqpMetrics3mo.model');
-const SqpMetrics = require('./sqpMetrics.model');
 // Note: SqpCronDetails and SqpCronLogs are tenant-aware via getModel(); do not import here
 const SqpDownloadUrls = require('./sqpDownloadUrls.model');
 const SellerAsinList = require('./sellerAsinList.model');
@@ -21,8 +19,6 @@ async function init() {
     return {
         sequelize,
         // writable
-        SqpMetrics3mo,
-        SqpMetrics,
         // tenant-aware: import directly where needed
         SqpDownloadUrls,
         SellerAsinList,
@@ -41,8 +37,6 @@ module.exports = {
     init,
     sequelize,
     // writable
-    SqpMetrics3mo,
-    SqpMetrics,
     // tenant-aware: not exported here
     SqpDownloadUrls,
     SellerAsinList,
