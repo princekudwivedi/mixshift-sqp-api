@@ -569,7 +569,7 @@ class DataProcessingHelpers {
             TotalOneDayShippingPurchaseCount: ValidationHelpers.sanitizeNumber(record.purchaseData?.totalOneDayShippingPurchaseCount || 0),
             TotalTwoDayShippingPurchaseCount: ValidationHelpers.sanitizeNumber(record.purchaseData?.totalTwoDayShippingPurchaseCount || 0),
             ASIN: asin,
-            CreatedDate: new Date()
+            dtCreatedOn: new Date()
         };
     }
 

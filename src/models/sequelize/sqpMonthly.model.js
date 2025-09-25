@@ -46,7 +46,7 @@ let BaseModel = sequelize.define(table, {
     TotalOneDayShippingPurchaseCount: { type: DataTypes.BIGINT },
     TotalTwoDayShippingPurchaseCount: { type: DataTypes.BIGINT },
     ASIN: { type: DataTypes.STRING(32) },
-    CreatedDate: { type: DataTypes.DATE },
+    dtCreatedOn: { type: DataTypes.DATE },
 }, {
     tableName: table,
     timestamps: false

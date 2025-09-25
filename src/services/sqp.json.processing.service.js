@@ -343,7 +343,7 @@ function buildMetricsRow(download, reportDate, record, filePath, reportDateOverr
 			TotalOneDayShippingPurchaseCount: purchase.totalOneDayShippingPurchaseCount || 0,
 			TotalTwoDayShippingPurchaseCount: purchase.totalTwoDayShippingPurchaseCount || 0,
 			ASIN: asin,
-			CreatedDate: new Date()
+			dtCreatedOn: new Date()
 		};
 	} catch (_) {
 		return null;

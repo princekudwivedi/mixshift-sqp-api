@@ -392,11 +392,29 @@ class SqpCronApiController {
 				}, 'Error processing saved JSON files in all operations');
 				totalErrors++;
 			}
-
+            if(totalErrors > 0){
+                // Finalize cron statuses per report type based on outcomes
+                try {
+                    await loadDatabase(validatedUserId || 0);
+                    const finalize = async () => {
+                        const SqpCronDetails = require('../models/sequelize/sqpCronDetails.model').getModel();
+                        // For any rows stuck in import (4) without success, mark as failed (2) and clear running status
+                        // Weekly
+                        await SqpCronDetails.update({ WeeklySQPDataPullStatus: 2, WeeklySQPDataPullEndDate: new Date(), dtUpdatedOn: new Date() }, { where: { WeeklySQPDataPullStatus: { [require('sequelize').Op.ne]: 1 } } });
+                        // Monthly
+                        await SqpCronDetails.update({ MonthlySQPDataPullStatus: 2, MonthlySQPDataPullEndDate: new Date(), dtUpdatedOn: new Date() }, { where: {  MonthlySQPDataPullStatus: { [require('sequelize').Op.ne]: 1 } } });
+                        // Quarterly
+                        await SqpCronDetails.update({ QuarterlySQPDataPullStatus: 2, QuarterlySQPDataPullEndDate: new Date(), dtUpdatedOn: new Date() }, { where: {  QuarterlySQPDataPullStatus: { [require('sequelize').Op.ne]: 1 } } });
+                    };
+                    await finalize();
+                } catch (finalizeErr) {
+                    logger.warn({ error: finalizeErr.message }, 'Finalize statuses step encountered an issue');
+                }
+            }
             return SuccessHandler.sendProcessingSuccess(
-                res, 
-                totalProcessed, 
-                totalErrors, 
+                res,
+                totalProcessed,
+                totalErrors,
                 'All cron operations completed successfully'
             );
 

@@ -26,8 +26,8 @@ let BaseModel = sequelize.define(table, {
     FullyImported: { type: DataTypes.TINYINT },
     LastProcessAt: { type: DataTypes.DATE },
     LastProcessError: { type: DataTypes.TEXT },
-    CreatedDate: { type: DataTypes.DATE },
-    UpdatedDate: { type: DataTypes.DATE }
+    dtCreatedOn: { type: DataTypes.DATE },
+    dtUpdatedOn: { type: DataTypes.DATE }
 }, {
     tableName: table,
     timestamps: false

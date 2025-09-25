@@ -44,7 +44,7 @@ async function getActiveASINsBySeller(sellerId) {
 
 async function createSQPCronDetail(amazonSellerID, asinString) {
     const SqpCronDetails = getSqpCronDetails();
-    const row = await SqpCronDetails.create({ AmazonSellerID: amazonSellerID, ASIN_List: asinString, CreatedDate: new Date(), UpdatedDate: new Date() });
+    const row = await SqpCronDetails.create({ AmazonSellerID: amazonSellerID, ASIN_List: asinString, dtCreatedOn: new Date(), dtUpdatedOn: new Date() });
     return row.ID;
 }
 
@@ -52,7 +52,7 @@ async function updateSQPReportStatus(cronDetailID, reportType, status, _reportId
     const prefix = mapPrefix(reportType);
     const data = {
         [`${prefix}SQPDataPullStatus`]: status,
-        UpdatedDate: new Date()
+        dtUpdatedOn: new Date()
     };
     if (startDate) {
         data[`${prefix}SQPDataPullStartDate`] = new Date(startDate);
@@ -74,7 +74,7 @@ async function logCronActivity({ cronJobID, reportType, action, status, message,
         ReportID: reportID,
         RetryCount: retryCount,
         ExecutionTime: executionTime != null ? Number(executionTime) : undefined,
-        UpdatedDate: new Date()
+        dtUpdatedOn: new Date()
     };
       
     if (reportDocumentID != null && reportDocumentID != undefined) {
@@ -88,7 +88,7 @@ async function logCronActivity({ cronJobID, reportType, action, status, message,
         await SqpCronLogs.create({
             ...where,
             ...payload,
-            CreatedDate: new Date()
+            dtCreatedOn: new Date()
         });
     }
 }
@@ -97,7 +97,7 @@ async function getLatestReportId(cronJobID, reportType) {
     const SqpCronLogs = getSqpCronLogs();
     const row = await SqpCronLogs.findOne({
         where: { CronJobID: cronJobID, ReportType: reportType, ReportID: { [Op.ne]: null } },
-        order: [['UpdatedDate', 'DESC']],
+        order: [['dtUpdatedOn', 'DESC']],
         attributes: ['ReportID']
     });
     return row ? row.ReportID : null;
@@ -107,7 +107,7 @@ async function setProcessRunningStatus(cronDetailID, reportType, status) {
     try {
         const prefix = mapPrefix(reportType);
         const SqpCronDetails = getSqpCronDetails();
-        await SqpCronDetails.update({ [`${prefix}ProcessRunningStatus`]: Number(status), UpdatedDate: new Date() }, { where: { ID: cronDetailID } });
+        await SqpCronDetails.update({ [`${prefix}ProcessRunningStatus`]: Number(status), dtUpdatedOn: new Date() }, { where: { ID: cronDetailID } });
     } catch (error) {
         console.error('Failed to update ProcessRunningStatus:', error.message);
     }
@@ -169,6 +169,35 @@ async function handleCronError(cronDetailID, amazonSellerID, reportType, action,
     }
 }
 
+/**
+ * Lightweight in-table retry counters using sqp_cron_logs.RetryCount
+ * We record the latest retry count per CronJobID+ReportType by finding the most recent log row.
+ */
+async function getRetryCount(cronJobID, reportType) {
+    const SqpCronLogs = getSqpCronLogs();
+    const row = await SqpCronLogs.findOne({
+        where: { CronJobID: cronJobID, ReportType: reportType },
+        order: [['dtUpdatedOn', 'DESC']],
+        attributes: ['RetryCount']
+    });
+    return row && typeof row.RetryCount === 'number' ? row.RetryCount : 0;
+}
+
+async function incrementRetryCount(cronJobID, reportType) {
+    const SqpCronLogs = getSqpCronLogs();
+    // Create or update a lightweight row to persist the increment
+    const where = { CronJobID: cronJobID, ReportType: reportType };
+    const existing = await SqpCronLogs.findOne({ where });
+    if (existing) {
+        const next = (typeof existing.RetryCount === 'number' ? existing.RetryCount : 0) + 1;
+        await existing.update({ RetryCount: next, dtUpdatedOn: new Date() });
+        return next;
+    } else {
+        await SqpCronLogs.create({ ...where, RetryCount: 1, Action: 'Retry', Status: 3, Message: 'Increment retry', dtCreatedOn: new Date(), dtUpdatedOn: new Date() });
+        return 1;
+    }
+}
+
 module.exports = {
     splitASINsIntoChunks,
     mapPrefix,
@@ -180,7 +209,9 @@ module.exports = {
     setProcessRunningStatus,
     getReportsForStatusCheck,
     getReportsForDownload,
-    handleCronError
+    handleCronError,
+    getRetryCount,
+    incrementRetryCount
 };
 
 

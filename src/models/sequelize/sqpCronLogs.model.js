@@ -15,8 +15,8 @@ let BaseModel = sequelize.define(table, {
     ReportID: { type: DataTypes.STRING(128) },
     RetryCount: { type: DataTypes.INTEGER },
     ExecutionTime: { type: DataTypes.INTEGER },
-    CreatedDate: { type: DataTypes.DATE },
-    UpdatedDate: { type: DataTypes.DATE },
+    dtCreatedOn: { type: DataTypes.DATE },
+    dtUpdatedOn: { type: DataTypes.DATE },
     ReportDocumentID: { type: DataTypes.STRING(128) },
 }, {
     tableName: table,

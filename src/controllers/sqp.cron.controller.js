@@ -479,7 +479,7 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
                 null,
                 null,
                 true,
-                undefined  // Don't update ReportDocumentID during DOWNLOADING
+                null
             );
 			
 			// Ensure access token for download as well

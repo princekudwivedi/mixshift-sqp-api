@@ -21,8 +21,8 @@ let BaseModel = sequelize.define(table, {
     QuarterlySQPDataPullStatus: { type: DataTypes.TINYINT },
     QuarterlySQPDataPullStartDate: { type: DataTypes.DATE },
     QuarterlySQPDataPullEndDate: { type: DataTypes.DATE },
-    CreatedDate: { type: DataTypes.DATE },
-    UpdatedDate: { type: DataTypes.DATE }
+    dtCreatedOn: { type: DataTypes.DATE },
+    dtUpdatedOn: { type: DataTypes.DATE }
 }, {
     tableName: table,
     timestamps: false

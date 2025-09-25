@@ -18,7 +18,6 @@ async function init() {
     await sequelize.authenticate();
     return {
         sequelize,
-        // writable
         // tenant-aware: import directly where needed
         SqpDownloadUrls,
         SellerAsinList,
@@ -35,8 +34,7 @@ async function init() {
 
 module.exports = {
     init,
-    sequelize,
-    // writable
+    sequelize,    
     // tenant-aware: not exported here
     SqpDownloadUrls,
     SellerAsinList,
