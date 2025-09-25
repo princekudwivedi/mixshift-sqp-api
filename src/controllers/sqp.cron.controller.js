@@ -478,8 +478,7 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
                 null,
                 null,
                 null,
-                true,
-                null
+                true
             );
 			
 			// Ensure access token for download as well
@@ -546,8 +545,7 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
                     null,
                     filePath,
                     fileSize,
-                    false,
-                    documentId
+                    false
                 );
 				
 				return {
@@ -562,7 +560,6 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 					},
 					data: { documentId, filePath, fileSize, recordCount: data.length }
 				};
-				
 			} else {
 				// No data received - log this and update status
 				logger.warn({ reportId: documentId, reportType, attempt }, 'No data received from report download');
@@ -575,8 +572,7 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
                     'No data in report',
                     null,
                     null,
-                    false,
-                    documentId
+                    false
                 );
 				
 				return {

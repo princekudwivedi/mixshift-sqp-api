@@ -41,12 +41,11 @@ async function getCompletedDownloadsWithFiles(limit = 50) {
 }
 
 // Unified updater: pass either { id } or { criteria: {...} }
-async function updateDownloadStatus(selector, { status, errorMessage = null, filePath = null, fileSize = null, incrementAttempts = false, reportDocumentID = null }) {
+async function updateDownloadStatus(selector, { status, errorMessage = null, filePath = null, fileSize = null, incrementAttempts = false }) {
 	const data = { Status: status };
 	if (errorMessage !== null) data.ErrorMessage = errorMessage;
 	if (filePath !== null) data.FilePath = filePath;
 	if (fileSize !== null) data.FileSize = fileSize;
-	if (reportDocumentID !== null) data.ReportDocumentID = reportDocumentID;
 	if (status === 'DOWNLOADING') data.DownloadStartTime = new Date();
 	if (status === 'COMPLETED' || status === 'FAILED') data.DownloadEndTime = new Date();
 	if (incrementAttempts) data.DownloadAttempts = literal('COALESCE(DownloadAttempts, 0) + 1');
@@ -82,7 +81,7 @@ async function updateDownloadUrlStatus(id, status, errorMessage = null, filePath
 	return updateDownloadStatus({ id }, { status, errorMessage, filePath, fileSize, incrementAttempts });
 }
 
-async function updateDownloadUrlStatusByCriteria(cronJobID, reportType, status, errorMessage = null, filePath = null, fileSize = null, incrementAttempts = false, reportDocumentID = null) {
+async function updateDownloadUrlStatusByCriteria(cronJobID, reportType, status, errorMessage = null, filePath = null, fileSize = null, incrementAttempts = false) {
     const SqpDownloadUrls = getSqpDownloadUrls();
     // Find latest row for this CronJobID+ReportType
     const latest = await SqpDownloadUrls.findOne({
@@ -123,13 +122,23 @@ async function storeDownloadUrl(row) {
 		MaxDownloadAttempts: row.MaxDownloadAttempts || 3,
 		FilePath: row.FilePath || null,
 		FileSize: row.FileSize || null,
-		ProcessStatus:  row.ProcessStatus || 'PENDING',
+		ProcessStatus: 'PENDING',
 		DownloadStartTime: row.DownloadStartTime || undefined,
 		DownloadEndTime: row.Status === 'COMPLETED' ? new Date() : undefined,
 		LastProcessError: row.LastProcessError || null,
 		dtUpdatedOn: new Date()
 	};
-    return SqpDownloadUrls.create({ CronJobID: row.CronJobID, ReportType: row.ReportType, ...payload, dtCreatedOn: new Date() });
+    try {
+        return await SqpDownloadUrls.create({ CronJobID: row.CronJobID, ReportType: row.ReportType, ...payload, dtCreatedOn: new Date() });
+    } catch (err) {
+        logger.error({
+            error: err.message,
+            cronJobID: row.CronJobID,
+            reportType: row.ReportType,
+            payload
+        }, 'Failed to create sqp_download_urls row');
+        throw err;
+    }
 }
 
 async function updateProcessStatusById(id, processStatus, extra = {}) {
