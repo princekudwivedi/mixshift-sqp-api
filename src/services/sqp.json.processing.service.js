@@ -11,6 +11,7 @@ const { env } = require('../config/env.config');
 const nodeEnv = (env.NODE_ENV || 'development').toLowerCase();
 const downloadUrls = require('../models/sqp.download.urls.model');
 const { getModel: getSqpDownloadUrls } = require('../models/sequelize/sqpDownloadUrls.model');
+const dates = require('../utils/dates.utils');
 
 /**
  * Handle report completion - unified function for both data and no-data scenarios
@@ -59,7 +60,7 @@ async function handleReportCompletion(cronJobID, reportType, amazonSellerID = nu
 			where: { CronJobID: cronJobID, ReportType: reportType },
 			order: [['dtUpdatedOn', 'DESC']]
 		});
-		if (!latest) {
+		if (latest) {
 			if(!hasData) {
 				// Update download URLs process status to SUCCESS
 				await downloadUrls.updateProcessStatusById(latest.ID, 'SUCCESS', {
@@ -94,9 +95,9 @@ async function handleReportCompletion(cronJobID, reportType, amazonSellerID = nu
 					}
 				} else {
 					// For no-data scenarios, use the existing function to get appropriate date ranges
-					const reportDate = getDateRangeForPeriod(reportType);
-					minRange = reportDate.startDate;
-					maxRange = reportDate.endDate;
+					const reportDate = dates.getDateRangeForPeriod(reportType);
+					minRange = reportDate.start;
+					maxRange = reportDate.end;
 					jsonAsins = []; // No JSON ASINs for no-data scenarios
 					
 					console.log(`No data scenario - using calculated date ranges for ${reportType}`, {
