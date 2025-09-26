@@ -248,7 +248,7 @@ async function parseAndStoreJsonData(download, jsonContent, filePath, reportDate
             } 
 		}
 
-		console.log(`Successfully parsed and stored ${rows.length}/${records.length} records for report ${download.ReportID}`);
+		console.log(`Successfully parsed and stored ${rows.length}/${records.length} records for report`);
         return { total, success, failed, minRange, maxRange };
 
 	} catch (error) {
@@ -457,7 +457,6 @@ async function updateSellerAsinLatestRanges({ cronJobID, amazonSellerID, reportT
         { [col]: rangeStr, dtUpdatedOn: new Date() }, 
         { where: { AmazonSellerID: amazonSellerID, ASIN: asins } }
     );
-    
     console.log(`updateSellerAsinLatestRanges: Update completed`, { 
         amazonSellerID, 
         column: col, 
@@ -467,9 +466,131 @@ async function updateSellerAsinLatestRanges({ cronJobID, amazonSellerID, reportT
         existingRecordsCount: existingRecords.length
     });
 }
+async function __importJson(row, processed = 0, errors = 0){
+	try {
+		await downloadUrls.updateProcessStatusById(row.ID, 'PROCESSING', { incrementAttempts: true });
 
-async function processSavedJsonFiles(limit = 25) {
-	const rows = await downloadUrls.getCompletedDownloadsWithFiles(limit);
+		// Read file from disk
+		const filePath = row.FilePath;
+		const content = await fs.readFile(filePath, 'utf-8');
+		const json = JSON.parse(content);
+
+		// ReportDate from request start time
+		const reportDateOverride = await getRequestStartDate(row.CronJobID, row.ReportType);
+
+		// Parse and store
+		// ProcessRunningStatus = 4 (Process Import) and mark cron detail as import in-progress (4)
+		if (row.CronJobID && row.ReportType) {
+			await model.setProcessRunningStatus(row.CronJobID, row.ReportType, 4);			
+		}
+
+		const stats = await importJsonWithRetry({
+			ReportID: row.ReportID,
+			AmazonSellerID: row.AmazonSellerID,
+			ReportType: row.ReportType,
+			CronJobID: row.CronJobID,
+		}, json, filePath, reportDateOverride);
+
+		await downloadUrls.updateProcessStatusById(row.ID, 'SUCCESS', {
+			fullyImported: 1,
+			totalRecords: stats.total,
+			successCount: stats.success,
+			failCount: stats.failed
+		});
+		// Mark cron detail import success (1) and set end date now
+		if (row.CronJobID && row.ReportType) {
+			console.log(`Updating SQP report status to success for ${row.ReportType}`, { 
+				cronJobID: row.CronJobID, 
+				reportType: row.ReportType 
+			});
+			await model.updateSQPReportStatus(row.CronJobID, row.ReportType, 1, null, null, null, null, null, new Date());
+			console.log(`Successfully updated SQP report status to success for ${row.ReportType}`);
+		}			
+		// Get AmazonSellerID from sqp_cron_details using CronJobID
+		let amazonSellerID = null;
+		try {
+			const SqpCronDetails = getSqpCronDetails();
+			const cronDetail = await SqpCronDetails.findOne({ 
+				where: { ID: row.CronJobID }, 
+				attributes: ['AmazonSellerID'] 
+			});
+			amazonSellerID = cronDetail ? cronDetail.AmazonSellerID : null;
+			console.log(`Retrieved AmazonSellerID for saved file processing`, { 
+				cronJobID: row.CronJobID, 
+				amazonSellerID 
+			});
+		} catch (error) {
+			console.error(`Failed to get AmazonSellerID for saved file processing:`, error.message);
+		}
+
+		// Update latest date range on seller_ASIN_list
+		if (amazonSellerID) {
+			try {
+				const jsonAsins = Array.isArray(json) ? json.map(r => (r.asin || r.ASIN || '')).filter(Boolean) : [];
+				const minRangeCalc = (jsonAsins.length && json[0]?.startDate) ? json.reduce((m, r) => m && m < r.startDate ? m : r.startDate, json[0].startDate) : null;
+				const maxRangeCalc = (jsonAsins.length && json[0]?.endDate) ? json.reduce((m, r) => m && m > r.endDate ? m : r.endDate, json[0].endDate) : null;
+				console.log(`Updating seller_ASIN_list date ranges for saved file processing`, {
+					cronJobID: row.CronJobID,
+					amazonSellerID,
+					reportType: row.ReportType,
+					minRange: minRangeCalc,
+					maxRange: maxRangeCalc,
+					jsonAsinsCount: jsonAsins.length
+				});
+				await updateSellerAsinLatestRanges({
+					cronJobID: row.CronJobID,
+					amazonSellerID,
+					reportType: row.ReportType,
+					minRange: minRangeCalc,
+					maxRange: maxRangeCalc,
+					jsonAsins
+				});
+				
+				// Get ASINs from cron details to mark as Completed (not just JSON ASINs)
+				let cronAsins = [];
+				try {
+					const SqpCronDetails = getSqpCronDetails();
+					const cronDetail = await SqpCronDetails.findOne({ 
+						where: { ID: row.CronJobID }, 
+						attributes: ['ASIN_List'] 
+					});
+					if (cronDetail && cronDetail.ASIN_List) {
+						cronAsins = cronDetail.ASIN_List.split(/\s+/).filter(Boolean).map(a => a.trim());
+					}
+				} catch (error) {
+					console.error(`Failed to get ASIN_List from cron details:`, error.message);
+				}
+				
+				// Mark ASINs from cron details as Completed
+				if (cronAsins.length > 0) {
+					await model.ASINsBySellerUpdated(amazonSellerID, cronAsins, 'Completed', null, new Date());
+					console.log(`Successfully marked ${cronAsins.length} ASINs as Completed in seller_ASIN_list`);
+				} else {
+					console.warn(`No ASINs found in cron details to mark as Completed for CronJobID ${row.CronJobID}`);
+				}
+				
+				console.log(`Successfully updated seller_ASIN_list date ranges for saved file processing`);
+			} catch (error) {
+				console.error(`Failed to update seller_ASIN_list date ranges for saved file processing:`, error.message);
+			}
+		} else {
+			console.warn(`Cannot update seller_ASIN_list date ranges: AmazonSellerID not found for CronJobID ${row.CronJobID}`);
+		}
+		processed++;
+	} catch (e) {
+		console.error('Error processing saved file:', e.message);
+		await downloadUrls.updateProcessStatusById(row.ID, 'FAILED', { lastError: e.message });
+		// Mark cron detail import failed (2) or retry failed (3) if attempts already happened
+		if (row.CronJobID && row.ReportType) {
+			const status = (row.ProcessAttempts && Number(row.ProcessAttempts) > 0) ? 3 : 2;
+			await model.updateSQPReportStatus(row.CronJobID, row.ReportType, status, row.ReportID, e.message, null, null, null, new Date());
+		}
+		errors++;
+    }
+    return { processed, errors };
+}
+async function processSavedJsonFiles(filter = {}) {
+	const rows = await downloadUrls.getCompletedDownloadsWithFiles(filter);
 	if (!rows || rows.length === 0) {
 		console.log('No saved JSON files to process');
 		return { processed: 0, errors: 0 };
@@ -478,104 +599,9 @@ async function processSavedJsonFiles(limit = 25) {
 	let processed = 0;
 	let errors = 0;
 
-	for (const row of rows) {
-		try {
-			await downloadUrls.updateProcessStatusById(row.ID, 'PROCESSING', { incrementAttempts: true });
-
-			// Read file from disk
-			const filePath = row.FilePath;
-			const content = await fs.readFile(filePath, 'utf-8');
-			const json = JSON.parse(content);
-
-			// ReportDate from request start time
-			const reportDateOverride = await getRequestStartDate(row.CronJobID, row.ReportType);
-
-            // Parse and store
-            // ProcessRunningStatus = 4 (Process Import) and mark cron detail as import in-progress (4)
-            if (row.CronJobID && row.ReportType) {
-                await model.setProcessRunningStatus(row.CronJobID, row.ReportType, 4);
-            }
-
-            const stats = await importJsonWithRetry({
-				ReportID: row.ReportID,
-				AmazonSellerID: row.AmazonSellerID,
-				ReportType: row.ReportType,
-				CronJobID: row.CronJobID,
-            }, json, filePath, reportDateOverride);
-
-			await downloadUrls.updateProcessStatusById(row.ID, 'SUCCESS', {
-				fullyImported: 1,
-				totalRecords: stats.total,
-				successCount: stats.success,
-				failCount: stats.failed
-			});
-            // Mark cron detail import success (1) and set end date now
-            if (row.CronJobID && row.ReportType) {
-                console.log(`Updating SQP report status to success for ${row.ReportType}`, { 
-                    cronJobID: row.CronJobID, 
-                    reportType: row.ReportType 
-                });
-                await model.updateSQPReportStatus(row.CronJobID, row.ReportType, 1, null, null, null, null, null, new Date());
-                console.log(`Successfully updated SQP report status to success for ${row.ReportType}`);
-            }			
-            // Get AmazonSellerID from sqp_cron_details using CronJobID
-            let amazonSellerID = null;
-            try {
-                const SqpCronDetails = getSqpCronDetails();
-                const cronDetail = await SqpCronDetails.findOne({ 
-                    where: { ID: row.CronJobID }, 
-                    attributes: ['AmazonSellerID'] 
-                });
-                amazonSellerID = cronDetail ? cronDetail.AmazonSellerID : null;
-                console.log(`Retrieved AmazonSellerID for saved file processing`, { 
-                    cronJobID: row.CronJobID, 
-                    amazonSellerID 
-                });
-            } catch (error) {
-                console.error(`Failed to get AmazonSellerID for saved file processing:`, error.message);
-            }
-
-            // Update latest date range on seller_ASIN_list
-            if (amazonSellerID) {
-                try {
-                    const jsonAsins = Array.isArray(json) ? json.map(r => (r.asin || r.ASIN || '')).filter(Boolean) : [];
-                    const minRangeCalc = (jsonAsins.length && json[0]?.startDate) ? json.reduce((m, r) => m && m < r.startDate ? m : r.startDate, json[0].startDate) : null;
-                    const maxRangeCalc = (jsonAsins.length && json[0]?.endDate) ? json.reduce((m, r) => m && m > r.endDate ? m : r.endDate, json[0].endDate) : null;
-                    console.log(`Updating seller_ASIN_list date ranges for saved file processing`, {
-                        cronJobID: row.CronJobID,
-                        amazonSellerID,
-                        reportType: row.ReportType,
-                        minRange: minRangeCalc,
-                        maxRange: maxRangeCalc,
-                        jsonAsinsCount: jsonAsins.length
-                    });
-                    await updateSellerAsinLatestRanges({
-                        cronJobID: row.CronJobID,
-                        amazonSellerID,
-                        reportType: row.ReportType,
-                        minRange: minRangeCalc,
-                        maxRange: maxRangeCalc,
-                        jsonAsins
-                    });
-                    console.log(`Successfully updated seller_ASIN_list date ranges for saved file processing`);
-                } catch (error) {
-                    console.error(`Failed to update seller_ASIN_list date ranges for saved file processing:`, error.message);
-                }
-            } else {
-                console.warn(`Cannot update seller_ASIN_list date ranges: AmazonSellerID not found for CronJobID ${row.CronJobID}`);
-            }
-			processed++;
-		} catch (e) {
-			console.error('Error processing saved file:', e.message);
-			await downloadUrls.updateProcessStatusById(row.ID, 'FAILED', { lastError: e.message });
-            // Mark cron detail import failed (2) or retry failed (3) if attempts already happened
-            if (row.CronJobID && row.ReportType) {
-                const status = (row.ProcessAttempts && Number(row.ProcessAttempts) > 0) ? 3 : 2;
-                await model.updateSQPReportStatus(row.CronJobID, row.ReportType, status, row.ReportID, e.message, null, null, null, new Date());
-            }
-			errors++;
-		}
-	}
+    for (const row of rows) {
+        ({ processed, errors } = await __importJson(row, processed, errors));
+    }
 
 	return { processed, errors };
 }

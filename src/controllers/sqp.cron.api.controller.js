@@ -9,6 +9,7 @@ const StsToken = require('../models/stsToken.model');
 const sellerModel = require('../models/sequelize/seller.model');
 const ctrl = require('./sqp.cron.controller');
 const jsonProcessingService = require('../services/sqp.json.processing.service');
+const model = require('../models/sqp.cron.model');
 const logger = require('../utils/logger.utils');
 const env = require('../config/env.config');
 const isDevEnv = ["local", "development"].includes(env.NODE_ENV);
@@ -67,241 +68,6 @@ class SqpCronApiController {
     }
 
     /**
-     * Request reports for sellers
-     */
-    async requestReports(req, res) {
-        try {
-            const { userId, sellerId } = req.query;
-            
-            // Validate inputs
-            const validatedUserId = userId ? ValidationHelpers.validateUserId(userId) : null;
-            const validatedSellerId = sellerId ? ValidationHelpers.validateUserId(sellerId) : null;
-
-            logger.info({ 
-                userId: validatedUserId, 
-                sellerId: validatedSellerId,
-                hasToken: !!req.authToken 
-            }, 'Request reports for sellers');
-
-            await loadDatabase(0);
-            // Cache user list to avoid repeated master queries in high-frequency runs
-            if (!this._userListCache) this._userListCache = { data: null, at: 0 };
-            const userTtl = Number(process.env.USER_LIST_CACHE_TTL_MS || 60 * 1000);
-            const useCache = !validatedUserId && (Date.now() - this._userListCache.at) < userTtl;
-            const users = validatedUserId ? [{ ID: validatedUserId }] : (useCache && this._userListCache.data) || await getAllAgencyUserList();
-            if (!validatedUserId && !useCache) this._userListCache = { data: users, at: Date.now() };
-            let totalProcessed = 0;
-            let totalErrors = 0;
-
-            for (const user of users) {                 
-                try {
-                    await loadDatabase(user.ID);
-                    if (isDevEnv && !allowedUsers.includes(user.ID)) {
-                        continue;
-                    }
-                    const sellers = validatedSellerId
-                        ? await sellerModel.getSellersProfilesForCronAdvanced({ idSellerAccount: validatedSellerId, pullAll: 1 })
-                        : await sellerModel.getSellersProfilesForCronAdvanced({ pullAll: 0 });
-                    for (const s of sellers) {         
-                        if (!s) continue;
-                        try {
-                            const authOverrides = await this.buildAuthOverrides(s.AmazonSellerID);
-                            await ctrl.requestForSeller(s, authOverrides, env.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT);
-                            totalProcessed++;
-                        } catch (error) {
-                            logger.error({ 
-                                error: error.message, 
-                                sellerId: s.AmazonSellerID 
-                            }, 'Error requesting report for seller');
-                            
-                            // Log error to cron logs for this seller
-                            try {
-                                await ctrl.logCronActivity({
-                                    cronJobID: 0, // Use 0 for API-level errors
-                                    amazonSellerID: s.AmazonSellerID,
-                                    reportType: 'ALL',
-                                    action: 'Request Report',
-                                    status: 2, // Error status
-                                    message: `API Error: ${error.message}`,
-                                    retryCount: 0
-                                });
-                            } catch (logError) {
-                                logger.error({ logError: logError.message }, 'Failed to log cron activity');
-                            }
-                            
-                            totalErrors++;
-                        }
-                    }
-                } catch (error) {
-                    logger.error({ 
-                        error: error.message, 
-                        userId: user.ID 
-                    }, 'Error processing user');
-                    totalErrors++;
-                }
-            }
-			if (totalErrors > 0) {
-				return ErrorHandler.sendProcessingError(
-					res,
-					new Error('One or more report requests failed'),
-					totalProcessed,
-					totalErrors,
-					'Report requests failed'
-				);
-			}
-			return SuccessHandler.sendProcessingSuccess(
-				res, 
-				totalProcessed, 
-				totalErrors, 
-				'Report requests processed successfully'
-			);
-
-        } catch (error) {
-            logger.error({ 
-                error: error.message,
-                stack: error.stack,
-                query: req.query 
-            }, 'Error in request reports');
-            
-            return ErrorHandler.sendError(res, error, 'Failed to request reports');
-        }
-    }
-
-    /**
-     * Check report statuses
-     */
-    async checkReportStatuses(req, res) {
-        try {
-            const { userId } = req.query;
-            
-            // Validate inputs
-            const validatedUserId = userId ? ValidationHelpers.validateUserId(userId) : null;
-
-            logger.info({ 
-                userId: validatedUserId,
-                hasToken: !!req.authToken 
-            }, 'Check report statuses');
-
-            await loadDatabase(0);
-            const users = validatedUserId ? [{ ID: validatedUserId }] : await getAllAgencyUserList();
-            
-            let totalProcessed = 0;
-            let totalErrors = 0;
-            
-            for (const user of users) {     
-                try {
-                    await loadDatabase(user.ID);
-                    if (isDevEnv && !allowedUsers.includes(user.ID)) {
-                        continue;
-                    }
-                    const sts = await StsToken.getLatestTokenDetails();
-                    const authOverrides = sts ? {
-                        awsAccessKeyId: sts.accessKeyId,
-                        awsSecretAccessKey: sts.secretAccessKey,
-                        awsSessionToken: sts.SessionToken,
-                    } : {};
-                    
-                    await ctrl.checkReportStatuses(authOverrides);
-                    totalProcessed++;
-                } catch (error) {
-                    logger.error({ 
-                        error: error.message, 
-                        userId: user.ID 
-                    }, 'Error checking report statuses for user');
-                    totalErrors++;
-                }
-            }
-
-            return SuccessHandler.sendProcessingSuccess(
-                res, 
-                totalProcessed, 
-                totalErrors, 
-                'Report status checks completed successfully'
-            );
-
-        } catch (error) {
-            logger.error({ 
-                error: error.message,
-                stack: error.stack,
-                query: req.query 
-            }, 'Error in check report statuses');
-            
-            return ErrorHandler.sendError(res, error, 'Failed to check report statuses');
-        }
-    }
-
-    /**
-     * Download completed reports
-     */
-    async downloadCompletedReports(req, res) {
-        try {
-            const { userId } = req.query;
-            
-            // Validate inputs
-            const validatedUserId = userId ? ValidationHelpers.validateUserId(userId) : null;
-
-            logger.info({ 
-                userId: validatedUserId,
-                hasToken: !!req.authToken 
-            }, 'Download completed reports');
-
-            await loadDatabase(0);
-            const users = validatedUserId ? [{ ID: validatedUserId }] : await getAllAgencyUserList();
-            let totalProcessed = 0;
-            let totalErrors = 0;
-            
-            for (const user of users) {           
-                try {
-                    await loadDatabase(user.ID);
-                    if (isDevEnv && !allowedUsers.includes(user.ID)) {
-                        continue;
-                    }
-                    const sts = await StsToken.getLatestTokenDetails();
-                    const authOverrides = sts ? {
-                        awsAccessKeyId: sts.accessKeyId,
-                        awsSecretAccessKey: sts.secretAccessKey,
-                        awsSessionToken: sts.SessionToken,
-                    } : {};
-                    
-                    await ctrl.downloadCompletedReports(authOverrides);
-                    totalProcessed++;
-                } catch (error) {
-                    logger.error({ 
-                        error: error.message, 
-                        userId: user.ID 
-                    }, 'Error downloading reports for user');
-                    totalErrors++;
-                }
-            }
-
-			if (totalErrors > 0) {
-				return ErrorHandler.sendProcessingError(
-					res,
-					new Error('One or more report downloads failed'),
-					totalProcessed,
-					totalErrors,
-					'Report downloads failed'
-				);
-			}
-			return SuccessHandler.sendProcessingSuccess(
-				res, 
-				totalProcessed, 
-				totalErrors, 
-				'Report downloads completed successfully'
-			);
-
-        } catch (error) {
-            logger.error({ 
-                error: error.message,
-                stack: error.stack,
-                query: req.query 
-            }, 'Error in download completed reports');
-            
-            return ErrorHandler.sendError(res, error, 'Failed to download completed reports');
-        }
-    }
-
-    /**
      * Run all cron operations (request, status check, download)
      */
     async runAllCronOperations(req, res) {
@@ -323,8 +89,8 @@ class SqpCronApiController {
             
             let totalProcessed = 0;
             let totalErrors = 0;
-
-            // Step 1: Request reports
+            let breakUserProcessing = false;
+            // Process one user → one seller per run, exit after completing that seller
             for (const user of users) {
                 try {
                     await loadDatabase(user.ID);
@@ -335,19 +101,86 @@ class SqpCronApiController {
                         ? [await sellerModel.getProfileDetailsByID(validatedSellerId)]
                         : await sellerModel.getSellersProfilesForCronAdvanced({ pullAll: 0 });
                     
+                    logger.info({ userId: user.ID, sellerCount: sellers.length }, 'Processing sellers for user');
+                    
                     for (const s of sellers) {
-                        if (!s) continue;
+                        if (!s) continue;                        
                         try {
+                            // Check if seller has eligible ASINs before processing
+                            const hasEligible = await model.hasEligibleASINs(s.idSellerAccount);
+                            if (!hasEligible) {
+                                logger.info({ 
+                                    sellerId: s.idSellerAccount, 
+                                    amazonSellerID: s.AmazonSellerID 
+                                }, 'Skipping seller - no eligible ASINs');
+                                breakUserProcessing = false;
+                                continue;
+                            }
+                            breakUserProcessing = true;
+                            logger.info({ 
+                                sellerId: s.idSellerAccount, 
+                                amazonSellerID: s.AmazonSellerID 
+                            }, 'Processing seller with eligible ASINs');
+                            
                             const authOverrides = await this.buildAuthOverrides(s.AmazonSellerID);
-                            await ctrl.requestForSeller(s, authOverrides, env.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT);
+                            
+                            // Step 1: Request report and create cron detail
+                            const cronDetailIDs = await ctrl.requestForSeller(s, authOverrides, env.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT);
                             totalProcessed++;
+                            
+                            if (cronDetailIDs.length > 0) {                            
+                                // Step 2: Check status only for this cronDetailId
+                                try {
+                                    await ctrl.checkReportStatuses(authOverrides, { cronDetailID: cronDetailIDs });
+                                    totalProcessed++;
+                                } catch (error) {
+                                    logger.error({ error: error.message, cronDetailID: cronDetailIDs }, 'Error checking report statuses (scoped)');
+                                    totalErrors++;
+                                }
+
+                                // Step 3: Download only for this cronDetailId
+                                try {
+                                    await ctrl.downloadCompletedReports(authOverrides, { cronDetailID: cronDetailIDs });
+                                    totalProcessed++;
+                                } catch (error) {
+                                    logger.error({ error: error.message, cronDetailID: cronDetailIDs }, 'Error downloading reports (scoped)');
+                                    totalErrors++;
+                                }
+
+                                // Step 4: Process saved JSON only for this cronDetailId
+                                try {
+                                    await jsonProcessingService.processSavedJsonFiles({ cronDetailID: cronDetailIDs });
+                                    totalProcessed++;
+                                } catch (error) {
+                                    logger.error({ error: error.message, cronDetailID: cronDetailIDs }, 'Error processing saved JSON files (scoped)');
+                                    totalErrors++;
+                                }
+                            }
+                            
+                            logger.info({ 
+                                sellerId: s.idSellerAccount, 
+                                amazonSellerID: s.AmazonSellerID,
+                                cronDetailIDs,
+                                processed: totalProcessed,
+                                errors: totalErrors
+                            }, 'Completed processing for seller - exiting cron run');
+                            
+                            // Exit after processing one seller (per user per run)
+                            break;
+                            
                         } catch (error) {
                             logger.error({ 
                                 error: error.message, 
                                 sellerId: s.AmazonSellerID 
-                            }, 'Error requesting report for seller in all operations');
+                            }, 'Error processing seller in all operations');
                             totalErrors++;
-                        }
+                            // Continue to next seller on error
+                        }                        
+                    }
+                    console.log('breakUserProcessing', breakUserProcessing);
+                    
+                    if (breakUserProcessing) {
+                        break;
                     }
                 } catch (error) {
                     logger.error({ 
@@ -355,60 +188,6 @@ class SqpCronApiController {
                         userId: user.ID 
                     }, 'Error processing user in all operations');
                     totalErrors++;
-                }
-            }
-
-            // Step 2: Check report statuses
-            try {
-                const authOverrides = {};
-                await ctrl.checkReportStatuses(authOverrides);
-                totalProcessed++;
-            } catch (error) {
-                logger.error({ 
-                    error: error.message 
-                }, 'Error checking report statuses in all operations');
-                totalErrors++;
-            }
-
-			// Step 3: Download completed reports
-            try {
-                const authOverrides = {};
-                await ctrl.downloadCompletedReports(authOverrides);
-                totalProcessed++;
-            } catch (error) {
-                logger.error({ 
-                    error: error.message 
-                }, 'Error downloading reports in all operations');
-                totalErrors++;
-            }
-
-			// Step 4: Process saved JSON into tables
-			try {
-				await jsonProcessingService.processSavedJsonFiles();
-				totalProcessed++;
-			} catch (error) {
-				logger.error({ 
-					error: error.message 
-				}, 'Error processing saved JSON files in all operations');
-				totalErrors++;
-			}
-            if(totalErrors > 0){
-                // Finalize cron statuses per report type based on outcomes
-                try {
-                    await loadDatabase(validatedUserId || 0);
-                    const finalize = async () => {
-                        const SqpCronDetails = require('../models/sequelize/sqpCronDetails.model').getModel();
-                        // For any rows stuck in import (4) without success, mark as failed (2) and clear running status
-                        // Weekly
-                        await SqpCronDetails.update({ WeeklySQPDataPullStatus: 2, WeeklySQPDataPullEndDate: new Date(), dtUpdatedOn: new Date() }, { where: { WeeklySQPDataPullStatus: { [require('sequelize').Op.ne]: 1 } } });
-                        // Monthly
-                        await SqpCronDetails.update({ MonthlySQPDataPullStatus: 2, MonthlySQPDataPullEndDate: new Date(), dtUpdatedOn: new Date() }, { where: {  MonthlySQPDataPullStatus: { [require('sequelize').Op.ne]: 1 } } });
-                        // Quarterly
-                        await SqpCronDetails.update({ QuarterlySQPDataPullStatus: 2, QuarterlySQPDataPullEndDate: new Date(), dtUpdatedOn: new Date() }, { where: {  QuarterlySQPDataPullStatus: { [require('sequelize').Op.ne]: 1 } } });
-                    };
-                    await finalize();
-                } catch (finalizeErr) {
-                    logger.warn({ error: finalizeErr.message }, 'Finalize statuses step encountered an issue');
                 }
             }
             return SuccessHandler.sendProcessingSuccess(
@@ -426,81 +205,6 @@ class SqpCronApiController {
             }, 'Error in run all cron operations');
             
             return ErrorHandler.sendError(res, error, 'Failed to run all cron operations');
-        }
-    }
-
-    /**
-     * Process JSON files (legacy endpoint)
-     */
-    async processJsonFiles(req, res) {
-        try {
-            const { userId } = req.query;
-            
-            // Validate inputs
-            const validatedUserId = userId ? ValidationHelpers.validateUserId(userId) : null;
-
-            logger.info({ 
-                userId: validatedUserId,
-                hasToken: !!req.authToken 
-            }, 'Process JSON files (legacy)');
-
-            await loadDatabase(0);
-            const users = validatedUserId ? [{ ID: validatedUserId }] : await getAllAgencyUserList();
-            
-            let totalProcessed = 0;
-            let totalErrors = 0;
-            
-            for (const user of users) {
-                try {
-                    await loadDatabase(user.ID);
-                    const result = await jsonProcessingService.processSavedJsonFiles();
-                    if (!result) {
-                        logger.error({ userId: user.ID }, 'processSavedJsonFiles returned no result');
-                        totalErrors += 1;
-                        continue;
-                    }
-                    totalProcessed += (typeof result.processed === 'number' ? result.processed : 0);
-                    totalErrors += (typeof result.errors === 'number' ? result.errors : 0);
-                } catch (error) {
-                    logger.error({ 
-                        error: error.message, 
-                        userId: user.ID 
-                    }, 'Error processing JSON files for user');
-                    totalErrors++;
-                }
-            }
-            
-            if (totalErrors > 0) {
-                return ErrorHandler.sendProcessingError(
-                    res,
-                    new Error('One or more JSON files failed to process'),
-                    totalProcessed,
-                    totalErrors,
-                    'JSON file processing failed'
-                );
-            }
-
-            return SuccessHandler.sendProcessingSuccess(
-                res, 
-                totalProcessed, 
-                totalErrors, 
-                'JSON files processed successfully'
-            );
-
-        } catch (error) {
-            logger.error({ 
-                error: error.message,
-                stack: error.stack,
-                query: req.query 
-            }, 'Error in process JSON files');
-            
-            return ErrorHandler.sendProcessingError(
-                res, 
-                error, 
-                0, 
-                0, 
-                'Failed to process JSON files'
-            );
         }
     }
 

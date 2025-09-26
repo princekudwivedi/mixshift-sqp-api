@@ -2,6 +2,8 @@ const { getModel: getSqpCronDetails } = require('./sequelize/sqpCronDetails.mode
 const { getModel: getSqpCronLogs } = require('./sequelize/sqpCronLogs.model');
 const { getModel: getSellerAsinList } = require('./sequelize/sellerAsinList.model');
 const { Op, literal } = require('sequelize');
+const logger = require('../utils/logger.utils');
+const env = require('../config/env.config');
 
 function splitASINsIntoChunks(asins, maxChars = 200) {
     // Split ASINs into space-separated chunks where each concatenated string <= maxChars
@@ -38,8 +40,88 @@ function mapPrefix(reportType) {
 
 async function getActiveASINsBySeller(sellerId) {
     const SellerAsinList = getSellerAsinList();
-    const rows = await SellerAsinList.findAll({ where: { SellerID: sellerId, IsActive: 1 }, attributes: ['ASIN'] });
-    return rows.map(r => r.ASIN).filter(Boolean);
+    // Get ASINs that need processing (Pending or null status)
+    const pendingAsins = await SellerAsinList.findAll({ 
+        where: { 
+            SellerID: sellerId, 
+            IsActive: 1, 
+            LastSQPDataPullStatus: { [Op.or]: [null] }
+        }, 
+        attributes: ['ASIN'], 
+        limit: env.MAX_ASINS_PER_REQUEST,
+        order: [['dtCreatedOn', 'ASC']]
+    });
+    
+    // If we have MAX_ASINS_PER_REQUEST pending ASINs, return them
+    if (pendingAsins.length == env.MAX_ASINS_PER_REQUEST) {
+        logger.info({ sellerId, batchSize: pendingAsins.length }, `Selected ${env.MAX_ASINS_PER_REQUEST} pending ASINs for processing`);
+        return pendingAsins.map(r => r.ASIN).filter(Boolean);
+    }
+    
+    // If we have less than MAX_ASINS_PER_REQUEST pending, check for completed ASINs that are MAX_DAYS_AGO+ days old
+    const maxDaysAgo = new Date();
+    maxDaysAgo.setDate(maxDaysAgo.getDate() - env.MAX_DAYS_AGO);
+    
+    const completedAsins = await SellerAsinList.findAll({
+        where: {
+            SellerID: sellerId,
+            IsActive: 1,
+            LastSQPDataPullStatus: { [Op.or]: ['Completed', 'Failed', 'InProgress', 'Pending'] },
+            LastSQPDataPullStartTime: { [Op.lte]: maxDaysAgo }
+        },
+        attributes: ['ASIN'],
+        limit: env.MAX_ASINS_PER_REQUEST - pendingAsins.length,
+        order: [['LastSQPDataPullEndTime', 'ASC']]
+    });
+    // Combine pending and eligible completed ASINs
+    const allAsins = [...pendingAsins, ...completedAsins];
+    
+    logger.info({ 
+        sellerId, 
+        pendingCount: pendingAsins.length, 
+        completedCount: completedAsins.length, 
+        totalBatchSize: allAsins.length,
+        pendingAsins: pendingAsins.map(r => r.ASIN).slice(0, 5),
+        completedAsins: completedAsins.map(r => r.ASIN).slice(0, 5),
+        maxDaysAgo: maxDaysAgo.toISOString()
+    }, 'Selected ASINs for processing (pending + eligible completed)');
+    
+    return allAsins.map(r => r.ASIN).filter(Boolean);
+}
+
+async function ASINsBySellerUpdated(amazonSellerID, asinList, status, startTime = null, endTime = null) {
+    const SellerAsinList = getSellerAsinList();
+    const data = { LastSQPDataPullStatus: status, dtUpdatedOn: new Date() };
+    if (startTime) {
+        data.LastSQPDataPullStartTime = new Date(startTime);
+    }
+    if (endTime) {
+        data.LastSQPDataPullEndTime = new Date(endTime);
+    }
+    
+    logger.info({ 
+        amazonSellerID, 
+        asinCount: asinList.length, 
+        status, 
+        startTime, 
+        endTime 
+    }, 'Updating ASIN status in seller_ASIN_list');
+    
+    await SellerAsinList.update(data, { where: { AmazonSellerID: amazonSellerID, ASIN: { [Op.in]: asinList } } });
+}
+
+async function hasEligibleASINs(sellerId) {
+    // Reuse the logic from getActiveASINsBySeller to check eligibility
+    const eligibleAsins = await getActiveASINsBySeller(sellerId);
+    const hasEligible = eligibleAsins.length > 0;
+    
+    logger.info({ 
+        sellerId, 
+        eligibleCount: eligibleAsins.length,
+        hasEligible 
+    }, 'Seller ASIN eligibility check');
+    
+    return hasEligible;
 }
 
 async function createSQPCronDetail(amazonSellerID, asinString) {
@@ -113,30 +195,32 @@ async function setProcessRunningStatus(cronDetailID, reportType, status) {
     }
 }
 
-async function getReportsForStatusCheck() {
+async function getReportsForStatusCheck(filter = {}) {
     const SqpCronDetails = getSqpCronDetails();
-    return SqpCronDetails.findAll({
-        where: {
+    const where = {
             [Op.or]: [
                 { WeeklySQPDataPullStatus: 0},
                 { MonthlySQPDataPullStatus: 0},
                 { QuarterlySQPDataPullStatus: 0}
             ]
-        }
-    });
+    };
+    if (filter.cronDetailID && Array.isArray(filter.cronDetailID)) where.ID = { [Op.in]: filter.cronDetailID };
+    else if (filter.cronDetailID) where.ID = filter.cronDetailID;
+    return SqpCronDetails.findAll({ where });
 }
 
-async function getReportsForDownload() {
+async function getReportsForDownload(filter = {}) {
     const SqpCronDetails = getSqpCronDetails();
-    return SqpCronDetails.findAll({
-        where: {
+    const where = {
             [Op.or]: [
                 { WeeklySQPDataPullStatus: 0},
                 { MonthlySQPDataPullStatus: 0},
                 { QuarterlySQPDataPullStatus: 0}
             ]
-        }
-    });
+    };
+    if (filter.cronDetailID && Array.isArray(filter.cronDetailID)) where.ID = { [Op.in]: filter.cronDetailID };
+    else if (filter.cronDetailID) where.ID = filter.cronDetailID;
+    return SqpCronDetails.findAll({ where });
 }
 
 /**
@@ -211,7 +295,9 @@ module.exports = {
     getReportsForDownload,
     handleCronError,
     getRetryCount,
-    incrementRetryCount
+    incrementRetryCount,
+    ASINsBySellerUpdated,
+    hasEligibleASINs
 };
 
 

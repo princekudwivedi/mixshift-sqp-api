@@ -2,22 +2,17 @@ const { Op, literal } = require('sequelize');
 const { getModel: getSqpDownloadUrls } = require('./sequelize/sqpDownloadUrls.model');
 const logger = require('../utils/logger.utils');
 
-async function getPendingDownloadUrls(limit = 50) {
+async function getCompletedDownloadsWithFiles(filter = {}) {
 	const SqpDownloadUrls = getSqpDownloadUrls();
-	return SqpDownloadUrls.findAll({
-		where: { Status: 'PENDING' },
-		order: [['dtCreatedOn', 'ASC']],
-		limit
-	});
-}
-
-async function getCompletedDownloadsWithFiles(limit = 50) {
-	const SqpDownloadUrls = getSqpDownloadUrls();
+	const where = {
+		Status: 'COMPLETED',
+		FullyImported: { [Op.ne]: 1 },
+		FilePath: { [Op.ne]: null },
+	};
+	if (filter.cronDetailID) where.CronJobID = filter.cronDetailID;
 	return SqpDownloadUrls.findAll({
 		where: {
-			Status: 'COMPLETED',
-			FullyImported: { [Op.ne]: 1 },
-			FilePath: { [Op.ne]: null },
+			...where,
 			[Op.and]: [
 				{
 					[Op.or]: [
@@ -35,8 +30,7 @@ async function getCompletedDownloadsWithFiles(limit = 50) {
 				}
 			]
 		},
-		order: [['dtUpdatedOn', 'ASC']],
-		limit
+		order: [['dtUpdatedOn', 'ASC']]
 	});
 }
 
@@ -167,7 +161,6 @@ async function getDownloadUrlStats() {
 }
 
 module.exports = {
-	getPendingDownloadUrls,
 	getCompletedDownloadsWithFiles,
 	updateDownloadStatus,
 	updateDownloadUrlStatus, 

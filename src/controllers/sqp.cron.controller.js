@@ -10,7 +10,7 @@ const downloadUrls = require('../models/sqp.download.urls.model');
 const { sellerDefaults } = require('../config/env.config');
 const { NotificationHelpers } = require('../helpers/sqp.helpers');
 const { RetryHelpers } = require('../helpers/sqp.helpers');
-
+const env = require('../config/env.config');
 const MAX_RETRIES = 3;
 
 /**
@@ -93,13 +93,23 @@ async function requestForSeller(seller, authOverrides = {}, spReportType = confi
 	try {
 		const asins = await model.getActiveASINsBySeller(seller.idSellerAccount);
 		if (!asins.length) {
-			logger.warn('No active ASINs for seller');
-			return;
+			logger.warn({ sellerId: seller.idSellerAccount }, 'No eligible ASINs for seller (pending or ${env.MAX_DAYS_AGO}+ day old completed)');
+			return [];
 		}
+		// Mark ASINs as Pending and set start time
+		const startTime = new Date();
+		await model.ASINsBySellerUpdated(seller.AmazonSellerID, asins, 'Pending', startTime);		
+		logger.info({ 
+			sellerId: seller.idSellerAccount,
+			amazonSellerID: seller.AmazonSellerID,
+			asinCount: asins.length, 
+			asins: asins.slice(0, 5),
+			startTime: startTime.toISOString()
+		}, 'Found ASINs for seller and marked as Pending');
 		
-		logger.info({ asinCount: asins.length }, 'Found ASINs for seller');
 		const chunks = model.splitASINsIntoChunks(asins, 200);
 		logger.info({ chunkCount: chunks.length }, 'Split ASINs into chunks');
+		let cronDetailIDs = [];
 		
 		for (let i = 0; i < chunks.length; i++) {
 			const chunk = chunks[i];
@@ -107,7 +117,8 @@ async function requestForSeller(seller, authOverrides = {}, spReportType = confi
 			
 			const cronDetailID = await model.createSQPCronDetail(seller.AmazonSellerID, chunk.asin_string);
 			logger.info({ cronDetailID }, 'Created cron detail');
-			
+			cronDetailIDs.push(cronDetailID);
+
 			for (const type of ['WEEK', 'MONTH', 'QUARTER']) {
 				logger.info({ type }, 'Requesting report for type');
                 // ProcessRunningStatus = 1 (Request Report)
@@ -115,7 +126,19 @@ async function requestForSeller(seller, authOverrides = {}, spReportType = confi
                 await model.logCronActivity({ cronJobID: cronDetailID, reportType: type, action: 'Request Report', status: 1, message: 'Requesting report' });
                 await requestSingleReport(chunk, seller, cronDetailID, type, authOverrides, spReportType);
 			}
+
+			// Mark ASINs as InProgress
+			await model.ASINsBySellerUpdated(seller.AmazonSellerID, chunk.asins, 'InProgress');
+			logger.info({ 
+				sellerId: seller.idSellerAccount,
+				amazonSellerID: seller.AmazonSellerID,
+				chunkIndex: i,
+				asinCount: chunk.asins.length,
+				asins: chunk.asins.slice(0, 5),
+				cronDetailID
+			}, 'Marked ASINs as InProgress after request');
 		}
+		return cronDetailIDs;
 	} catch (error) {
 		logger.error({ 
 			error: error.message, 
@@ -255,9 +278,9 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 	return result;
 }
 
-async function checkReportStatuses(authOverrides = {}) {
+async function checkReportStatuses(authOverrides = {}, filter = {}) {
 	logger.info('Starting checkReportStatuses');
-	const rows = await model.getReportsForStatusCheck();
+	const rows = await model.getReportsForStatusCheck(filter);
 	logger.info({ reportCount: rows.length }, 'Found reports for status check');
 	
 	if (rows.length === 0) {
@@ -421,8 +444,8 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 	return result;
 }
 
-async function downloadCompletedReports(authOverrides = {}) {
-    const rows = await model.getReportsForDownload();
+async function downloadCompletedReports(authOverrides = {}, filter = {}) {
+    const rows = await model.getReportsForDownload(filter);
     for (const row of rows) {
         for (const type of ['WEEK', 'MONTH', 'QUARTER']) {
             if (row[`${model.mapPrefix(type)}SQPDataPullStatus`] === 0) {
@@ -574,7 +597,12 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
                     null,
                     false
                 );
-				
+
+				// Consider success without import: set ProcessRunningStatus=5 and SQPDataPullStatus=1; set EndDate now for no-data
+				await model.setProcessRunningStatus(row.ID, reportType, 5);
+				await model.updateSQPReportStatus(row.ID, reportType, 1, null, null, null, null, undefined, new Date());				
+				const asinList = Array.isArray(data) ? data.map(r => (r.asin || r.ASIN || '')) : [];
+				await model.ASINsBySellerUpdated(row.AmazonSellerID, asinList, 'Completed', null , new Date());
 				return {
 					message: `Report downloaded on attempt ${attempt} but contains no data`,
 					reportID: reportId,
