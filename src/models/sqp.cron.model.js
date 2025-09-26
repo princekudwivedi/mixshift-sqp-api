@@ -38,54 +38,57 @@ function mapPrefix(reportType) {
     return '';
 }
 
-async function getActiveASINsBySeller(sellerId) {
+async function getActiveASINsBySeller(sellerId = null, limit = true) {
     const SellerAsinList = getSellerAsinList();
-    // Get ASINs that need processing (Pending or null status)
-    const pendingAsins = await SellerAsinList.findAll({ 
-        where: { 
-            SellerID: sellerId, 
-            IsActive: 1, 
-            LastSQPDataPullStatus: { [Op.or]: [null] }
-        }, 
-        attributes: ['ASIN'], 
-        limit: env.MAX_ASINS_PER_REQUEST,
+    const sellerFilter = sellerId ? { SellerID: sellerId } : {};
+    const baseWhere = { IsActive: 1, LastSQPDataPullStatus: { [Op.or]: [null] }, ...sellerFilter };
+
+    // Pending ASINs
+    const pendingAsins = await SellerAsinList.findAll({
+        where: baseWhere,
+        attributes: ['ASIN'],
+        ...(limit ? { limit: env.MAX_ASINS_PER_REQUEST } : {}),
         order: [['dtCreatedOn', 'ASC']]
     });
-    
-    // If we have MAX_ASINS_PER_REQUEST pending ASINs, return them
-    if (pendingAsins.length == env.MAX_ASINS_PER_REQUEST) {
+
+    if (!limit) logger.info({ batchSize: pendingAsins.length }, 'Selected all pending ASINs for processing');
+
+    // Return early if enough pending ASINs
+    if (pendingAsins.length >= env.MAX_ASINS_PER_REQUEST) {
         logger.info({ sellerId, batchSize: pendingAsins.length }, `Selected ${env.MAX_ASINS_PER_REQUEST} pending ASINs for processing`);
         return pendingAsins.map(r => r.ASIN).filter(Boolean);
     }
-    
-    // If we have less than MAX_ASINS_PER_REQUEST pending, check for completed ASINs that are MAX_DAYS_AGO+ days old
+
+    // Completed ASINs (older than MAX_DAYS_AGO)
     const maxDaysAgo = new Date();
     maxDaysAgo.setDate(maxDaysAgo.getDate() - env.MAX_DAYS_AGO);
-    
+
+    const completedWhere = {
+        IsActive: 1,
+        LastSQPDataPullStatus: { [Op.or]: ['Completed', 'Failed', 'InProgress', 'Pending'] },
+        LastSQPDataPullEndTime: { [Op.lte]: maxDaysAgo },
+        ...sellerFilter
+    };
+
     const completedAsins = await SellerAsinList.findAll({
-        where: {
-            SellerID: sellerId,
-            IsActive: 1,
-            LastSQPDataPullStatus: { [Op.or]: ['Completed', 'Failed', 'InProgress', 'Pending'] },
-            LastSQPDataPullStartTime: { [Op.lte]: maxDaysAgo }
-        },
+        where: completedWhere,
         attributes: ['ASIN'],
-        limit: env.MAX_ASINS_PER_REQUEST - pendingAsins.length,
+        ...(limit ? { limit: env.MAX_ASINS_PER_REQUEST - pendingAsins.length } : {}),
         order: [['LastSQPDataPullEndTime', 'ASC']]
     });
-    // Combine pending and eligible completed ASINs
+
     const allAsins = [...pendingAsins, ...completedAsins];
-    
-    logger.info({ 
-        sellerId, 
-        pendingCount: pendingAsins.length, 
-        completedCount: completedAsins.length, 
+
+    logger.info({
+        sellerId,
+        pendingCount: pendingAsins.length,
+        completedCount: completedAsins.length,
         totalBatchSize: allAsins.length,
         pendingAsins: pendingAsins.map(r => r.ASIN).slice(0, 5),
         completedAsins: completedAsins.map(r => r.ASIN).slice(0, 5),
         maxDaysAgo: maxDaysAgo.toISOString()
     }, 'Selected ASINs for processing (pending + eligible completed)');
-    
+
     return allAsins.map(r => r.ASIN).filter(Boolean);
 }
 
@@ -110,17 +113,11 @@ async function ASINsBySellerUpdated(amazonSellerID, asinList, status, startTime 
     await SellerAsinList.update(data, { where: { AmazonSellerID: amazonSellerID, ASIN: { [Op.in]: asinList } } });
 }
 
-async function hasEligibleASINs(sellerId) {
-    // Reuse the logic from getActiveASINsBySeller to check eligibility
-    const eligibleAsins = await getActiveASINsBySeller(sellerId);
+async function hasEligibleASINs(sellerId, limit = true) {
+    const eligibleAsins = await getActiveASINsBySeller(sellerId, limit);
     const hasEligible = eligibleAsins.length > 0;
-    
-    logger.info({ 
-        sellerId, 
-        eligibleCount: eligibleAsins.length,
-        hasEligible 
-    }, 'Seller ASIN eligibility check');
-    
+
+    logger.info({ sellerId, eligibleCount: eligibleAsins.length, hasEligible }, 'Seller ASIN eligibility check');
     return hasEligible;
 }
 
@@ -281,6 +278,7 @@ async function incrementRetryCount(cronJobID, reportType) {
         return 1;
     }
 }
+
 
 module.exports = {
     splitASINsIntoChunks,

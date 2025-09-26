@@ -7,6 +7,7 @@ const StsToken = require('../models/stsToken.model');
 const sp = require('../spapi/client.spapi');
 const jsonSvc = require('../services/sqp.json.processing.service');
 const downloadUrls = require('../models/sqp.download.urls.model');
+const { getModel: getSqpCronDetails } = require('../models/sequelize/sqpCronDetails.model');
 const { sellerDefaults } = require('../config/env.config');
 const { NotificationHelpers } = require('../helpers/sqp.helpers');
 const { RetryHelpers } = require('../helpers/sqp.helpers');
@@ -598,11 +599,9 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
                     false
                 );
 
-				// Consider success without import: set ProcessRunningStatus=5 and SQPDataPullStatus=1; set EndDate now for no-data
-				await model.setProcessRunningStatus(row.ID, reportType, 5);
-				await model.updateSQPReportStatus(row.ID, reportType, 1, null, null, null, null, undefined, new Date());				
-				const asinList = Array.isArray(data) ? data.map(r => (r.asin || r.ASIN || '')) : [];
-				await model.ASINsBySellerUpdated(row.AmazonSellerID, asinList, 'Completed', null , new Date());
+				// Use the unified completion handler for no-data scenario
+				await jsonSvc.handleReportCompletion(row.ID, reportType, row.AmazonSellerID, null, false);
+				
 				return {
 					message: `Report downloaded on attempt ${attempt} but contains no data`,
 					reportID: reportId,

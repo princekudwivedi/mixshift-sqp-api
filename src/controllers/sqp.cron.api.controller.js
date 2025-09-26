@@ -102,7 +102,18 @@ class SqpCronApiController {
                         : await sellerModel.getSellersProfilesForCronAdvanced({ pullAll: 0 });
                     
                     logger.info({ userId: user.ID, sellerCount: sellers.length }, 'Processing sellers for user');
-                    
+
+                    // Check if user has eligible seller which has eligible ASINs before processing
+                    const hasEligibleUser = await model.hasEligibleASINs(null, false);
+                    if (!hasEligibleUser) {
+                        logger.info({ 
+                            sellerId: 'ALL Sellers Check', 
+                            amazonSellerID: 'ALL Sellers Check',
+                            userId: user.ID
+                        }, 'Skipping Full Run - no eligible ASINs for all sellers');
+                        continue;
+                    }
+
                     for (const s of sellers) {
                         if (!s) continue;                        
                         try {
@@ -164,9 +175,8 @@ class SqpCronApiController {
                                 processed: totalProcessed,
                                 errors: totalErrors
                             }, 'Completed processing for seller - exiting cron run');
-                            
-                            // Exit after processing one seller (per user per run)
-                            break;
+
+                            break; // done after one seller
                             
                         } catch (error) {
                             logger.error({ 
@@ -176,9 +186,7 @@ class SqpCronApiController {
                             totalErrors++;
                             // Continue to next seller on error
                         }                        
-                    }
-                    console.log('breakUserProcessing', breakUserProcessing);
-                    
+                    }                    
                     if (breakUserProcessing) {
                         break;
                     }
