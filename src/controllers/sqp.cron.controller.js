@@ -289,7 +289,7 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 	return result;
 }
 
-async function checkReportStatuses(authOverrides = {}, filter = {}) {
+async function checkReportStatuses(authOverrides = {}, filter = {}, retry = false) {
 	logger.info('Starting checkReportStatuses');
 	const rows = await model.getReportsForStatusCheck(filter);
 	logger.info({ reportCount: rows.length }, 'Found reports for status check');
@@ -302,7 +302,7 @@ async function checkReportStatuses(authOverrides = {}, filter = {}) {
     for (const row of rows) {
         logger.info({ rowId: row.ID }, 'Processing report row');
         for (const type of ['WEEK', 'MONTH', 'QUARTER']) {
-            if (row[`${model.mapPrefix(type)}SQPDataPullStatus`] === 0) {
+            if (row[`${model.mapPrefix(type)}SQPDataPullStatus`] === 0 || (retry && row[`${model.mapPrefix(type)}SQPDataPullStatus`] === 2)) {
                 // ProcessRunningStatus = 2 (Check Status)
                 await model.setProcessRunningStatus(row.ID, type, 2);
 				reportID = await model.getLatestReportId(row.ID, type);
@@ -419,14 +419,15 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 				
             } else if (status === 'FATAL' || status === 'CANCELLED') {
                 // Permanent failure
-				await model.updateSQPReportStatus(row.ID, reportType, 2, null, status, null, null, null, new Date());
+                const latestReportId = await model.getLatestReportId(row.ID, reportType);
+                await model.updateSQPReportStatus(row.ID, reportType, 2, latestReportId, status, null, null, null, new Date());
                 await model.logCronActivity({ 
                     cronJobID: row.ID, 
                     reportType, 
                     action: 'Check Status', 
                     status: 2, 
                     message: `Report ${status} on attempt ${attempt}`, 
-                    reportID: reportId, 
+                    reportID: latestReportId || reportId, 
                     retryCount: 0, 
                     executionTime: (Date.now() - startTime) / 1000 
                 });

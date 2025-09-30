@@ -20,6 +20,9 @@ router.put('/sqp/updateAsinStatus/:userId/:sellerID/:asin', (req, res) => sqpApi
 router.use('/cron/sqp', AuthMiddleware.rateLimit(50, 15 * 60 * 1000)); // 50 requests per 15 minutes for cron endpoints
 router.get('/cron/sqp/all', (req, res) => sqpCronApiController.runAllCronOperations(req, res));
 
+// Notification suppression cron route
+router.get('/cron/sqp/suppress-notifications', (req, res) => sqpCronApiController.suppressNotifications(req, res));
+
 // ASIN sync cron routes
 router.get('/cron/asin/syncSellerAsins/:userId/:amazonSellerID', (req, res) => sqpCronApiController.syncSellerAsins(req, res));
 router.get('/cron/asin/cronSyncAllSellerAsins/:userId', (req, res) => sqpCronApiController.cronSyncAllSellerAsins(req, res));

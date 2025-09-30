@@ -1,0 +1,38 @@
+{"level":30,"time":1759245210762,"pid":28060,"hostname":"DESKTOP-E1S2FH7","PORT":"3001","environment":"development","version":"1.0.0","msg":"SQP API server running"}
+{"level":30,"time":1759245247391,"pid":27532,"hostname":"DESKTOP-E1S2FH7","PORT":"3001","environment":"development","version":"1.0.0","msg":"SQP API server running"}
+{"level":30,"time":1759245269780,"pid":27532,"hostname":"DESKTOP-E1S2FH7","method":"GET","url":"/cron/sqp/suppress-notifications","ip":"::1","userAgent":"PostmanRuntime/7.48.0","hasToken":false,"timestamp":"2025-09-30T15:14:29.779Z","msg":"Incoming request"}
+{"level":30,"time":1759245269786,"pid":27532,"hostname":"DESKTOP-E1S2FH7","userId":null,"hasToken":false,"msg":"Starting notification suppression scan"}
+{"level":30,"time":1759245269787,"pid":27532,"hostname":"DESKTOP-E1S2FH7","msg":"Connecting to root database (userId = 0)"}
+{"level":30,"time":1759245269788,"pid":27532,"hostname":"DESKTOP-E1S2FH7","database":"dev_dash_applications","msg":"DB pool switched"}
+{"level":30,"time":1759245280433,"pid":27532,"hostname":"DESKTOP-E1S2FH7","msg":"Connecting to root database to query user mapping"}
+{"level":30,"time":1759245280434,"pid":27532,"hostname":"DESKTOP-E1S2FH7","database":"dev_dash_applications","msg":"DB pool switched"}
+{"level":30,"time":1759245283982,"pid":27532,"hostname":"DESKTOP-E1S2FH7","tenantDb":"dev_dashamazon_copy","msg":"Switching to tenant database"}
+{"level":30,"time":1759245283983,"pid":27532,"hostname":"DESKTOP-E1S2FH7","database":"dev_dashamazon_copy","msg":"DB pool switched"}
+{"level":30,"time":1759245283984,"pid":27532,"hostname":"DESKTOP-E1S2FH7","tz":"America/New_York","msg":"Timezone set from tenant"}
+{"level":30,"time":1759245283988,"pid":27532,"hostname":"DESKTOP-E1S2FH7","cutoffTime":"2025-09-30T06:14:43.988Z","msg":"Scanning for records stuck since cutoff time"}
+{"level":30,"time":1759245292105,"pid":27532,"hostname":"DESKTOP-E1S2FH7","userId":8,"msg":"No stuck records found for user"}
+{"level":30,"time":1759245292106,"pid":27532,"hostname":"DESKTOP-E1S2FH7","msg":"Connecting to root database to query user mapping"}
+{"level":30,"time":1759245292106,"pid":27532,"hostname":"DESKTOP-E1S2FH7","database":"dev_dash_applications","msg":"DB pool switched"}
+{"level":30,"time":1759245297684,"pid":27532,"hostname":"DESKTOP-E1S2FH7","tenantDb":"dev_dashamazon","msg":"Switching to tenant database"}
+{"level":30,"time":1759245297684,"pid":27532,"hostname":"DESKTOP-E1S2FH7","database":"dev_dashamazon","msg":"DB pool switched"}
+{"level":30,"time":1759245297684,"pid":27532,"hostname":"DESKTOP-E1S2FH7","tz":"America/Denver","msg":"Timezone set from tenant"}
+{"level":30,"time":1759245297687,"pid":27532,"hostname":"DESKTOP-E1S2FH7","cutoffTime":"2025-09-30T06:14:57.686Z","msg":"Scanning for records stuck since cutoff time"}
+{"level":30,"time":1759245306769,"pid":27532,"hostname":"DESKTOP-E1S2FH7","userId":3,"msg":"No stuck records found for user"}
+{"level":30,"time":1759245306769,"pid":27532,"hostname":"DESKTOP-E1S2FH7","msg":"Connecting to root database to query user mapping"}
+{"level":30,"time":1759245306769,"pid":27532,"hostname":"DESKTOP-E1S2FH7","database":"dev_dash_applications","msg":"DB pool switched"}
+{"level":30,"time":1759245309293,"pid":27532,"hostname":"DESKTOP-E1S2FH7","tenantDb":"princewhiz","msg":"Switching to tenant database"}
+{"level":30,"time":1759245309293,"pid":27532,"hostname":"DESKTOP-E1S2FH7","database":"princewhiz","msg":"DB pool switched"}
+{"level":30,"time":1759245309293,"pid":27532,"hostname":"DESKTOP-E1S2FH7","tz":"Asia/Kolkata","msg":"Timezone set from tenant"}
+{"level":30,"time":1759245309293,"pid":27532,"hostname":"DESKTOP-E1S2FH7","msg":"Connecting to root database to query user mapping"}
+{"level":30,"time":1759245309294,"pid":27532,"hostname":"DESKTOP-E1S2FH7","database":"dev_dash_applications","msg":"DB pool switched"}
+{"level":30,"time":1759245313841,"pid":27532,"hostname":"DESKTOP-E1S2FH7","tenantDb":"princetest","msg":"Switching to tenant database"}
+{"level":30,"time":1759245313842,"pid":27532,"hostname":"DESKTOP-E1S2FH7","database":"princetest","msg":"DB pool switched"}
+{"level":30,"time":1759245313842,"pid":27532,"hostname":"DESKTOP-E1S2FH7","tz":"Asia/Kolkata","msg":"Timezone set from tenant"}
+{"level":30,"time":1759245313842,"pid":27532,"hostname":"DESKTOP-E1S2FH7","msg":"Connecting to root database to query user mapping"}
+{"level":30,"time":1759245313842,"pid":27532,"hostname":"DESKTOP-E1S2FH7","database":"dev_dash_applications","msg":"DB pool switched"}
+{"level":30,"time":1759245317394,"pid":27532,"hostname":"DESKTOP-E1S2FH7","tenantDb":"whizprince","msg":"Switching to tenant database"}
+{"level":30,"time":1759245317394,"pid":27532,"hostname":"DESKTOP-E1S2FH7","database":"whizprince","msg":"DB pool switched"}
+{"level":30,"time":1759245317394,"pid":27532,"hostname":"DESKTOP-E1S2FH7","tz":"Asia/Kolkata","msg":"Timezone set from tenant"}
+{"level":30,"time":1759245317394,"pid":27532,"hostname":"DESKTOP-E1S2FH7","msg":"No stuck records found across all users"}
+{"level":30,"time":1759245317394,"pid":27532,"hostname":"DESKTOP-E1S2FH7","statusCode":200,"message":"Operation completed successfully","hasData":true,"msg":"Success response sent"}
+{"level":30,"time":1759245317398,"pid":27532,"hostname":"DESKTOP-E1S2FH7","method":"GET","url":"/cron/sqp/suppress-notifications","statusCode":200,"duration":"47622ms","ip":"::1","timestamp":"2025-09-30T15:15:17.398Z","msg":"Request completed"}

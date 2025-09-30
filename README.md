@@ -180,6 +180,9 @@ Recommended schedules (24h time):
   - Sync all users: daily at 03:00
   - Sync one user / one seller: on demand
 
+- Notification suppression
+  - GET `/cron/sqp/suppress-notifications` - Suppress notifications for records stuck for 8+ hours
+
 Linux crontab examples (HTTP via curl):
 ```bash
 # Request every 6h
@@ -199,6 +202,9 @@ Linux crontab examples (HTTP via curl):
 
 # ASIN sync all users daily @03:00
 0 3 * * * curl -fsS "http://localhost:3001/api/v1/cron/asin/cronSyncAllUsersSellerAsins" >> /var/log/sqp_asin_sync_all.log 2>&1
+
+# Notification suppression hourly
+0 * * * * curl -fsS "http://localhost:3001/api/v1/cron/sqp/suppress-notifications" >> /var/log/sqp_suppress_notifications.log 2>&1
 ```
 
 ```bash

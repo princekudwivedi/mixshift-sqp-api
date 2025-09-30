@@ -10,6 +10,9 @@ const sellerModel = require('../models/sequelize/seller.model');
 const ctrl = require('./sqp.cron.controller');
 const jsonProcessingService = require('../services/sqp.json.processing.service');
 const model = require('../models/sqp.cron.model');
+const { getModel: getSqpCronDetails } = require('../models/sequelize/sqpCronDetails.model');
+const { getModel: getSqpCronLogs } = require('../models/sequelize/sqpCronLogs.model');
+const { Op } = require('sequelize');
 const logger = require('../utils/logger.utils');
 const env = require('../config/env.config');
 const isDevEnv = ["local", "development"].includes(env.NODE_ENV);
@@ -628,6 +631,338 @@ class SqpCronApiController {
             }, 'syncSellerAsinsInternal failed');
             return { insertedCount: 0, totalCount: 0, error: `Database error: ${error.message}` };
         }
+    }
+
+    /**
+     * Suppress notifications for stuck records
+     * GET: /cron/sqp/suppress-notifications
+     */
+    async suppressNotifications(req, res) {
+        try {
+            const { userId } = req.query;
+            
+            // Validate inputs
+            const validatedUserId = userId ? ValidationHelpers.validateUserId(userId) : null;
+
+            logger.info({ 
+                userId: validatedUserId,
+                hasToken: !!req.authToken 
+            }, 'Starting notification suppression scan');
+
+            await loadDatabase(0);
+            const users = validatedUserId ? [{ ID: validatedUserId }] : await getAllAgencyUserList();
+            
+            let totalSuppressed = 0;
+            let totalErrors = 0;
+            const allResults = [];
+            
+            // Process each user
+            for (const user of users) {
+                try {
+                    await loadDatabase(user.ID);
+                    if (isDevEnv && !allowedUsers.includes(user.ID)) {
+                        continue;
+                    }
+                    
+                    const stuckRecords = await this.findStuckRecords();
+                    if (stuckRecords.length === 0) {
+                        logger.info({ userId: user.ID }, 'No stuck records found for user');
+                        continue;
+                    }
+                    
+                    logger.warn({ 
+                        userId: user.ID,
+                        stuckRecordsCount: stuckRecords.length,
+                        records: stuckRecords.map(r => ({
+                            id: r.ID,
+                            amazonSellerID: r.AmazonSellerID,
+                            stuckForHours: r.stuckForHours,
+                            reportTypes: r.stuckReportTypes
+                        }))
+                    }, 'Found stuck records that need notification suppression');
+                    // Retry each stuck record's report types before deciding final status
+                    const retryResults = [];
+                    for (const rec of stuckRecords) {
+                        for (const type of rec.stuckReportTypes) {
+                            try {
+                                const rr = await this.retryStuckRecord(rec, type);
+                                retryResults.push(rr);
+                            } catch (e) {
+                                retryResults.push({
+                                    cronDetailID: rec.ID,
+                                    amazonSellerID: rec.AmazonSellerID,
+                                    reportType: type,
+                                    retried: true,
+                                    success: false,
+                                    error: e.message
+                                });
+                            }
+                        }
+                    }
+                    const suppressed = await this.suppressNotificationsForRecords(stuckRecords);
+                    totalSuppressed += suppressed.length;
+                    allResults.push(...retryResults, ...suppressed);
+                    
+                    logger.info({
+                        userId: user.ID,
+                        totalStuckRecords: stuckRecords.length,
+                        suppressedCount: suppressionResults.length
+                    }, 'Notification suppression completed for user');
+                    
+                } catch (error) {
+                    logger.error({ 
+                        error: error.message,
+                        userId: user.ID 
+                    }, 'Error processing user in notification suppression');
+                    totalErrors++;
+                }
+            }
+            
+            if (totalSuppressed === 0) {
+                logger.info('No stuck records found across all users');
+                return SuccessHandler.sendSuccess(res, {
+                    message: 'No stuck records found',
+                    suppressedCount: 0,
+                    records: []
+                });
+            }
+            
+            logger.info({
+                totalSuppressed,
+                totalErrors,
+                results: allResults
+            }, 'Notification suppression completed');
+            
+            return SuccessHandler.sendSuccess(res, {
+                message: `Suppressed notifications for ${totalSuppressed} stuck records`,
+                suppressedCount: totalSuppressed,
+                records: allResults
+            });
+            
+        } catch (error) {
+            logger.error({ 
+                error: error.message,
+                stack: error.stack 
+            }, 'Error in notification suppression scan');
+            
+            return ErrorHandler.sendError(res, error, 'Failed to suppress notifications');
+        }
+    }
+
+    /**
+     * Find records that have been stuck in progress/pending status for 8-9 hours
+     */
+    async findStuckRecords() {
+        const SqpCronDetails = getSqpCronDetails();
+        
+        // Calculate cutoff time (8.5 hours ago)
+        const cutoffTime = new Date();
+        cutoffTime.setHours(cutoffTime.getHours() - 8.5);
+        
+        logger.info({ cutoffTime: cutoffTime.toISOString() }, 'Scanning for records stuck since cutoff time');
+        
+        // Find records that are stuck in progress or pending status
+        const stuckRecords = await SqpCronDetails.findAll({
+            where: {
+                [Op.or]: [
+                    // Weekly records stuck in progress (status 2) or pending (status 0)
+                    {
+                        [Op.and]: [
+                            { WeeklyProcessRunningStatus: { [Op.in]: [1, 2, 3] } },
+                            { WeeklySQPDataPullStatus: { [Op.in]: [0, 3] } },
+                            { dtUpdatedOn: { [Op.lte]: cutoffTime } }
+                        ]
+                    },
+                    // Monthly records stuck in progress or pending
+                    {
+                        [Op.and]: [
+                            { MonthlyProcessRunningStatus: { [Op.in]: [1, 2, 3] } },
+                            { MonthlySQPDataPullStatus: { [Op.in]: [0, 3] } },
+                            { dtUpdatedOn: { [Op.lte]: cutoffTime } }
+                        ]
+                    },
+                    // Quarterly records stuck in progress or pending
+                    {
+                        [Op.and]: [
+                            { QuarterlyProcessRunningStatus: { [Op.in]: [1, 2, 3] } },
+                            { QuarterlySQPDataPullStatus: { [Op.in]: [0, 3] } },
+                            { dtUpdatedOn: { [Op.lte]: cutoffTime } }
+                        ]
+                    }
+                ]
+            },
+            attributes: [
+                'ID', 'AmazonSellerID', 'dtCreatedOn', 'dtUpdatedOn',
+                'WeeklyProcessRunningStatus', 'WeeklySQPDataPullStatus',
+                'MonthlyProcessRunningStatus', 'MonthlySQPDataPullStatus',
+                'QuarterlyProcessRunningStatus', 'QuarterlySQPDataPullStatus'
+            ]
+        });
+        // Enrich records with additional information
+        const enrichedRecords = await Promise.all(
+            stuckRecords.map(async (record) => {
+                const stuckReportTypes = [];
+                const stuckForHours = Math.round((Date.now() - new Date(record.dtUpdatedOn).getTime()) / (1000 * 60 * 60) * 10) / 10;
+                
+                // Check which report types are stuck
+                if (this.isReportTypeStuck(record.WeeklyProcessRunningStatus, record.WeeklySQPDataPullStatus)) {
+                    stuckReportTypes.push('WEEK');
+                }
+                if (this.isReportTypeStuck(record.MonthlyProcessRunningStatus, record.MonthlySQPDataPullStatus)) {
+                    stuckReportTypes.push('MONTH');
+                }
+                if (this.isReportTypeStuck(record.QuarterlyProcessRunningStatus, record.QuarterlySQPDataPullStatus)) {
+                    stuckReportTypes.push('QUARTER');
+                }
+                
+                return {
+                    ...record.toJSON(),
+                    stuckReportTypes,
+                    stuckForHours
+                };
+            })
+        );
+        
+        // Filter out records that don't have any stuck report types
+        return enrichedRecords.filter(record => record.stuckReportTypes.length > 0);
+    }
+
+    /**
+     * Check if a report type is stuck based on process and data pull status
+     */
+    isReportTypeStuck(processStatus, dataPullStatus) {
+        return (
+            (processStatus === 1 || processStatus === 2 || processStatus === 3 || processStatus === 4) &&
+            (dataPullStatus === 0 || dataPullStatus === 2 || dataPullStatus === 3)
+        );
+    }
+
+    /**
+     * Suppress notifications for stuck records
+     */
+    async suppressNotificationsForRecords(stuckRecords) {
+        const suppressionResults = [];
+        
+        for (const record of stuckRecords) {
+            try {
+                // Mark each stuck report type as having suppressed notifications
+                for (const reportType of record.stuckReportTypes) {
+                    await this.suppressNotificationForRecord(record.ID, reportType, record.stuckForHours);
+                    
+                    suppressionResults.push({
+                        cronDetailID: record.ID,
+                        amazonSellerID: record.AmazonSellerID,
+                        reportType,
+                        stuckForHours: record.stuckForHours,
+                        suppressedAt: new Date().toISOString()
+                    });
+                }
+                
+                logger.warn({
+                    cronDetailID: record.ID,
+                    amazonSellerID: record.AmazonSellerID,
+                    stuckReportTypes: record.stuckReportTypes,
+                    stuckForHours: record.stuckForHours
+                }, 'Suppressed notifications for stuck record');
+                
+            } catch (error) {
+                logger.error({
+                    error: error.message,
+                    cronDetailID: record.ID,
+                    amazonSellerID: record.AmazonSellerID,
+                    stuckReportTypes: record.stuckReportTypes
+                }, 'Failed to suppress notifications for record');
+                
+                suppressionResults.push({
+                    cronDetailID: record.ID,
+                    amazonSellerID: record.AmazonSellerID,
+                    reportType: 'ALL',
+                    error: error.message,
+                    suppressedAt: null
+                });
+            }
+        }
+        
+        return suppressionResults;
+    }
+
+    /**
+     * Suppress notification for a specific record and report type
+     */
+    async suppressNotificationForRecord(cronDetailID, reportType, stuckForHours) {
+        const SqpCronLogs = getSqpCronLogs();
+        // Log the suppression action
+        // await SqpCronLogs.create({
+        //     CronJobID: cronDetailID,
+        //     ReportType: reportType,
+        //     Action: 'Notification Suppressed',
+        //     Status: 3,
+        //     Message: `Notification suppressed - record stuck for ${stuckForHours} hours`,
+        //     dtCreatedOn: new Date(),
+        //     dtUpdatedOn: new Date()
+        // });
+        
+        logger.info({
+            cronDetailID,
+            reportType,
+            stuckForHours
+        }, 'Logged notification suppression');
+    }
+
+    /**
+     * Retry a stuck record's pipeline for a specific report type, then finalize status.
+     */
+    async retryStuckRecord(record, reportType) {
+        const authOverrides = await this.buildAuthOverrides(record.AmazonSellerID);
+        try {
+            await ctrl.checkReportStatuses(authOverrides, { cronDetailID: [record.ID] }, retry = true );
+        } catch (e) {
+            logger.error({ id: record.ID, reportType, error: e.message }, 'Retry status check failed');
+        }
+        try {
+            await ctrl.downloadCompletedReports(authOverrides, { cronDetailID: [record.ID] });
+        } catch (e) {
+            logger.error({ id: record.ID, reportType, error: e.message }, 'Retry download failed');
+        }
+        try {
+            await jsonProcessingService.processSavedJsonFiles({ cronDetailID: [record.ID] });
+        } catch (e) {
+            logger.error({ id: record.ID, reportType, error: e.message }, 'Retry process JSON failed');
+        }
+
+        // Re-fetch status and finalize
+        const SqpCronDetails = getSqpCronDetails();
+        const refreshed = await SqpCronDetails.findOne({
+            where: { ID: record.ID },
+            attributes: [
+                'WeeklySQPDataPullStatus','MonthlySQPDataPullStatus','QuarterlySQPDataPullStatus',
+                'WeeklyProcessRunningStatus','MonthlyProcessRunningStatus','QuarterlyProcessRunningStatus',
+                'dtUpdatedOn'
+            ]
+        });
+        const prefix = model.mapPrefix(reportType);
+        const statusField = `${prefix}SQPDataPullStatus`;
+        const current = refreshed ? refreshed[statusField] : null;
+
+        if (current === 1) {
+            logger.info({ id: record.ID, reportType }, 'Retry succeeded - marked as success');
+            return { cronDetailID: record.ID, amazonSellerID: record.AmazonSellerID, reportType, retried: true, success: true };
+        }
+
+        // Mark failed if still not success
+        const latestReportId = await model.getLatestReportId(record.ID, reportType);
+        await model.updateSQPReportStatus(record.ID, reportType, 2, latestReportId, 'Retry after 8h failed');
+        await model.logCronActivity({
+            cronJobID: record.ID,
+            reportType,
+            action: 'Retry Finalize',
+            status: 2,
+            message: 'Marked as failed after retry of stuck record',
+            reportID: latestReportId,
+            retryCount: null
+        });
+        logger.warn({ id: record.ID, reportType }, 'Retry failed - marked as failure');
+        return { cronDetailID: record.ID, amazonSellerID: record.AmazonSellerID, reportType, retried: true, success: false };
     }
 }
 
