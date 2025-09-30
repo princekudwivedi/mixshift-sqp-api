@@ -77,7 +77,7 @@ class SqpCronApiController {
             // Validate inputs
             const validatedUserId = userId ? ValidationHelpers.validateUserId(userId) : null;
             const validatedSellerId = sellerId ? ValidationHelpers.validateUserId(sellerId) : null;
-
+            
             logger.info({ 
                 userId: validatedUserId, 
                 sellerId: validatedSellerId,
@@ -137,18 +137,17 @@ class SqpCronApiController {
                                     sellerId: s.idSellerAccount, 
                                     amazonSellerID: s.AmazonSellerID 
                                 }, 'Processing seller with eligible ASINs');
-                                
                                 const authOverrides = await this.buildAuthOverrides(s.AmazonSellerID);
                                 
                                 // Step 1: Request report and create cron detail
                                 const cronDetailIDs = await ctrl.requestForSeller(s, authOverrides, env.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT);
                                 totalProcessed++;
                                 
-                                logger.info({ delay: process.env.INITIAL_DELAY_SECONDS * 1000 || 30000 }, 'Delaying');
+                                logger.info({ delay: process.env.INITIAL_DELAY_SECONDS * 1000 || 30000 }, 'Delaying before status');
                                 // delay 30 seconds
-                                await new Promise(resolve => setTimeout(resolve, process.env.INITIAL_DELAY_SECONDS * 1000 || 30000));
+                                await new Promise(resolve => setTimeout(resolve, (Number(process.env.INITIAL_DELAY_SECONDS) * 1000) || 30000));
 
-                                logger.info({ delay: process.env.INITIAL_DELAY_SECONDS * 1000 || 30000 }, 'Delay completed');
+                                logger.info({ delay: process.env.INITIAL_DELAY_SECONDS * 1000 || 30000 }, 'Delay completed now start status check');
 
                                 if (cronDetailIDs.length > 0) {                            
                                     // Step 2: Check status only for this cronDetailId
@@ -186,8 +185,6 @@ class SqpCronApiController {
                                     processed: totalProcessed,
                                     errors: totalErrors
                                 }, 'Completed processing for seller - exiting cron run');
-
-                                break; // done after one seller
                                 
                             } catch (error) {
                                 logger.error({ 
@@ -196,7 +193,8 @@ class SqpCronApiController {
                                 }, 'Error processing seller in all operations');
                                 totalErrors++;
                                 // Continue to next seller on error
-                            }                        
+                            }
+                            break; // done after one seller
                         }                    
                         if (breakUserProcessing) {
                             break;

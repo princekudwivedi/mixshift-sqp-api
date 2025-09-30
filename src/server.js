@@ -26,10 +26,6 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // Trust proxy for accurate IP addresses
 app.set('trust proxy', 1);
 
-// Request ID for tracing
-const requestId = require('./middleware/request.id.middleware');
-app.use(requestId);
-
 // Health and readiness endpoints
 const { getTenantSequelizeForCurrentDb } = require('./db/tenant.db');
 app.get('/healthz', (req, res) => {
@@ -46,10 +42,7 @@ app.get('/readyz', async (req, res) => {
         res.status(503).json({ ready: false, error: e.message, time: new Date().toISOString() });
     }
 });
-
-// All API routes mounted at versioned prefix
-const ipAllowlist = require('./middleware/ip.allowlist.middleware');
-app.use('/api/v1', ipAllowlist, apiRoutes);
+app.use('/api/v1', apiRoutes);
 
 // Global error handler
 app.use(AsyncErrorHandler.globalErrorHandler);
