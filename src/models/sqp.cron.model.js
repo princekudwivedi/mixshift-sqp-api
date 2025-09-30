@@ -221,6 +221,82 @@ async function getReportsForDownload(filter = {}) {
 }
 
 /**
+ * Check cron details of sellers by date - checkCronDetailsOfSellersByDate
+ * @param {number} idUserAccount - User account ID (0 for all)
+ * @param {number} AmazonSellerID - Amazon Seller ID (0 for all)
+ * @param {boolean} iActiveCRON - Filter by active cron status
+ * @param {string} date - Date filter (empty for today)
+ * @param {boolean} iActiveRetryFlag - Filter by retry status
+ * @returns {Promise<Array>} Array of cron detail records
+ */
+async function checkCronDetailsOfSellersByDate(idUserAccount = 0, AmazonSellerID = '', iActiveCRON = false, date = '', iActiveRetryFlag = false) {
+    const SqpCronDetails = getSqpCronDetails();
+    
+    // Build date filter
+    let dateFilter = {};
+    if (date !== '') {
+        const targetDate = new Date(date);
+        const startOfDay = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate(), 0, 0, 0);
+        const endOfDay = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate(), 23, 59, 59);
+        dateFilter = {
+            [Op.or]: [
+                { WeeklySQPDataPullStartDate: { [Op.between]: [startOfDay, endOfDay] } },
+                { MonthlySQPDataPullStartDate: { [Op.between]: [startOfDay, endOfDay] } },
+                { QuarterlySQPDataPullStartDate: { [Op.between]: [startOfDay, endOfDay] } }
+            ]
+        };
+    } else {
+        const today = new Date();
+        const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0);
+        const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59);
+        dateFilter = {
+            [Op.or]: [
+                { WeeklySQPDataPullStartDate: { [Op.between]: [startOfDay, endOfDay] } },
+                { MonthlySQPDataPullStartDate: { [Op.between]: [startOfDay, endOfDay] } },
+                { QuarterlySQPDataPullStartDate: { [Op.between]: [startOfDay, endOfDay] } }
+            ]
+        };
+    }
+    
+    const where = { ...dateFilter };
+    
+    // Filter by active cron status
+    if (iActiveCRON) {
+        where[Op.or] = [
+            { WeeklyProcessRunningStatus: { [Op.in]: [1, 2, 3] } },
+            { MonthlyProcessRunningStatus: { [Op.in]: [1, 2, 3] } },
+            { QuarterlyProcessRunningStatus: { [Op.in]: [1, 2, 3] } }
+        ];
+    }
+    
+    // Filter by retry status
+    if (iActiveRetryFlag != '') {
+        where[Op.or] = [
+            { WeeklySQPDataPullStatus: 3 },
+            { MonthlySQPDataPullStatus: 3 },
+            { QuarterlySQPDataPullStatus: 3 }
+        ];
+    }
+    
+    // Filter by AmazonSellerID
+    if (AmazonSellerID) {
+        where.AmazonSellerID = AmazonSellerID;
+    }    
+    
+    const results = await SqpCronDetails.findAll({
+        where,
+        order: [['ID', 'DESC']]
+    });
+    
+    // Return single object if sellerId specified, otherwise array
+    if (AmazonSellerID != '') {
+        return results.length > 0 ? results[0] : null;
+    } else {
+        return results;
+    }
+}
+
+/**
  * Comprehensive error handling that updates both cron details and logs
  */
 async function handleCronError(cronDetailID, amazonSellerID, reportType, action, error, reportId = null) {
@@ -291,6 +367,7 @@ module.exports = {
     setProcessRunningStatus,
     getReportsForStatusCheck,
     getReportsForDownload,
+    checkCronDetailsOfSellersByDate,
     handleCronError,
     getRetryCount,
     incrementRetryCount,

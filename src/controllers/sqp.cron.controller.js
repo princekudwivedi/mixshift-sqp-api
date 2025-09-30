@@ -260,10 +260,19 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 				executionTime: 0
 			});
 			
+			// Add initial delay after report creation to give Amazon time to start processing
+			const initialDelaySeconds = process.env.INITIAL_DELAY_SECONDS || 30; // 30 seconds initial delay
+			logger.info({ cronDetailID, reportType, reportId, delaySeconds: initialDelaySeconds }, 'Report created, waiting before first status check');
+			
+			// Wait before allowing status checks
+			await new Promise(resolve => setTimeout(resolve, initialDelaySeconds * 1000));
+			
+			logger.info({ cronDetailID, reportType, reportId }, 'Initial delay completed, ready for status checks');
+			
 			return {
-				message: `Report requested successfully on attempt ${attempt}. Report ID: ${reportId}`,
+				message: `Report requested successfully on attempt ${attempt}. Report ID: ${reportId}. Waited ${initialDelaySeconds}s before status checks.`,
 				reportID: reportId,
-				data: { reportId, startDate }
+				data: { reportId, startDate, initialDelay: initialDelaySeconds }
 			};
 		}
 	});
@@ -381,29 +390,28 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 				};
 				
 			} else if (status === 'IN_QUEUE' || status === 'IN_PROGRESS') {
-				// Report is still processing, no need to retry immediately
-				logger.info({ cronDetailID: row.ID, reportType, status, attempt }, 'Report still processing, no retry needed');
+				// Report is still processing, add delay before retry
+				const delaySeconds = Math.min(process.env.INITIAL_DELAY_SECONDS || 30 + (attempt * 15), 120); // 30s, 45s, 60s, max 120s
+				logger.info({ cronDetailID: row.ID, reportType, status, attempt, delaySeconds }, 'Report still processing, waiting before retry');
 				
-				// Log the status but don't throw error (this is not a failure)
+				// Log the status
 				await model.logCronActivity({ 
 					cronJobID: row.ID, 
 					amazonSellerID: row.AmazonSellerID, 
 					reportType, 
 					action: 'Check Status', 
 					status: 0, 
-					message: `Report ${status.toLowerCase().replace('_',' ')} on attempt ${attempt}`, 
+					message: `Report ${status.toLowerCase().replace('_',' ')} on attempt ${attempt}, waiting ${delaySeconds}s before retry`, 
 					reportID: reportId, 
 					retryCount: currentRetry,
 					executionTime: (Date.now() - startTime) / 1000 
 				});
 				
-				// Return success but with special flag to indicate no retry needed
-				return {
-					message: `Report ${status.toLowerCase().replace('_',' ')} on attempt ${attempt}`,
-					reportID: reportId,
-					data: { status },
-					noRetryNeeded: true
-				};
+				// Wait before retrying
+				await new Promise(resolve => setTimeout(resolve, delaySeconds * 1000));
+				
+				// Throw error to trigger retry mechanism
+				throw new Error(`Report still ${status.toLowerCase().replace('_',' ')} after ${delaySeconds}s wait - retrying`);
 				
             } else if (status === 'FATAL' || status === 'CANCELLED') {
                 // Permanent failure
