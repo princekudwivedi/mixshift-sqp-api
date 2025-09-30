@@ -211,7 +211,7 @@ class SqpCronApiController {
                 res,
                 totalProcessed,
                 totalErrors,
-                `All cron operations completed successfully. Active cron sellers: ${activeCRONSellerCount}`
+                `All cron operations completed successfully`
             );
 
         } catch (error) {
