@@ -6,8 +6,7 @@ const sellerModel = require('../models/sequelize/seller.model');
 const logger = require('../utils/logger.utils');
 
 /**
- * SQP API Controller
- * Handles SQP-related API endpoints cloned from PHP
+ * Handles SQP-related API endpoints
  */
 class SqpApiController {
 

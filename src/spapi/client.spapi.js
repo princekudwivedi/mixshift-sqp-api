@@ -39,7 +39,7 @@ async function buildReportsClient(opts = {}) {
 	// Use config defaults with per-user overrides (LWA credentials)
 	const clientId = opts.clientId || config.LWA_CLIENT_ID;
 	const clientSecret = opts.clientSecret || config.LWA_CLIENT_SECRET;
-	const accessToken = opts.accessToken; // Use access_token like PHP
+	const accessToken = opts.accessToken; // Use access_token
 	const merchantRegion = opts.merchantRegion || 'NA';
 	
 	logger.info({ 

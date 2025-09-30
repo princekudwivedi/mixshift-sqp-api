@@ -41,10 +41,7 @@ app.get('/readyz', async (req, res) => {
         res.status(503).json({ ready: false, error: e.message, time: new Date().toISOString() });
     }
 });
-
-// All API routes mounted at versioned prefix
-const ipAllowlist = require('./middleware/ip.allowlist.middleware');
-app.use('/api/v1', ipAllowlist, apiRoutes);
+app.use('/api/v1', apiRoutes);
 
 // Global error handler
 app.use(AsyncErrorHandler.globalErrorHandler);
