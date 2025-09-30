@@ -144,8 +144,11 @@ class SqpCronApiController {
                                 const cronDetailIDs = await ctrl.requestForSeller(s, authOverrides, env.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT);
                                 totalProcessed++;
                                 
+                                logger.info({ delay: process.env.INITIAL_DELAY_SECONDS * 1000 || 30000 }, 'Delaying');
                                 // delay 30 seconds
                                 await new Promise(resolve => setTimeout(resolve, process.env.INITIAL_DELAY_SECONDS * 1000 || 30000));
+
+                                logger.info({ delay: process.env.INITIAL_DELAY_SECONDS * 1000 || 30000 }, 'Delay completed');
 
                                 if (cronDetailIDs.length > 0) {                            
                                     // Step 2: Check status only for this cronDetailId

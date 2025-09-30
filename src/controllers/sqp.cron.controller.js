@@ -260,8 +260,9 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 				executionTime: 0
 			});
 			
+			logger.info({ initialDelaySeconds: process.env.INITIAL_DELAY_SECONDS }, 'Initial delay seconds');
 			// Add initial delay after report creation to give Amazon time to start processing
-			const initialDelaySeconds = process.env.INITIAL_DELAY_SECONDS || 30; // 30 seconds initial delay
+			const initialDelaySeconds = Number(process.env.INITIAL_DELAY_SECONDS) || 30; // 30 seconds initial delay
 			logger.info({ cronDetailID, reportType, reportId, delaySeconds: initialDelaySeconds }, 'Report created, waiting before first status check');
 			
 			// Wait before allowing status checks
@@ -390,10 +391,13 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 				};
 				
 			} else if (status === 'IN_QUEUE' || status === 'IN_PROGRESS') {
+				logger.info({ baseDelay: process.env.RETRY_BASE_DELAY_SECONDS, maxDelay: process.env.RETRY_MAX_DELAY_SECONDS }, 'Base delay and max delay');
 				// Report is still processing, add delay before retry
-				const delaySeconds = Math.min(process.env.INITIAL_DELAY_SECONDS || 30 + (attempt * 15), 120); // 30s, 45s, 60s, max 120s
+				const baseDelay = Number(process.env.RETRY_BASE_DELAY_SECONDS || process.env.INITIAL_DELAY_SECONDS) || 30;
+				const maxDelay = Number(process.env.RETRY_MAX_DELAY_SECONDS) || 120;
+				const delaySeconds = Math.min(baseDelay + (attempt * 15), maxDelay); // 30s, 45s, 60s, capped
 				logger.info({ cronDetailID: row.ID, reportType, status, attempt, delaySeconds }, 'Report still processing, waiting before retry');
-				
+				logger.info({ delaySeconds }, 'Delay seconds');
 				// Log the status
 				await model.logCronActivity({ 
 					cronJobID: row.ID, 
