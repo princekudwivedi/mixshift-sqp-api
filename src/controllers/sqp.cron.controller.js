@@ -430,17 +430,6 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
                     retryCount: 0, 
                     executionTime: (Date.now() - startTime) / 1000 
                 });
-
-				// Mark ASINs as Failed in seller_ASIN_list for this cron's ASIN list
-				try {
-					const asinList = String(row.ASIN_List || '').split(/\s+/).filter(Boolean);
-					if (asinList.length > 0) {
-						await model.ASINsBySellerUpdated(row.AmazonSellerID, asinList, 'Failed', null, new Date());
-						logger.info({ cronDetailID: row.ID, reportType, asinCount: asinList.length }, 'Marked ASINs as Failed after fatal/cancelled');
-					}
-				} catch (asinErr) {
-					logger.warn({ error: asinErr.message, cronDetailID: row.ID, reportType }, 'Failed to update ASINs to Failed on fatal/cancelled');
-				}
                 await sendFailureNotification(row.ID, row.AmazonSellerID, reportType, `Report ${status}`, 0, reportId);
 				
 				// Throw error to trigger retry mechanism, but this will be caught and handled

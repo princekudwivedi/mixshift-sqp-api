@@ -173,18 +173,7 @@ class RetryHelpers {
                             null, // isCompleted unchanged
                             null, // startDate unchanged
                             new Date() // endDate set on failure
-                        );
-                        // Also mark ASINs as Failed in seller_ASIN_list if available in context
-                        try {
-                            const row = context && context.row;
-                            const asinList = row && String(row.ASIN_List || '').split(/\s+/).filter(Boolean);
-                            if (row && Array.isArray(asinList) && asinList.length > 0) {
-                                await model.ASINsBySellerUpdated(row.AmazonSellerID, asinList, 'Failed', null, new Date());
-                                logger.info({ cronDetailID, reportType, asinCount: asinList.length }, 'Marked ASINs as Failed after final failure');
-                            }
-                        } catch (asinErr) {
-                            logger.warn({ error: asinErr.message, cronDetailID, reportType }, 'Failed to update ASINs to Failed on final failure');
-                        }
+                        );                       
                     } catch (updateErr) {
                         logger.error({ error: updateErr.message, cronDetailID, reportType }, 'Failed to set EndDate on failure');
                     }
