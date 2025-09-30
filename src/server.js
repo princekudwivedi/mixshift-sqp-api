@@ -5,7 +5,6 @@ const compression = require('compression');
 const logger = require('./utils/logger.utils');
 const apiRoutes = require('./routes/api.routes');
 const { AsyncErrorHandler } = require('./middleware/response.handlers');
-const AuthMiddleware = require('./middleware/auth.middleware');
 
 const app = express();
 
@@ -26,10 +25,6 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // Trust proxy for accurate IP addresses
 app.set('trust proxy', 1);
 
-// Request ID for tracing
-const requestId = require('./middleware/request.id.middleware');
-app.use(requestId);
-
 // Health and readiness endpoints
 const { getTenantSequelizeForCurrentDb } = require('./db/tenant.db');
 app.get('/healthz', (req, res) => {
@@ -47,9 +42,7 @@ app.get('/readyz', async (req, res) => {
     }
 });
 
-// All API routes mounted at versioned prefix
-const ipAllowlist = require('./middleware/ip.allowlist.middleware');
-app.use('/api/v1', ipAllowlist, apiRoutes);
+app.use('/api/v1', apiRoutes);
 
 // Global error handler
 app.use(AsyncErrorHandler.globalErrorHandler);
@@ -87,5 +80,3 @@ app.listen(PORT, () => {
         version: process.env.npm_package_version || '1.0.0'
     }, 'SQP API server running');
 });
-
-
