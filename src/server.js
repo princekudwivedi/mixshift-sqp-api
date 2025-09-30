@@ -42,7 +42,9 @@ app.get('/readyz', async (req, res) => {
     }
 });
 
-app.use('/api/v1', apiRoutes);
+// All API routes mounted at versioned prefix
+const ipAllowlist = require('./middleware/ip.allowlist.middleware');
+app.use('/api/v1', ipAllowlist, apiRoutes);
 
 // Global error handler
 app.use(AsyncErrorHandler.globalErrorHandler);
