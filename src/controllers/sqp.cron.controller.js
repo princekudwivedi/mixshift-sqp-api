@@ -12,7 +12,6 @@ const { sellerDefaults } = require('../config/env.config');
 const { NotificationHelpers } = require('../helpers/sqp.helpers');
 const { RetryHelpers } = require('../helpers/sqp.helpers');
 const env = require('../config/env.config');
-const MAX_RETRIES = 3;
 
 /**
  * Send failure notification when max retries are reached
@@ -71,23 +70,6 @@ async function sendFailureNotification(cronDetailID, amazonSellerID, reportType,
 	}
 }
 
-
-function shouldRequestReport(row, reportType) {
-	const prefix = model.mapPrefix(reportType);
-	const status = row[`${prefix}SQPDataPullStatus`];
-    return (status === 0 || status === 2);
-}
-
-function sellerProfileFromEnv() {
-	return {
-		AmazonSellerID: sellerDefaults.amazonSellerId,
-		idSellerAccount: sellerDefaults.idSellerAccount,
-		AmazonMarketplaceId: sellerDefaults.marketplaceId,
-		MerchantRegion: sellerDefaults.merchantRegion,
-		AccessToken: process.env.LWA_ACCESS_TOKEN || '',
-	};
-}
-
 async function requestForSeller(seller, authOverrides = {}, spReportType = config.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT) {
 	logger.info({ seller: seller.idSellerAccount }, 'Requesting SQP reports for seller');
 	
@@ -120,7 +102,7 @@ async function requestForSeller(seller, authOverrides = {}, spReportType = confi
 			logger.info({ cronDetailID }, 'Created cron detail');
 			cronDetailIDs.push(cronDetailID);
 
-			for (const type of ['WEEK', 'MONTH', 'QUARTER']) {
+			for (const type of ['WEEK']) {
 				logger.info({ type }, 'Requesting report for type');
                 // ProcessRunningStatus = 1 (Request Report)
                 await model.setProcessRunningStatus(cronDetailID, type, 1);
@@ -301,7 +283,7 @@ async function checkReportStatuses(authOverrides = {}, filter = {}) {
 	let reportID = null;	
     for (const row of rows) {
         logger.info({ rowId: row.ID }, 'Processing report row');
-        for (const type of ['WEEK', 'MONTH', 'QUARTER']) {
+        for (const type of ['WEEK']) {
             if (row[`${model.mapPrefix(type)}SQPDataPullStatus`] === 0) {
                 // ProcessRunningStatus = 2 (Check Status)
                 await model.setProcessRunningStatus(row.ID, type, 2);
@@ -460,7 +442,7 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 async function downloadCompletedReports(authOverrides = {}, filter = {}) {
     const rows = await model.getReportsForDownload(filter);
     for (const row of rows) {
-        for (const type of ['WEEK', 'MONTH', 'QUARTER']) {
+        for (const type of ['WEEK']) {
             if (row[`${model.mapPrefix(type)}SQPDataPullStatus`] === 0) {
                 const reportId = await model.getLatestReportId(row.ID, type);
                 if (!reportId) {
@@ -583,9 +565,34 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
                     fileSize,
                     false
                 );
+
 				
+			const newRow = await downloadUrls.getCompletedDownloadsWithFiles(filter = { cronDetailID: row.ID, ReportType: reportType });
+			
+			if (newRow.length > 0) {					
+				// Process saved JSON files immediately after download
+				try {
+					// Convert Sequelize instance to plain object
+					const plainRow = newRow[0].toJSON ? newRow[0].toJSON() : newRow[0];
+					const enrichedRow = { ...plainRow, AmazonSellerID: row.AmazonSellerID, ReportID: reportId };
+					console.log('enrichedRow', enrichedRow);
+					const importResult = await jsonSvc.__importJson(enrichedRow, 0, 0);
+						logger.info({ 
+							cronDetailID: row.ID, 
+							reportType, 
+							importResult 
+						}, 'Import process completed after download');
+					} catch (importError) {
+						logger.error({ 
+							error: importError.message, 
+							cronDetailID: row.ID, 
+							reportType 
+						}, 'Error during import process - file saved but import failed');
+						// Don't throw - file is saved, import can be retried later
+					}
+				}
 				return {
-					message: `Report downloaded successfully on attempt ${attempt} and file saved for later processing`,
+					message: `Report downloaded successfully on attempt ${attempt} and import process completed`,
 					reportID: reportId,
 					reportDocumentID: documentId,
 					logData: {

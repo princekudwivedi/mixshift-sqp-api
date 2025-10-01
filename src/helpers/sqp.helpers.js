@@ -1,6 +1,7 @@
 const fs = require('fs').promises;
 const path = require('path');
 const logger = require('../utils/logger.utils');
+const datesUtils = require('../utils/dates.utils');
 
 /**
  * Retry execution helper for cron operations
@@ -323,9 +324,8 @@ class DateHelpers {
     /**
      * Get report date for a specific period
      */
-    static getReportDateForPeriod(reportType) {
-        const today = new Date();
-        
+    static getReportDateForPeriod(reportType, timezone = datesUtils.DENVER_TZ, useDenverTz = true) {
+        const today = useDenverTz ? datesUtils.getNowInDenver(timezone) : new Date();
         switch (reportType) {
             case 'WEEK':
                 // Use the current week's end date (Saturday)
@@ -348,44 +348,6 @@ class DateHelpers {
             default:
                 return today.toISOString().split('T')[0];
         }
-    }
-
-    /**
-     * Get date range for a period
-     */
-    static getDateRangeForPeriod(reportType) {
-        const today = new Date();
-        let startDate, endDate;
-
-        switch (reportType) {
-            case 'WEEK':
-                const daysUntilSaturday = 6 - today.getDay();
-                endDate = new Date(today);
-                endDate.setDate(today.getDate() + daysUntilSaturday);
-                startDate = new Date(endDate);
-                startDate.setDate(endDate.getDate() - 6);
-                break;
-                
-            case 'MONTH':
-                startDate = new Date(today.getFullYear(), today.getMonth(), 1);
-                endDate = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-                break;
-                
-            case 'QUARTER':
-                const quarter = Math.floor(today.getMonth() / 3);
-                startDate = new Date(today.getFullYear(), quarter * 3, 1);
-                endDate = new Date(today.getFullYear(), (quarter + 1) * 3, 0);
-                break;
-                
-            default:
-                startDate = new Date(today);
-                endDate = new Date(today);
-        }
-
-        return {
-            startDate: startDate.toISOString().split('T')[0],
-            endDate: endDate.toISOString().split('T')[0]
-        };
     }
 }
 

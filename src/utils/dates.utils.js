@@ -1,11 +1,46 @@
 const { format, subDays, lastDayOfMonth, startOfMonth } = require('date-fns');
 
+// Denver timezone (Mountain Time)
+const DENVER_TZ = 'America/Denver';
+
 function fmt(date) {
     return format(date, 'yyyy-MM-dd');
 }
 
-function getDateRangeForPeriod(period, tzIgnored = true) {
+/**
+ * Get current date/time in Denver timezone using native JavaScript Intl API
+ * Denver uses Mountain Time (MT): UTC-7 (MST) or UTC-6 (MDT during daylight saving)
+ */
+function getNowInDenver(timezone = DENVER_TZ) {
+    // Use Intl API to get date components in Denver timezone
     const now = new Date();
+    const formatter = new Intl.DateTimeFormat('en-US', {
+        timeZone: timezone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+    });
+    
+    const parts = formatter.formatToParts(now);
+    const getValue = (type) => parts.find(p => p.type === type)?.value;
+    
+    // Create a new Date object with Denver timezone values
+    return new Date(
+        parseInt(getValue('year')),
+        parseInt(getValue('month')) - 1,
+        parseInt(getValue('day')),
+        parseInt(getValue('hour')),
+        parseInt(getValue('minute')),
+        parseInt(getValue('second'))
+    );
+}
+
+function getDateRangeForPeriod(period, timezone = DENVER_TZ, useDenverTz = true) {
+    const now = useDenverTz ? getNowInDenver(timezone) : new Date();
     switch (period) {
         case 'WEEK': {
             // last completed Sunday-Saturday
@@ -36,6 +71,10 @@ function getDateRangeForPeriod(period, tzIgnored = true) {
     }
 }
 
-module.exports = { getDateRangeForPeriod };
+module.exports = { 
+    getDateRangeForPeriod,
+    getNowInDenver,
+    DENVER_TZ
+};
 
 
