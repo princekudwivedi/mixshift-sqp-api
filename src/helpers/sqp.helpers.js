@@ -236,9 +236,10 @@ class RetryHelpers {
                     });
 
                     // Wait before retry (exponential backoff)
-                    const waitTime = Math.min(1000 * Math.pow(2, attempt - 1), 10000); // Max 10 seconds
-                    logger.info({ waitTime, attempt, action }, 'Waiting before retry');
-                    await new Promise(resolve => setTimeout(resolve, waitTime));
+                    const waitTimeMs = Math.min(1000 * Math.pow(2, attempt - 1), 10000); // Max 10 seconds
+                    const waitTimeSec = waitTimeMs / 1000;
+                    logger.info({ waitTime: waitTimeMs, waitTimeSec, attempt, action }, 'Waiting before retry');
+                    await DelayHelpers.wait(waitTimeSec);
                 }
             }
         }
@@ -301,18 +302,6 @@ class ValidationHelpers {
             throw new Error('Invalid user ID');
         }
         return id;
-    }
-
-    /**
-     * Validate report type
-     */
-    static validateReportType(reportType) {
-        const validTypes = ['WEEK', 'MONTH', 'QUARTER'];
-        const type = this.sanitizeString(reportType).toUpperCase();
-        if (!validTypes.includes(type)) {
-            throw new Error('Invalid report type. Must be WEEK, MONTH, or QUARTER');
-        }
-        return type;
     }
 }
 
@@ -668,11 +657,90 @@ class NotificationHelpers {
     }
 }
 
+/**
+ * Delay helpers for timing and waiting
+ */
+class DelayHelpers {
+    /**
+     * Wait with logging before status checks or operations
+     * @param {Object} options - Configuration object
+     * @param {number} options.cronDetailID - Cron detail ID
+     * @param {string} options.reportType - Report type
+     * @param {string} options.reportId - Report ID
+     * @param {number} options.delaySeconds - Delay in seconds (optional, uses env var if not provided)
+     * @param {string} options.context - Context description (e.g., 'CHECK_STATUS', 'DOWNLOAD')
+     * @param {Object} options.logger - Logger instance
+     */
+    static async waitWithLogging({ cronDetailID, reportType, reportId, delaySeconds, context = '', logger }) {
+        if (!logger) {
+            throw new Error('Logger is required for waitWithLogging');
+        }
+
+        // Use provided delay or get from environment
+        const effectiveDelay = delaySeconds !== undefined 
+            ? delaySeconds 
+            : Number(process.env.INITIAL_DELAY_SECONDS) || 30;
+
+        logger.info({ 
+            initialDelaySeconds: process.env.INITIAL_DELAY_SECONDS,
+            effectiveDelay 
+        }, `Initial delay seconds${context ? ` ${context}` : ''}`);
+
+        logger.info({ 
+            cronDetailID, 
+            reportType, 
+            reportId, 
+            delaySeconds: effectiveDelay,
+            context
+        }, `Waiting ${effectiveDelay}s before operation${context ? ` (${context})` : ''}`);
+
+        // Wait
+        this.wait(effectiveDelay, context);
+
+        logger.info({ 
+            cronDetailID, 
+            reportType, 
+            reportId,
+            context 
+        }, `Delay completed${context ? ` (${context})` : ''}, ready to proceed`);
+
+        return effectiveDelay;
+    }
+
+    /**
+     * Calculate exponential backoff delay
+     * @param {number} attempt - Current attempt number (1-based)
+     * @param {number} baseDelay - Base delay in seconds
+     * @param {number} maxDelay - Maximum delay in seconds
+     * @returns {number} Calculated delay in seconds
+     */
+    static calculateBackoffDelay(attempt, context = '') {
+        logger.info({ baseDelay: process.env.RETRY_BASE_DELAY_SECONDS, maxDelay: process.env.RETRY_MAX_DELAY_SECONDS }, context);
+        // Report is still processing, add delay before retry
+        const baseDelay = Number(process.env.RETRY_BASE_DELAY_SECONDS || process.env.INITIAL_DELAY_SECONDS) || 30;
+        const maxDelay = Number(process.env.RETRY_MAX_DELAY_SECONDS) || 120;
+        const delaySeconds = Math.min(baseDelay + ((attempt - 1) * 15), maxDelay);
+        logger.info({ attempt, baseDelay, maxDelay, delaySeconds }, context);
+        return delaySeconds;
+    }
+
+    /**
+     * Simple delay without logging
+     * @param {number} seconds - Delay in seconds
+     */
+    static async wait(seconds, context = '') {
+        logger.info({ seconds, context }, `Waiting ${seconds}s${context ? ` (${context})` : ''}`);
+        await new Promise(resolve => setTimeout(resolve, seconds * 1000));
+        logger.info({ seconds, context }, `Delay completed${context ? ` (${context})` : ''}, ready to proceed`);
+    }
+}
+
 module.exports = {
     RetryHelpers,
     ValidationHelpers,
     DateHelpers,
     FileHelpers,
     DataProcessingHelpers,
-    NotificationHelpers
+    NotificationHelpers,
+    DelayHelpers
 };
