@@ -9,10 +9,8 @@ const jsonSvc = require('../services/sqp.json.processing.service');
 const downloadUrls = require('../models/sqp.download.urls.model');
 const { getModel: getSqpCronDetails } = require('../models/sequelize/sqpCronDetails.model');
 const { sellerDefaults } = require('../config/env.config');
-const { NotificationHelpers } = require('../helpers/sqp.helpers');
-const { RetryHelpers } = require('../helpers/sqp.helpers');
+const { NotificationHelpers, RetryHelpers, DelayHelpers } = require('../helpers/sqp.helpers');
 const env = require('../config/env.config');
-const MAX_RETRIES = 3;
 
 /**
  * Send failure notification when max retries are reached
@@ -71,23 +69,6 @@ async function sendFailureNotification(cronDetailID, amazonSellerID, reportType,
 	}
 }
 
-
-function shouldRequestReport(row, reportType) {
-	const prefix = model.mapPrefix(reportType);
-	const status = row[`${prefix}SQPDataPullStatus`];
-    return (status === 0 || status === 2);
-}
-
-function sellerProfileFromEnv() {
-	return {
-		AmazonSellerID: sellerDefaults.amazonSellerId,
-		idSellerAccount: sellerDefaults.idSellerAccount,
-		AmazonMarketplaceId: sellerDefaults.marketplaceId,
-		MerchantRegion: sellerDefaults.merchantRegion,
-		AccessToken: process.env.LWA_ACCESS_TOKEN || '',
-	};
-}
-
 async function requestForSeller(seller, authOverrides = {}, spReportType = config.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT) {
 	logger.info({ seller: seller.idSellerAccount }, 'Requesting SQP reports for seller');
 	
@@ -120,7 +101,7 @@ async function requestForSeller(seller, authOverrides = {}, spReportType = confi
 			logger.info({ cronDetailID }, 'Created cron detail');
 			cronDetailIDs.push(cronDetailID);
 
-			for (const type of ['WEEK', 'MONTH', 'QUARTER']) {
+			for (const type of env.TYPE_ARRAY) {
 				logger.info({ type }, 'Requesting report for type');
                 // ProcessRunningStatus = 1 (Request Report)
                 await model.setProcessRunningStatus(cronDetailID, type, 1);
@@ -260,15 +241,14 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 				executionTime: 0
 			});
 			
-			logger.info({ initialDelaySeconds: process.env.INITIAL_DELAY_SECONDS }, 'Initial delay seconds');
-			// Add initial delay after report creation to give Amazon time to start processing
-			const initialDelaySeconds = Number(process.env.INITIAL_DELAY_SECONDS) || 30; // 30 seconds initial delay
-			logger.info({ cronDetailID, reportType, reportId, delaySeconds: initialDelaySeconds }, 'Report created, waiting before first status check');
-			
-			// Wait before allowing status checks
-			await new Promise(resolve => setTimeout(resolve, initialDelaySeconds * 1000));
-			
-			logger.info({ cronDetailID, reportType, reportId }, 'Initial delay completed, ready for status checks');
+				// Add initial delay after report creation to give Amazon time to start processing
+			const initialDelaySeconds = await DelayHelpers.waitWithLogging({
+				cronDetailID,
+				reportType,
+				reportId,
+				context: 'After Report Request',
+				logger
+			});
 			
 			return {
 				message: `Report requested successfully on attempt ${attempt}. Report ID: ${reportId}. Waited ${initialDelaySeconds}s before status checks.`,
@@ -301,7 +281,7 @@ async function checkReportStatuses(authOverrides = {}, filter = {}, retry = fals
 	let reportID = null;	
     for (const row of rows) {
         logger.info({ rowId: row.ID }, 'Processing report row');
-        for (const type of ['WEEK', 'MONTH', 'QUARTER']) {
+        for (const type of env.TYPE_ARRAY) {
             if (row[`${model.mapPrefix(type)}SQPDataPullStatus`] === 0 || (retry && row[`${model.mapPrefix(type)}SQPDataPullStatus`] === 2)) {
                 // ProcessRunningStatus = 2 (Check Status)
                 await model.setProcessRunningStatus(row.ID, type, 2);
@@ -390,14 +370,8 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 					data: { status, documentId }
 				};
 				
-			} else if (status === 'IN_QUEUE' || status === 'IN_PROGRESS') {
-				logger.info({ baseDelay: process.env.RETRY_BASE_DELAY_SECONDS, maxDelay: process.env.RETRY_MAX_DELAY_SECONDS }, 'Base delay and max delay');
-				// Report is still processing, add delay before retry
-				const baseDelay = Number(process.env.RETRY_BASE_DELAY_SECONDS || process.env.INITIAL_DELAY_SECONDS) || 30;
-				const maxDelay = Number(process.env.RETRY_MAX_DELAY_SECONDS) || 120;
-				const delaySeconds = Math.min(baseDelay + (attempt * 15), maxDelay); // 60s, 75s, 90s, capped 
-				logger.info({ cronDetailID: row.ID, reportType, status, attempt, delaySeconds }, 'Report still processing, waiting before retry');
-				logger.info({ delaySeconds }, 'Delay seconds');
+			} else if (status === 'IN_QUEUE' || status === 'IN_PROGRESS') {				
+				const delaySeconds = await DelayHelpers.calculateBackoffDelay(attempt, 'Delay in IN_QUEUE or IN_PROGRESS');
 				// Log the status
 				await model.logCronActivity({ 
 					cronJobID: row.ID, 
@@ -412,7 +386,7 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 				});
 				
 				// Wait before retrying
-				await new Promise(resolve => setTimeout(resolve, delaySeconds * 1000));
+				await DelayHelpers.wait(delaySeconds, 'Before retry IN_QUEUE or IN_PROGRESS');
 				
 				// Throw error to trigger retry mechanism
 				throw new Error(`Report still ${status.toLowerCase().replace('_',' ')} after ${delaySeconds}s wait - retrying`);
@@ -461,7 +435,7 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 async function downloadCompletedReports(authOverrides = {}, filter = {}) {
     const rows = await model.getReportsForDownload(filter);
     for (const row of rows) {
-        for (const type of ['WEEK', 'MONTH', 'QUARTER']) {
+        for (const type of env.TYPE_ARRAY) {
             if (row[`${model.mapPrefix(type)}SQPDataPullStatus`] === 0) {
                 const reportId = await model.getLatestReportId(row.ID, type);
                 if (!reportId) {
@@ -584,9 +558,34 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
                     fileSize,
                     false
                 );
+
 				
+			const newRow = await downloadUrls.getCompletedDownloadsWithFiles(filter = { cronDetailID: row.ID, ReportType: reportType });
+			
+			if (newRow.length > 0) {					
+				// Process saved JSON files immediately after download
+				try {
+					// Convert Sequelize instance to plain object
+					const plainRow = newRow[0].toJSON ? newRow[0].toJSON() : newRow[0];
+					const enrichedRow = { ...plainRow, AmazonSellerID: row.AmazonSellerID, ReportID: reportId };
+					console.log('enrichedRow', enrichedRow);
+					const importResult = await jsonSvc.__importJson(enrichedRow, 0, 0);
+						logger.info({ 
+							cronDetailID: row.ID, 
+							reportType, 
+							importResult 
+						}, 'Import process completed after download');
+					} catch (importError) {
+						logger.error({ 
+							error: importError.message, 
+							cronDetailID: row.ID, 
+							reportType 
+						}, 'Error during import process - file saved but import failed');
+						// Don't throw - file is saved, import can be retried later
+					}
+				}
 				return {
-					message: `Report downloaded successfully on attempt ${attempt} and file saved for later processing`,
+					message: `Report downloaded successfully on attempt ${attempt} and import process completed`,
 					reportID: reportId,
 					reportDocumentID: documentId,
 					logData: {

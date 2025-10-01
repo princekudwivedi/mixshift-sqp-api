@@ -1,11 +1,46 @@
 const { format, subDays, lastDayOfMonth, startOfMonth } = require('date-fns');
 
+// Denver timezone (Mountain Time)
+const DENVER_TZ = 'America/Denver';
+
 function fmt(date) {
     return format(date, 'yyyy-MM-dd');
 }
 
-function getDateRangeForPeriod(period, tzIgnored = true) {
+/**
+ * Get current date/time in Denver timezone using native JavaScript Intl API
+ * Denver uses Mountain Time (MT): UTC-7 (MST) or UTC-6 (MDT during daylight saving)
+ */
+function getNowInDenver(timezone = DENVER_TZ) {
+    // Use Intl API to get date components in Denver timezone
     const now = new Date();
+    const formatter = new Intl.DateTimeFormat('en-US', {
+        timeZone: timezone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+    });
+    
+    const parts = formatter.formatToParts(now);
+    const getValue = (type) => parts.find(p => p.type === type)?.value;
+    
+    // Create a new Date object with Denver timezone values
+    return new Date(
+        parseInt(getValue('year')),
+        parseInt(getValue('month')) - 1,
+        parseInt(getValue('day')),
+        parseInt(getValue('hour')),
+        parseInt(getValue('minute')),
+        parseInt(getValue('second'))
+    );
+}
+
+function getDateRangeForPeriod(period, timezone = DENVER_TZ, useDenverTz = true) {
+    const now = useDenverTz ? getNowInDenver(timezone) : new Date();
     switch (period) {
         case 'WEEK': {
             // last completed Sunday-Saturday
@@ -16,39 +51,44 @@ function getDateRangeForPeriod(period, tzIgnored = true) {
             return { start: fmt(start), end: fmt(end) };
         }
         case 'MONTH': {
-            const lastMonthLastDay = lastDayOfMonth(subDays(startOfMonth(now), 1));
+            // if it's the 1st of the month → return the month before last (because last month not yet available)
+            const day = now.getDate();
+            let target = startOfMonth(now);
+            if (day <= 1) {
+                // too early → go back 2 months
+                target = subDays(target, 1); // go to last month
+                target = subDays(startOfMonth(target), 1); // go to month before last
+            } else {
+                // safe to use last month
+                target = subDays(target, 1); // last day of last month
+            }
+            const lastMonthLastDay = lastDayOfMonth(target);
             const lastMonthFirstDay = startOfMonth(lastMonthLastDay);
             return { start: fmt(lastMonthFirstDay), end: fmt(lastMonthLastDay) };
         }
         case 'QUARTER': {
-            // Custom quarter mapping (example: Q1 = Mar–May, Q2 = Jun–Aug, Q3 = Sep–Nov, Q4 = Dec–Feb)
-            const quarters = [
-                { startMonth: 2, endMonth: 4 },  // Mar–May
-                { startMonth: 5, endMonth: 7 },  // Jun–Aug
-                { startMonth: 8, endMonth: 10 }, // Sep–Nov
-                { startMonth: 11, endMonth: 1 }  // Dec–Feb
-            ];
-            
+            const month = now.getMonth() + 1;
+            const day = now.getDate();
+
+            // Determine last completed quarter
+            let q = Math.ceil(month / 3) - 1;
+            if (q < 1) q = 4;
             let year = now.getFullYear();
-            let month = now.getMonth(); // 0–11
-            
-            // Find which quarter today belongs to
-            let qIndex = quarters.findIndex(q =>
-                (q.startMonth <= q.endMonth && month >= q.startMonth && month <= q.endMonth) ||
-                (q.startMonth > q.endMonth && (month >= q.startMonth || month <= q.endMonth))
-            );
-            
-            // Go to last quarter
-            qIndex = (qIndex - 1 + 4) % 4;
-            let q = quarters[qIndex];
-            
-            let first = new Date(year, q.startMonth, 1);
-            let last = lastDayOfMonth(new Date(year, q.endMonth, 1));
-            
-            // Special case: if quarter spans year boundary (Dec–Feb)
-            if (q.startMonth > q.endMonth && month < q.startMonth) {
-                first.setFullYear(year - 1);
+            if (Math.ceil(month / 3) === 1) year -= 1;
+
+            // If it's the 1st of a new quarter → still fetch the previous quarter (not yet available)
+            if (day <= 1 && (month === 1 || month === 4 || month === 7 || month === 10)) {
+                q -= 1;
+                if (q < 1) {
+                    q = 4;
+                    year -= 1;
+                }
             }
+
+            const firstMonth = (q - 1) * 3 + 1;
+            const lastMonth = q * 3;
+            const first = new Date(year, firstMonth - 1, 1);
+            const last = lastDayOfMonth(new Date(year, lastMonth - 1, 1));
             return { start: fmt(first), end: fmt(last) };
         }
         default:
@@ -56,6 +96,10 @@ function getDateRangeForPeriod(period, tzIgnored = true) {
     }
 }
 
-module.exports = { getDateRangeForPeriod };
+module.exports = { 
+    getDateRangeForPeriod,
+    getNowInDenver,
+    DENVER_TZ
+};
 
 

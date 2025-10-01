@@ -9,7 +9,6 @@ const { requireRole } = require('../middleware/authz.middleware');
 router.use(AuthMiddleware.requestLogger);
 router.use(AuthMiddleware.securityHeaders);
 router.use(AuthMiddleware.sanitizeInput);
-//router.use(AuthMiddleware.optionalToken); // accept Bearer or token=; does not fail if missing
 
 // SQP API routes (non-cron) - Higher rate limit for regular API usage
 router.use('/sqp', AuthMiddleware.rateLimit(100, 15 * 60 * 1000)); // 100 requests per 15 minutes

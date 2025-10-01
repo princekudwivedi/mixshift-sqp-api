@@ -17,7 +17,7 @@ const logger = require('../utils/logger.utils');
 const env = require('../config/env.config');
 const isDevEnv = ["local", "development"].includes(env.NODE_ENV);
 const allowedUsers = [8, 3];
-
+const { DelayHelpers } = require('../helpers/sqp.helpers');
 /**
  * SQP Cron API Controller
  * Handles legacy cron endpoints with proper error handling and validation
@@ -145,14 +145,9 @@ class SqpCronApiController {
                                 // Step 1: Request report and create cron detail
                                 const cronDetailIDs = await ctrl.requestForSeller(s, authOverrides, env.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT);
                                 totalProcessed++;
-                                
-                                logger.info({ delay: process.env.INITIAL_DELAY_SECONDS * 1000 || 30000 }, 'Delaying before status');
-                                // delay 30 seconds
-                                await new Promise(resolve => setTimeout(resolve, (Number(process.env.INITIAL_DELAY_SECONDS) * 1000) || 30000));
 
-                                logger.info({ delay: process.env.INITIAL_DELAY_SECONDS * 1000 || 30000 }, 'Delay completed now start status check');
-
-                                if (cronDetailIDs.length > 0) {                            
+                                if (cronDetailIDs.length > 0) {
+                                    await DelayHelpers.wait(Number(process.env.INITIAL_DELAY_SECONDS) || 30, 'Before status check');
                                     // Step 2: Check status only for this cronDetailId
                                     try {
                                         await ctrl.checkReportStatuses(authOverrides, { cronDetailID: cronDetailIDs });
@@ -168,15 +163,6 @@ class SqpCronApiController {
                                         totalProcessed++;
                                     } catch (error) {
                                         logger.error({ error: error.message, cronDetailID: cronDetailIDs }, 'Error downloading reports (scoped)');
-                                        totalErrors++;
-                                    }
-
-                                    // Step 4: Process saved JSON only for this cronDetailId
-                                    try {
-                                        await jsonProcessingService.processSavedJsonFiles({ cronDetailID: cronDetailIDs });
-                                        totalProcessed++;
-                                    } catch (error) {
-                                        logger.error({ error: error.message, cronDetailID: cronDetailIDs }, 'Error processing saved JSON files (scoped)');
                                         totalErrors++;
                                     }
                                 }

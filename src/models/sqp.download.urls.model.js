@@ -9,7 +9,9 @@ async function getCompletedDownloadsWithFiles(filter = {}) {
 		FullyImported: { [Op.ne]: 1 },
 		FilePath: { [Op.ne]: null },
 	};
+	// Support both cronDetailID and CronJobID for backward compatibility
 	if (filter.cronDetailID) where.CronJobID = filter.cronDetailID;
+	if (filter.ReportType) where.ReportType = filter.ReportType;
 	return SqpDownloadUrls.findAll({
 		where: {
 			...where,

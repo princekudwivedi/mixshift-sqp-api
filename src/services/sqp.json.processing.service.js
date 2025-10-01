@@ -12,6 +12,7 @@ const nodeEnv = (env.NODE_ENV || 'development').toLowerCase();
 const downloadUrls = require('../models/sqp.download.urls.model');
 const { getModel: getSqpDownloadUrls } = require('../models/sequelize/sqpDownloadUrls.model');
 const dates = require('../utils/dates.utils');
+const { DateHelpers } = require('../helpers/sqp.helpers');
 
 /**
  * Handle report completion - unified function for both data and no-data scenarios
@@ -407,7 +408,7 @@ async function saveReportJsonFile(download, jsonContent) {
 async function parseAndStoreJsonData(download, jsonContent, filePath, reportDateOverride) {
 	try {
 		// Get the report date based on the report type (fallback)
-		const defaultReportDate = getReportDateForPeriod(download.ReportType);
+		const defaultReportDate = DateHelpers.getReportDateForPeriod(download.ReportType);
 
 		let records = [];
 		
@@ -565,36 +566,6 @@ function buildMetricsRow(download, reportDate, record, filePath, reportDateOverr
 	} catch (_) {
 		return null;
 	}
-}
-
-/**
- * Get report date for a specific period
- */
-function getReportDateForPeriod(reportType) {
-    const today = new Date();
-    
-    switch (reportType) {
-        case 'WEEK':
-            // Use the current week's end date (Saturday)
-            const daysUntilSaturday = 6 - today.getDay();
-            const weekEnd = new Date(today);
-            weekEnd.setDate(today.getDate() + daysUntilSaturday);
-            return weekEnd.toISOString().split('T')[0];
-            
-        case 'MONTH':
-            // Use the current month's end date
-            const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-            return monthEnd.toISOString().split('T')[0];
-            
-        case 'QUARTER':
-            // Use the current quarter's end date
-            const quarter = Math.floor(today.getMonth() / 3);
-            const quarterEnd = new Date(today.getFullYear(), (quarter + 1) * 3, 0);
-            return quarterEnd.toISOString().split('T')[0];
-            
-        default:
-            return today.toISOString().split('T')[0];
-    }
 }
 
 /**
@@ -782,7 +753,7 @@ module.exports = {
     saveReportJsonFile,
     parseAndStoreJsonData,
     importJsonWithRetry,
-    getReportDateForPeriod,
     handleReportCompletion,
-    getDownloadUrlStats
+    getDownloadUrlStats,
+	__importJson
 };

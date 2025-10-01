@@ -1,6 +1,7 @@
 const fs = require('fs').promises;
 const path = require('path');
 const logger = require('../utils/logger.utils');
+const datesUtils = require('../utils/dates.utils');
 
 /**
  * Retry execution helper for cron operations
@@ -236,9 +237,10 @@ class RetryHelpers {
                     });
 
                     // Wait before retry (exponential backoff)
-                    const waitTime = Math.min(1000 * Math.pow(2, attempt - 1), 10000); // Max 10 seconds
-                    logger.info({ waitTime, attempt, action }, 'Waiting before retry');
-                    await new Promise(resolve => setTimeout(resolve, waitTime));
+                    const waitTimeMs = Math.min(1000 * Math.pow(2, attempt - 1), 10000); // Max 10 seconds
+                    const waitTimeSec = waitTimeMs / 1000;
+                    logger.info({ waitTime: waitTimeMs, waitTimeSec, attempt, action }, 'Waiting before retry');
+                    await DelayHelpers.wait(waitTimeSec, 'Waiting before retry');
                 }
             }
         }
@@ -302,18 +304,6 @@ class ValidationHelpers {
         }
         return id;
     }
-
-    /**
-     * Validate report type
-     */
-    static validateReportType(reportType) {
-        const validTypes = ['WEEK', 'MONTH', 'QUARTER'];
-        const type = this.sanitizeString(reportType).toUpperCase();
-        if (!validTypes.includes(type)) {
-            throw new Error('Invalid report type. Must be WEEK, MONTH, or QUARTER');
-        }
-        return type;
-    }
 }
 
 /**
@@ -323,9 +313,8 @@ class DateHelpers {
     /**
      * Get report date for a specific period
      */
-    static getReportDateForPeriod(reportType) {
-        const today = new Date();
-        
+    static getReportDateForPeriod(reportType, timezone = datesUtils.DENVER_TZ, useDenverTz = true) {
+        const today = useDenverTz ? datesUtils.getNowInDenver(timezone) : new Date();
         switch (reportType) {
             case 'WEEK':
                 // Use the current week's end date (Saturday)
@@ -348,44 +337,6 @@ class DateHelpers {
             default:
                 return today.toISOString().split('T')[0];
         }
-    }
-
-    /**
-     * Get date range for a period
-     */
-    static getDateRangeForPeriod(reportType) {
-        const today = new Date();
-        let startDate, endDate;
-
-        switch (reportType) {
-            case 'WEEK':
-                const daysUntilSaturday = 6 - today.getDay();
-                endDate = new Date(today);
-                endDate.setDate(today.getDate() + daysUntilSaturday);
-                startDate = new Date(endDate);
-                startDate.setDate(endDate.getDate() - 6);
-                break;
-                
-            case 'MONTH':
-                startDate = new Date(today.getFullYear(), today.getMonth(), 1);
-                endDate = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-                break;
-                
-            case 'QUARTER':
-                const quarter = Math.floor(today.getMonth() / 3);
-                startDate = new Date(today.getFullYear(), quarter * 3, 1);
-                endDate = new Date(today.getFullYear(), (quarter + 1) * 3, 0);
-                break;
-                
-            default:
-                startDate = new Date(today);
-                endDate = new Date(today);
-        }
-
-        return {
-            startDate: startDate.toISOString().split('T')[0],
-            endDate: endDate.toISOString().split('T')[0]
-        };
     }
 }
 
@@ -668,11 +619,90 @@ class NotificationHelpers {
     }
 }
 
+/**
+ * Delay helpers for timing and waiting
+ */
+class DelayHelpers {
+    /**
+     * Wait with logging before status checks or operations
+     * @param {Object} options - Configuration object
+     * @param {number} options.cronDetailID - Cron detail ID
+     * @param {string} options.reportType - Report type
+     * @param {string} options.reportId - Report ID
+     * @param {number} options.delaySeconds - Delay in seconds (optional, uses env var if not provided)
+     * @param {string} options.context - Context description (e.g., 'CHECK_STATUS', 'DOWNLOAD')
+     * @param {Object} options.logger - Logger instance
+     */
+    static async waitWithLogging({ cronDetailID, reportType, reportId, delaySeconds, context = '', logger }) {
+        if (!logger) {
+            throw new Error('Logger is required for waitWithLogging');
+        }
+
+        // Use provided delay or get from environment
+        const effectiveDelay = delaySeconds !== undefined 
+            ? delaySeconds 
+            : Number(process.env.INITIAL_DELAY_SECONDS) || 30;
+
+        logger.info({ 
+            initialDelaySeconds: process.env.INITIAL_DELAY_SECONDS,
+            effectiveDelay 
+        }, `Initial delay seconds${context ? ` ${context}` : ''}`);
+
+        logger.info({ 
+            cronDetailID, 
+            reportType, 
+            reportId, 
+            delaySeconds: effectiveDelay,
+            context
+        }, `Waiting ${effectiveDelay}s before operation${context ? ` (${context})` : ''}`);
+
+        // Wait
+        this.wait(effectiveDelay, context);
+
+        logger.info({ 
+            cronDetailID, 
+            reportType, 
+            reportId,
+            context 
+        }, `Delay completed${context ? ` (${context})` : ''}, ready to proceed`);
+
+        return effectiveDelay;
+    }
+
+    /**
+     * Calculate exponential backoff delay
+     * @param {number} attempt - Current attempt number (1-based)
+     * @param {number} baseDelay - Base delay in seconds
+     * @param {number} maxDelay - Maximum delay in seconds
+     * @returns {number} Calculated delay in seconds
+     */
+    static calculateBackoffDelay(attempt, context = '') {
+        logger.info({ baseDelay: process.env.RETRY_BASE_DELAY_SECONDS, maxDelay: process.env.RETRY_MAX_DELAY_SECONDS }, context);
+        // Report is still processing, add delay before retry
+        const baseDelay = Number(process.env.RETRY_BASE_DELAY_SECONDS || process.env.INITIAL_DELAY_SECONDS) || 30;
+        const maxDelay = Number(process.env.RETRY_MAX_DELAY_SECONDS) || 120;
+        const delaySeconds = Math.min(baseDelay + ((attempt - 1) * 15), maxDelay);
+        logger.info({ attempt, baseDelay, maxDelay, delaySeconds }, context);
+        return delaySeconds;
+    }
+
+    /**
+     * Simple delay without logging
+     * @param {number} seconds - Delay in seconds
+     */
+    static async wait(seconds, context = '') {
+        logger.info({ seconds, context }, `Waiting ${seconds}s${context ? ` (${context})` : ''}`);
+        await new Promise(resolve => setTimeout(resolve, seconds * 1000));
+        logger.info({ seconds, context }, `Delay completed${context ? ` (${context})` : ''}, ready to proceed`);
+    }
+}
+
 module.exports = {
     RetryHelpers,
     ValidationHelpers,
     DateHelpers,
     FileHelpers,
     DataProcessingHelpers,
-    NotificationHelpers
+    NotificationHelpers,
+    DelayHelpers
 };
