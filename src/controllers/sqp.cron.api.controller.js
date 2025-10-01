@@ -77,7 +77,7 @@ class SqpCronApiController {
             // Validate inputs
             const validatedUserId = userId ? ValidationHelpers.validateUserId(userId) : null;
             const validatedSellerId = sellerId ? ValidationHelpers.validateUserId(sellerId) : null;
-
+            
             logger.info({ 
                 userId: validatedUserId, 
                 sellerId: validatedSellerId,
@@ -87,6 +87,7 @@ class SqpCronApiController {
             await loadDatabase(0);
             const users = validatedUserId ? [{ ID: validatedUserId }] : await getAllAgencyUserList();
             
+            // Check cron limit logic            
             let totalProcessed = 0;
             let totalErrors = 0;
             let breakUserProcessing = false;
@@ -97,98 +98,107 @@ class SqpCronApiController {
                     if (isDevEnv && !allowedUsers.includes(user.ID)) {
                         continue;
                     }
-                    const sellers = validatedSellerId
-                        ? [await sellerModel.getProfileDetailsByID(validatedSellerId)]
-                        : await sellerModel.getSellersProfilesForCronAdvanced({ pullAll: 0 });
-                    
-                    logger.info({ userId: user.ID, sellerCount: sellers.length }, 'Processing sellers for user');
 
-                    // Check if user has eligible seller which has eligible ASINs before processing
-                    const hasEligibleUser = await model.hasEligibleASINs(null, false);
-                    if (!hasEligibleUser) {
-                        logger.info({ 
-                            sellerId: 'ALL Sellers Check', 
-                            amazonSellerID: 'ALL Sellers Check',
-                            userId: user.ID
-                        }, 'Skipping Full Run - no eligible ASINs for all sellers');
-                        continue;
-                    }
+                    // Check cron limits for this user
+                    const cronLimits = await this.checkCronLimits(user.ID);
+                    if (cronLimits.shouldProcess) {                        
+                        const sellers = validatedSellerId
+                            ? [await sellerModel.getProfileDetailsByID(validatedSellerId)]
+                            : await sellerModel.getSellersProfilesForCronAdvanced({ pullAll: 0 });
+                        
+                        logger.info({ userId: user.ID, sellerCount: sellers.length }, 'Processing sellers for user');
 
-                    for (const s of sellers) {
-                        if (!s) continue;                        
-                        try {
-                            // Check if seller has eligible ASINs before processing
-                            const hasEligible = await model.hasEligibleASINs(s.idSellerAccount);
-                            if (!hasEligible) {
+                        // Check if user has eligible seller which has eligible ASINs before processing
+                        const hasEligibleUser = await model.hasEligibleASINs(null, false);
+                        if (!hasEligibleUser) {
+                            logger.info({ 
+                                sellerId: 'ALL Sellers Check', 
+                                amazonSellerID: 'ALL Sellers Check',
+                                userId: user.ID
+                            }, 'Skipping Full Run - no eligible ASINs for all sellers');
+                            continue;
+                        }
+
+                        for (const s of sellers) {
+                            if (!s) continue;                        
+                            try {
+                                // Check if seller has eligible ASINs before processing
+                                const hasEligible = await model.hasEligibleASINs(s.idSellerAccount);
+                                if (!hasEligible) {
+                                    logger.info({ 
+                                        sellerId: s.idSellerAccount, 
+                                        amazonSellerID: s.AmazonSellerID 
+                                    }, 'Skipping seller - no eligible ASINs');
+                                    breakUserProcessing = false;
+                                    continue;
+                                }
+                                breakUserProcessing = true;
                                 logger.info({ 
                                     sellerId: s.idSellerAccount, 
                                     amazonSellerID: s.AmazonSellerID 
-                                }, 'Skipping seller - no eligible ASINs');
-                                breakUserProcessing = false;
-                                continue;
+                                }, 'Processing seller with eligible ASINs');
+                                const authOverrides = await this.buildAuthOverrides(s.AmazonSellerID);
+                                
+                                // Step 1: Request report and create cron detail
+                                const cronDetailIDs = await ctrl.requestForSeller(s, authOverrides, env.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT);
+                                totalProcessed++;
+                                
+                                logger.info({ delay: process.env.INITIAL_DELAY_SECONDS * 1000 || 30000 }, 'Delaying before status');
+                                // delay 30 seconds
+                                await new Promise(resolve => setTimeout(resolve, (Number(process.env.INITIAL_DELAY_SECONDS) * 1000) || 30000));
+
+                                logger.info({ delay: process.env.INITIAL_DELAY_SECONDS * 1000 || 30000 }, 'Delay completed now start status check');
+
+                                if (cronDetailIDs.length > 0) {                            
+                                    // Step 2: Check status only for this cronDetailId
+                                    try {
+                                        await ctrl.checkReportStatuses(authOverrides, { cronDetailID: cronDetailIDs });
+                                        totalProcessed++;
+                                    } catch (error) {
+                                        logger.error({ error: error.message, cronDetailID: cronDetailIDs }, 'Error checking report statuses (scoped)');
+                                        totalErrors++;
+                                    }
+
+                                    // Step 3: Download only for this cronDetailId
+                                    try {
+                                        await ctrl.downloadCompletedReports(authOverrides, { cronDetailID: cronDetailIDs });
+                                        totalProcessed++;
+                                    } catch (error) {
+                                        logger.error({ error: error.message, cronDetailID: cronDetailIDs }, 'Error downloading reports (scoped)');
+                                        totalErrors++;
+                                    }
+
+                                    // Step 4: Process saved JSON only for this cronDetailId
+                                    try {
+                                        await jsonProcessingService.processSavedJsonFiles({ cronDetailID: cronDetailIDs });
+                                        totalProcessed++;
+                                    } catch (error) {
+                                        logger.error({ error: error.message, cronDetailID: cronDetailIDs }, 'Error processing saved JSON files (scoped)');
+                                        totalErrors++;
+                                    }
+                                }
+                                
+                                logger.info({ 
+                                    sellerId: s.idSellerAccount, 
+                                    amazonSellerID: s.AmazonSellerID,
+                                    cronDetailIDs,
+                                    processed: totalProcessed,
+                                    errors: totalErrors
+                                }, 'Completed processing for seller - exiting cron run');
+                                
+                            } catch (error) {
+                                logger.error({ 
+                                    error: error.message, 
+                                    sellerId: s.AmazonSellerID 
+                                }, 'Error processing seller in all operations');
+                                totalErrors++;
+                                // Continue to next seller on error
                             }
-                            breakUserProcessing = true;
-                            logger.info({ 
-                                sellerId: s.idSellerAccount, 
-                                amazonSellerID: s.AmazonSellerID 
-                            }, 'Processing seller with eligible ASINs');
-                            
-                            const authOverrides = await this.buildAuthOverrides(s.AmazonSellerID);
-                            
-                            // Step 1: Request report and create cron detail
-                            const cronDetailIDs = await ctrl.requestForSeller(s, authOverrides, env.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT);
-                            totalProcessed++;
-                            
-                            if (cronDetailIDs.length > 0) {                            
-                                // Step 2: Check status only for this cronDetailId
-                                try {
-                                    await ctrl.checkReportStatuses(authOverrides, { cronDetailID: cronDetailIDs });
-                                    totalProcessed++;
-                                } catch (error) {
-                                    logger.error({ error: error.message, cronDetailID: cronDetailIDs }, 'Error checking report statuses (scoped)');
-                                    totalErrors++;
-                                }
-
-                                // Step 3: Download only for this cronDetailId
-                                try {
-                                    await ctrl.downloadCompletedReports(authOverrides, { cronDetailID: cronDetailIDs });
-                                    totalProcessed++;
-                                } catch (error) {
-                                    logger.error({ error: error.message, cronDetailID: cronDetailIDs }, 'Error downloading reports (scoped)');
-                                    totalErrors++;
-                                }
-
-                                // Step 4: Process saved JSON only for this cronDetailId
-                                try {
-                                    await jsonProcessingService.processSavedJsonFiles({ cronDetailID: cronDetailIDs });
-                                    totalProcessed++;
-                                } catch (error) {
-                                    logger.error({ error: error.message, cronDetailID: cronDetailIDs }, 'Error processing saved JSON files (scoped)');
-                                    totalErrors++;
-                                }
-                            }
-                            
-                            logger.info({ 
-                                sellerId: s.idSellerAccount, 
-                                amazonSellerID: s.AmazonSellerID,
-                                cronDetailIDs,
-                                processed: totalProcessed,
-                                errors: totalErrors
-                            }, 'Completed processing for seller - exiting cron run');
-
                             break; // done after one seller
-                            
-                        } catch (error) {
-                            logger.error({ 
-                                error: error.message, 
-                                sellerId: s.AmazonSellerID 
-                            }, 'Error processing seller in all operations');
-                            totalErrors++;
-                            // Continue to next seller on error
-                        }                        
-                    }                    
-                    if (breakUserProcessing) {
-                        break;
+                        }                    
+                        if (breakUserProcessing) {
+                            break;
+                        }
                     }
                 } catch (error) {
                     logger.error({ 
@@ -202,7 +212,7 @@ class SqpCronApiController {
                 res,
                 totalProcessed,
                 totalErrors,
-                'All cron operations completed successfully'
+                `All cron operations completed successfully`
             );
 
         } catch (error) {
@@ -407,6 +417,47 @@ class SqpCronApiController {
         } catch (error) {
             logger.error({ error: error.message }, 'cronSyncAllUsersSellerAsins failed');
             return ErrorHandler.sendError(res, 'Internal server error', 500);
+        }
+    }
+
+    /**
+     * Check cron limits and active sellers count
+     * @param {number} userId 
+     * @param {number} totalActiveCronSellers - Total active cron sellers across all users
+     * @returns {Promise<{activeCronSellers: number, shouldProcess: boolean}>}
+     */
+    async checkCronLimits(userId) {
+        try {
+            const largeAgencyFlag = process.env.LARGE_AGENCY_FLAG === 'true';
+            // Check active cron sellers for this user
+            const activeCRONSellerAry = await model.checkCronDetailsOfSellersByDate(0, 0, true);            
+            const activeCronSellers = activeCRONSellerAry.length;
+            // Check max user count for cron
+            const maxUserForCRON = largeAgencyFlag ? 100 : (process.env.MAX_USER_COUNT_FOR_CRON || 50);
+            if (activeCronSellers >= maxUserForCRON) {
+                logger.info({ 
+                    userId, 
+                    activeCronSellers,
+                    maxUserForCRON,
+                    largeAgencyFlag 
+                }, 'Cron limit reached - skipping user');
+                return { activeCronSellers, shouldProcess: false };
+            }
+            
+            logger.info({ 
+                userId, 
+                activeCronSellers,
+                maxUserForCRON,
+                largeAgencyFlag 
+            }, 'Cron limits check');
+
+            return { 
+                activeCronSellers, 
+                shouldProcess: true 
+            };
+        } catch (error) {
+            logger.error({ error: error.message, userId }, 'Error checking cron limits');
+            return { activeCronSellers: 0, shouldProcess: false };
         }
     }
 

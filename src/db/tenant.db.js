@@ -9,7 +9,6 @@ const Timezones = require('../models/sequelize/timezones.model');
 const { TBL_USERS } = require('../config/env.config');
 
 /**
- * Mirrors PHP loadDatabase($userId):
  * - userId = 0 → select primary (root) DB
  * - userId > 0 → query master for user DB name, switch pool to that DB, set timezone
  */

@@ -173,7 +173,7 @@ class RetryHelpers {
                             null, // isCompleted unchanged
                             null, // startDate unchanged
                             new Date() // endDate set on failure
-                        );
+                        );                       
                     } catch (updateErr) {
                         logger.error({ error: updateErr.message, cronDetailID, reportType }, 'Failed to set EndDate on failure');
                     }

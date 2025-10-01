@@ -126,7 +126,7 @@ All routes are consolidated in `src/routes/api.routes.js` and share the same mid
 #### Cron APIs (ASIN sync)
 
 - GET `/cron/asin/syncSellerAsins/:userId/:sellerID`
-  - Pulls seller ASINs from PHP source and inserts into `seller_ASIN_list` (chunked bulk insert, duplicate-safe).
+  - Pulls seller ASINs source and inserts into `seller_ASIN_list` (chunked bulk insert, duplicate-safe).
   - Example:
     ```bash
     curl -X GET "http://localhost:3001/api/v1/cron/asin/syncSellerAsins/3/71"
