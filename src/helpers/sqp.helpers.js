@@ -240,7 +240,7 @@ class RetryHelpers {
                     const waitTimeMs = Math.min(1000 * Math.pow(2, attempt - 1), 10000); // Max 10 seconds
                     const waitTimeSec = waitTimeMs / 1000;
                     logger.info({ waitTime: waitTimeMs, waitTimeSec, attempt, action }, 'Waiting before retry');
-                    await DelayHelpers.wait(waitTimeSec);
+                    await DelayHelpers.wait(waitTimeSec, 'Waiting before retry');
                 }
             }
         }
