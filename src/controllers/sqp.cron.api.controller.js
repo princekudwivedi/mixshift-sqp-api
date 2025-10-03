@@ -26,14 +26,14 @@ class SqpCronApiController {
     async buildAuthOverrides(amazonSellerID) {
         try {
             // Simple in-memory TTL cache for auth overrides
-            if (!this._authCache) this._authCache = new Map();
-            const ttlMs = Number(process.env.AUTH_CACHE_TTL_MS || 5 * 60 * 1000);
-            const cacheKey = `auth:${amazonSellerID}`;
-            const now = Date.now();
-            const cached = this._authCache.get(cacheKey);
-            if (cached && (now - cached.storedAt) < ttlMs) {
-                return cached.value;
-            }
+            // if (!this._authCache) this._authCache = new Map();
+            // const ttlMs = Number(process.env.AUTH_CACHE_TTL_MS || 5 * 60 * 1000);
+            // const cacheKey = `auth:${amazonSellerID}`;
+            // const now = Date.now();
+            // const cached = this._authCache.get(cacheKey);
+            // if (cached && (now - cached.storedAt) < ttlMs) {
+            //     return cached.value;
+            // }
 
             const authOverrides = {};
             const tokenRow = await AuthToken.getSavedToken(amazonSellerID);
@@ -59,7 +59,7 @@ class SqpCronApiController {
             }
             
             // Store in cache
-            this._authCache.set(cacheKey, { value: authOverrides, storedAt: now });
+            //this._authCache.set(cacheKey, { value: authOverrides, storedAt: now });
             return authOverrides;
         } catch (error) {
             logger.error({ error: error.message, amazonSellerID }, 'Error building auth overrides');
