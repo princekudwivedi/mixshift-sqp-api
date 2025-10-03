@@ -111,30 +111,58 @@ async function updateDownloadUrlStatusByCriteria(cronJobID, reportType, status, 
 
 async function storeDownloadUrl(row) {
     const SqpDownloadUrls = getSqpDownloadUrls();
-    const payload = {
-		// DownloadURL intentionally omitted; we rely on FilePath (local or S3 URL)
-        Status: row.Status || 'PENDING',
-		DownloadAttempts: row.DownloadAttempts || 0,
-		MaxDownloadAttempts: row.MaxDownloadAttempts || 3,
-		FilePath: row.FilePath || null,
-		FileSize: row.FileSize || null,
-		ProcessStatus: 'PENDING',
-		DownloadStartTime: row.DownloadStartTime || undefined,
-		DownloadEndTime: row.Status === 'COMPLETED' ? new Date() : undefined,
-		LastProcessError: row.LastProcessError || null,
-		dtUpdatedOn: new Date()
-	};
-    try {
-        return await SqpDownloadUrls.create({ CronJobID: row.CronJobID, ReportType: row.ReportType, ...payload, dtCreatedOn: new Date() });
-    } catch (err) {
-        logger.error({
-            error: err.message,
-            cronJobID: row.CronJobID,
-            reportType: row.ReportType,
-            payload
-        }, 'Failed to create sqp_download_urls row');
-        throw err;
-    }
+	const where = { CronJobID: row.CronJobID, ReportType: row.ReportType };
+	const latest = await SqpDownloadUrls.findOne({
+        where: where,
+        order: [['dtUpdatedOn', 'DESC']]
+    });
+    if (!latest) {
+		const payload = {
+			// DownloadURL intentionally omitted; we rely on FilePath (local or S3 URL)
+			Status: row.Status || 'PENDING',
+			DownloadAttempts: row.DownloadAttempts || 0,
+			MaxDownloadAttempts: row.MaxDownloadAttempts || 3,
+			FilePath: row.FilePath || null,
+			FileSize: row.FileSize || null,
+			ProcessStatus: 'PENDING',
+			DownloadStartTime: row.DownloadStartTime || undefined,
+			DownloadEndTime: row.Status === 'COMPLETED' ? new Date() : undefined,
+			LastProcessError: row.LastProcessError || null,
+			dtUpdatedOn: new Date()
+		};
+		try {
+			return await SqpDownloadUrls.create({ CronJobID: row.CronJobID, ReportType: row.ReportType, ...payload, dtCreatedOn: new Date() });
+		} catch (err) {
+			logger.error({
+				error: err.message,
+				cronJobID: row.CronJobID,
+				reportType: row.ReportType,
+				payload
+			}, 'Failed to create sqp_download_urls row');
+			throw err;
+		}
+	} else {
+		const payload = {
+			Status: row.Status || 'PENDING',
+			DownloadAttempts: row.DownloadAttempts || 0,
+			MaxDownloadAttempts: row.MaxDownloadAttempts || 3,
+			FilePath: row.FilePath || null,
+			FileSize: row.FileSize || null,
+			DownloadStartTime: row.DownloadStartTime || undefined,
+			dtUpdatedOn: new Date()
+		};
+		try {
+			return await SqpDownloadUrls.update(payload, { where: { ID: latest.ID } });
+		} catch (err) {
+			logger.error({
+				error: err.message,
+				cronJobID: row.CronJobID,
+				reportType: row.ReportType,
+				payload
+			}, 'Failed to update sqp_download_urls row');
+			throw err;
+		}
+	}
 }
 
 async function updateProcessStatusById(id, processStatus, extra = {}) {
