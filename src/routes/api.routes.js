@@ -20,7 +20,7 @@ router.use('/cron/sqp', AuthMiddleware.rateLimit(50, 15 * 60 * 1000)); // 50 req
 router.get('/cron/sqp/all', (req, res) => sqpCronApiController.runAllCronOperations(req, res));
 
 // Notification retry cron route
-router.get('/cron/sqp/retry-notifications', (req, res) => sqpCronApiController.retryNotifications(req, res));
+router.get('/cron/sqp/retry-report', (req, res) => sqpCronApiController.retryNotifications(req, res));
 
 // ASIN sync cron routes
 router.get('/cron/asin/syncSellerAsins/:userId/:amazonSellerID', (req, res) => sqpCronApiController.syncSellerAsins(req, res));
