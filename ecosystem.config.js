@@ -11,7 +11,9 @@ module.exports = {
 			"/var/www/html/sqp-data-node-backend/logs/*", 
 			"/var/www/html/sqp-data-node-backend/node_modules/*", 
 			"/var/www/html/sqp-data-node-backend/db/*",
-			"/var/www/html/sqp-data-node-backend/pm2/*"
+			"/var/www/html/sqp-data-node-backend/pm2/*",
+			"/var/www/html/sqp-data-node-backend/reports/*"
+
 		], 
 		exec_mode: "cluster",
 		instances: 2,
