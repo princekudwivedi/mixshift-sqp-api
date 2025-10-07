@@ -268,7 +268,7 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 
 async function checkReportStatuses(authOverrides = {}, filter = {}, retry = false) {
 	logger.info('Starting checkReportStatuses');
-	const rows = await model.getReportsForStatusCheck(filter);
+	const rows = await model.getReportsForStatusCheck(filter, retry);
 	logger.info({ reportCount: rows.length }, 'Found reports for status check');
 	
 	if (rows.length === 0) {
@@ -279,7 +279,7 @@ async function checkReportStatuses(authOverrides = {}, filter = {}, retry = fals
     for (const row of rows) {
         logger.info({ rowId: row.ID }, 'Processing report row');
         for (const type of env.TYPE_ARRAY) {
-            if (row[`${model.mapPrefix(type)}SQPDataPullStatus`] === 0 || (retry && row[`${model.mapPrefix(type)}SQPDataPullStatus`] === 2 && row[`${model.mapPrefix(type)}RetryCount_${type}`] === 3)){
+            if (row[`${model.mapPrefix(type)}SQPDataPullStatus`] === 0 || (retry && (row[`${model.mapPrefix(type)}SQPDataPullStatus`] === 2 || row[`${model.mapPrefix(type)}SQPDataPullStatus`] === 3))){
                 // ProcessRunningStatus = 2 (Check Status)
                 await model.setProcessRunningStatus(row.ID, type, 2);
 				reportID = await model.getLatestReportId(row.ID, type);
@@ -430,10 +430,10 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 }
 
 async function downloadCompletedReports(authOverrides = {}, filter = {}, retry = false) {
-    const rows = await model.getReportsForDownload(filter);
+    const rows = await model.getReportsForDownload(filter, retry);
     for (const row of rows) {
         for (const type of env.TYPE_ARRAY) {
-            if (row[`${model.mapPrefix(type)}SQPDataPullStatus`] === 0 || (retry && row[`${model.mapPrefix(type)}SQPDataPullStatus`] === 2 && row[`${model.mapPrefix(type)}RetryCount_${type}`] === 3)) {
+            if (row[`${model.mapPrefix(type)}SQPDataPullStatus`] === 0 || (retry && (row[`${model.mapPrefix(type)}SQPDataPullStatus`] === 2 || row[`${model.mapPrefix(type)}SQPDataPullStatus`] === 3))){
                 const reportId = await model.getLatestReportId(row.ID, type);
                 if (!reportId) {
                     await model.logCronActivity({ cronJobID: row.ID, reportType: type, action: 'Download Report', status: 3, message: 'Skipping download: ReportID not found in logs', reportID: null, retryCount: 0, executionTime: 0 });
@@ -640,6 +640,7 @@ module.exports = {
 	requestForSeller,
 	checkReportStatuses,
 	downloadCompletedReports,
+	sendFailureNotification,
 };
 
 

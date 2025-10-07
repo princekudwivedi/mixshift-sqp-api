@@ -78,8 +78,7 @@ class SqpCronApiController {
             
             // Validate inputs
             const validatedUserId = userId ? ValidationHelpers.validateUserId(userId) : null;
-            const validatedSellerId = sellerId ? ValidationHelpers.validateUserId(sellerId) : null;
-            console.log('user.ID', 1);
+            const validatedSellerId = sellerId ? ValidationHelpers.validateUserId(sellerId) : null;            
             logger.info({ 
                 userId: validatedUserId, 
                 sellerId: validatedSellerId,
@@ -93,16 +92,14 @@ class SqpCronApiController {
             let totalProcessed = 0;
             let totalErrors = 0;
             let breakUserProcessing = false;
-            // Process one user → one seller per run, exit after completing that seller
-            console.log('user.ID', 2);
+            // Process one user → one seller per run, exit after completing that seller            
             for (const user of users) {
                 try {
-                    console.log('user.ID', user.ID);
-                    await loadDatabase(user.ID);
+                    console.log('user.ID', user.ID);                    
                     if (isDevEnv && !allowedUsers.includes(user.ID)) {
                         continue;
                     }
-
+                    await loadDatabase(user.ID);
                     // Check cron limits for this user
                     const cronLimits = await this.checkCronLimits(user.ID);
                     console.log('cronLimits', cronLimits);
@@ -123,7 +120,6 @@ class SqpCronApiController {
                             }, 'Skipping Full Run - no eligible ASINs for all sellers');
                             continue;
                         }
-
                         for (const s of sellers) {
                             if (!s) continue;                        
                             try {
@@ -646,11 +642,10 @@ class SqpCronApiController {
             // Process each user
             for (const user of users) {
                 try {
-                    await loadDatabase(user.ID);
                     if (isDevEnv && !allowedUsers.includes(user.ID)) {
                         continue;
                     }
-                    
+                    await loadDatabase(user.ID);
                     //stuck in progress/pending status for 8-9 hours
                     const stuckRecords = await this.findStuckRecords();                    
                     if (stuckRecords.length === 0) {
@@ -881,12 +876,12 @@ class SqpCronApiController {
     async retryStuckRecord(record, reportType) {
         const authOverrides = await this.buildAuthOverrides(record.AmazonSellerID);
         try {
-            await ctrl.checkReportStatuses(authOverrides, { cronDetailID: [record.ID] }, true );
+            await ctrl.checkReportStatuses(authOverrides, { cronDetailID: [record.ID], reportType: reportType }, true );
         } catch (e) {
             logger.error({ id: record.ID, reportType, error: e.message }, 'Retry status check failed');
         }
         try {
-            await ctrl.downloadCompletedReports(authOverrides, { cronDetailID: [record.ID] }, true);
+            await ctrl.downloadCompletedReports(authOverrides, { cronDetailID: [record.ID], reportType: reportType }, true);
         } catch (e) {
             logger.error({ id: record.ID, reportType, error: e.message }, 'Retry download failed');
         }
@@ -937,8 +932,7 @@ class SqpCronApiController {
         
         // Only send notification if retry count has reached maximum (3)
         if (actualRetryCount >= 3) {
-            const { sendFailureNotification } = require('./sqp.cron.controller');
-            await sendFailureNotification(record.ID, record.AmazonSellerID, reportType, 'Retry after 8h failed', actualRetryCount, latestReportId);
+            await ctrl.sendFailureNotification(record.ID, record.AmazonSellerID, reportType, 'Retry after 8h failed', actualRetryCount, latestReportId);
         }
         
         logger.warn({ id: record.ID, reportType }, 'Retry failed - marked as failure');

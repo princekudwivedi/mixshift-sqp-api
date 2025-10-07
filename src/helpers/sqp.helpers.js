@@ -88,7 +88,6 @@ class RetryHelpers {
                 // Log attempt start
                 await model.logCronActivity({
                     cronJobID: cronDetailID,
-                    amazonSellerID: amazonSellerID,
                     reportType: reportType,
                     action: action,
                     status: 0,
@@ -108,7 +107,6 @@ class RetryHelpers {
                 // Success! Log and return
                 await model.logCronActivity({
                     cronJobID: cronDetailID,
-                    amazonSellerID: amazonSellerID,
                     reportType: reportType,
                     action: action,
                     status: 1,
@@ -182,7 +180,6 @@ class RetryHelpers {
                     // Also log the failure row
                     await model.logCronActivity({
                         cronJobID: cronDetailID,
-                        amazonSellerID: amazonSellerID,
                         reportType: reportType,
                         action: action,
                         status: 2,

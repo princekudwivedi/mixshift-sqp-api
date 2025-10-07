@@ -42,7 +42,6 @@ async function getActiveASINsBySeller(sellerId = null, limit = true) {
     const SellerAsinList = getSellerAsinList();
     const sellerFilter = sellerId ? { SellerID: sellerId } : {};
     const baseWhere = { IsActive: 1, LastSQPDataPullStatus: { [Op.or]: [null] }, ...sellerFilter };
-
     // Pending ASINs
     const pendingAsins = await SellerAsinList.findAll({
         where: baseWhere,
@@ -50,7 +49,6 @@ async function getActiveASINsBySeller(sellerId = null, limit = true) {
         ...(limit ? { limit: env.MAX_ASINS_PER_REQUEST } : {}),
         order: [['dtCreatedOn', 'ASC']]
     });
-
     if (!limit) logger.info({ batchSize: pendingAsins.length }, 'Selected all pending ASINs for processing');
 
     // Return early if enough pending ASINs
@@ -93,24 +91,59 @@ async function getActiveASINsBySeller(sellerId = null, limit = true) {
 }
 
 async function ASINsBySellerUpdated(amazonSellerID, asinList, status, startTime = null, endTime = null) {
-    const SellerAsinList = getSellerAsinList();
-    const data = { LastSQPDataPullStatus: status, dtUpdatedOn: new Date() };
-    if (startTime) {
-        data.LastSQPDataPullStartTime = new Date(startTime);
+    try {
+        const SellerAsinList = getSellerAsinList();
+        const data = { LastSQPDataPullStatus: status, dtUpdatedOn: new Date() };
+        if (startTime) {
+            data.LastSQPDataPullStartTime = new Date(startTime);
+        }
+        if (endTime) {
+            data.LastSQPDataPullEndTime = new Date(endTime);
+        }
+        
+        logger.info({ 
+            amazonSellerID, 
+            asinCount: asinList.length, 
+            status, 
+            startTime, 
+            endTime 
+        }, 'Updating ASIN status in seller_ASIN_list');
+        
+        // Perform the update and get the number of affected rows
+        const [affectedRows] = await SellerAsinList.update(data, { 
+            where: { 
+                AmazonSellerID: amazonSellerID, 
+                ASIN: { [Op.in]: asinList } 
+            } 
+        });
+        
+        if (affectedRows === 0) {
+            logger.warn({ 
+                amazonSellerID, 
+                asinCount: asinList.length, 
+                asins: asinList.slice(0, 5),
+                status 
+            }, 'WARNING: No ASINs were updated - records may not exist in database');
+        } else {
+            logger.info({ 
+                amazonSellerID, 
+                affectedRows,
+                requestedCount: asinList.length,
+                status 
+            }, `Successfully updated ${affectedRows} ASIN(s) to status: ${status}`);
+        }
+        
+        return affectedRows;
+    } catch (error) {
+        logger.error({ 
+            error: error.message, 
+            stack: error.stack,
+            amazonSellerID, 
+            asinCount: asinList.length,
+            status 
+        }, 'Error updating ASIN status');
+        throw error;
     }
-    if (endTime) {
-        data.LastSQPDataPullEndTime = new Date(endTime);
-    }
-    
-    logger.info({ 
-        amazonSellerID, 
-        asinCount: asinList.length, 
-        status, 
-        startTime, 
-        endTime 
-    }, 'Updating ASIN status in seller_ASIN_list');
-    
-    await SellerAsinList.update(data, { where: { AmazonSellerID: amazonSellerID, ASIN: { [Op.in]: asinList } } });
 }
 
 async function hasEligibleASINs(sellerId, limit = true) {
@@ -192,29 +225,51 @@ async function setProcessRunningStatus(cronDetailID, reportType, status) {
     }
 }
 
-async function getReportsForStatusCheck(filter = {}) {
+async function getReportsForStatusCheck(filter = {}, retry = false) {
     const SqpCronDetails = getSqpCronDetails();
-    const where = {
-            [Op.or]: [
-                { WeeklySQPDataPullStatus: 0},
-                { MonthlySQPDataPullStatus: 0},
-                { QuarterlySQPDataPullStatus: 0}
-            ]
-    };
+    const where = {};
+    if (retry) {
+        where[Op.or] = [
+            { WeeklySQPDataPullStatus: { [Op.in]: [2,3] }},
+            { MonthlySQPDataPullStatus: { [Op.in]: [2,3] }},
+            { QuarterlySQPDataPullStatus: { [Op.in]: [2,3] }},
+        ];
+        if (filter.reportType) {
+            const prefix = mapPrefix(filter.reportType);
+            where[`${prefix}SQPDataPullStatus`] = { [Op.in]: [2,3] };
+        }
+    } else {
+        where[Op.or] = [
+            { WeeklySQPDataPullStatus: 0},
+            { MonthlySQPDataPullStatus: 0},
+            { QuarterlySQPDataPullStatus: 0}
+        ];
+    }
     if (filter.cronDetailID && Array.isArray(filter.cronDetailID)) where.ID = { [Op.in]: filter.cronDetailID };
-    else if (filter.cronDetailID) where.ID = filter.cronDetailID;
+    else if (filter.cronDetailID) where.ID = filter.cronDetailID;    
     return SqpCronDetails.findAll({ where });
 }
 
-async function getReportsForDownload(filter = {}) {
+async function getReportsForDownload(filter = {}, retry = false) {
     const SqpCronDetails = getSqpCronDetails();
-    const where = {
-            [Op.or]: [
-                { WeeklySQPDataPullStatus: 0},
-                { MonthlySQPDataPullStatus: 0},
-                { QuarterlySQPDataPullStatus: 0}
-            ]
-    };
+    const where = {};
+    if (retry) {
+        where[Op.or] = [
+            { WeeklySQPDataPullStatus: { [Op.in]: [2,3] }},
+            { MonthlySQPDataPullStatus: { [Op.in]: [2,3] }},
+            { QuarterlySQPDataPullStatus: { [Op.in]: [2,3] }},
+        ];
+        if (filter.reportType) {
+            const prefix = mapPrefix(filter.reportType);
+            where[`${prefix}SQPDataPullStatus`] = { [Op.in]: [2,3] };
+        }
+    } else {
+        where[Op.or] = [
+            { WeeklySQPDataPullStatus: 0},
+            { MonthlySQPDataPullStatus: 0},
+            { QuarterlySQPDataPullStatus: 0}
+        ];
+    }
     if (filter.cronDetailID && Array.isArray(filter.cronDetailID)) where.ID = { [Op.in]: filter.cronDetailID };
     else if (filter.cronDetailID) where.ID = filter.cronDetailID;
     return SqpCronDetails.findAll({ where });

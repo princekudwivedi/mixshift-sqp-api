@@ -47,10 +47,22 @@ class AuthToken {
                 attributes: ['id', 'AmazonSellerID', 'access_token', 'refresh_token', 'expires_in'],
                 order: [['id', 'DESC']]
             });
-            logger.debug({ amazonSellerID, found: !!token }, 'AuthToken.getSavedToken');
+            
+            if (token) {
+                logger.info({ 
+                    amazonSellerID, 
+                    tokenId: token.id,
+                    hasAccessToken: !!token.access_token,
+                    hasRefreshToken: !!token.refresh_token,
+                    expiresIn: token.expires_in
+                }, 'Token found for seller');
+            } else {
+                logger.warn({ amazonSellerID }, 'No token found in database for seller');
+            }
+            
             return token;
         } catch (error) {
-            logger.error({ error: error.message, amazonSellerID }, 'Error in AuthToken.getSavedToken');
+            logger.error({ error: error.message, stack: error.stack, amazonSellerID }, 'Error in AuthToken.getSavedToken');
             throw error;
         }
     }
