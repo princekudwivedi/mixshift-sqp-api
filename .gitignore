@@ -1,7 +1,9 @@
 # add ignore files
 /node_modules
 .env
+/.github
 database
 /reports/
 /examples/
 /logs
+package-lock.json
