@@ -267,29 +267,57 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 }
 
 async function checkReportStatuses(authOverrides = {}, filter = {}, retry = false) {
-	logger.info('Starting checkReportStatuses');
-	const rows = await model.getReportsForStatusCheck(filter, retry);
-	logger.info({ reportCount: rows.length }, 'Found reports for status check');
-	
-	if (rows.length === 0) {
-		logger.info('No reports found for status check');
-		return;
+    logger.info('Starting checkReportStatuses');
+    const rows = await model.getReportsForStatusCheck(filter, retry);
+    logger.info({ reportCount: rows.length }, 'Found reports for status check');
+    
+    if (rows.length === 0) {
+        logger.info('No reports found for status check');
+        return [];
+    }
+
+    const res = [];
+	let loop = [];
+	if (retry && filter.reportType) {
+		loop = [filter.reportType];
+	} else {
+		loop = env.TYPE_ARRAY;
 	}
-	let reportID = null;	
     for (const row of rows) {
         logger.info({ rowId: row.ID }, 'Processing report row');
-        for (const type of env.TYPE_ARRAY) {
-            if (row[`${model.mapPrefix(type)}SQPDataPullStatus`] === 0 || (retry && (row[`${model.mapPrefix(type)}SQPDataPullStatus`] === 2 || row[`${model.mapPrefix(type)}SQPDataPullStatus`] === 3))){
-                // ProcessRunningStatus = 2 (Check Status)
+        for (const type of loop) {
+            const statusField = `${model.mapPrefix(type)}SQPDataPullStatus`;
+            const processStatusField = row[statusField];
+
+            if (processStatusField === 0 || (retry && processStatusField === 2)) {
+                // Set running status
                 await model.setProcessRunningStatus(row.ID, type, 2);
-				reportID = await model.getLatestReportId(row.ID, type);
-                await model.logCronActivity({ cronJobID: row.ID, reportType: type, action: 'Check Status', status: 1, message: 'Checking report status', reportID: reportID });
+
+                const reportID = await model.getLatestReportId(row.ID, type);
+
+                await model.logCronActivity({
+                    cronJobID: row.ID,
+                    reportType: type,
+                    action: 'Check Status',
+                    status: 1,
+                    message: 'Checking report status',
+                    reportID
+                });
+
                 logger.info({ type }, 'Checking status for report');
-                await checkReportStatusByType(row, type, authOverrides, reportID, retry);
-			} 
-		}
-	}
+
+                const result = await checkReportStatusByType(row, type, authOverrides, reportID, retry);
+
+                if (result.success) {
+                    res.push(result);
+                }
+            }
+        }
+    }
+
+    return retry ? res : undefined;
 }
+
 
 async function checkReportStatusByType(row, reportType, authOverrides = {}, reportID = null, retry = false) {
     // Find latest ReportID from logs for this CronJobID + ReportType
@@ -322,11 +350,11 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 		amazonSellerID: row.AmazonSellerID,
 		reportType,
 		action: 'Check Status',
-		context: { row, reportId, seller, authOverrides },
+		context: { row, reportId, seller, authOverrides, isRetry: retry },
 		model,
 		sendFailureNotification,
 		operation: async ({ attempt, currentRetry, context, startTime }) => {
-			const { row, reportId, seller, authOverrides } = context;
+			const { row, reportId, seller, authOverrides, isRetry } = context;
 			
 			// Ensure access token for this seller during status checks
 			let currentAuthOverrides = { ...authOverrides };
@@ -359,7 +387,7 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 				});
                 // Log report ID and document ID in cron logs
                 await model.logCronActivity({ cronJobID: row.ID, reportType, action: 'Check Status', status: 1, message: 'Report ready', reportID: reportId, reportDocumentID: documentId });
-				
+								
 				return {
 					message: `Report ready on attempt ${attempt}. Report ID: ${reportId}${documentId ? ' | Document ID: ' + documentId : ''}`,
 					reportID: reportId,
@@ -388,10 +416,22 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 				// Throw error to trigger retry mechanism
 				throw new Error(`Report still ${status.toLowerCase().replace('_',' ')} after ${delaySeconds}s wait - retrying`);
 				
-            } else if (status === 'FATAL' || status === 'CANCELLED') {
-                // Permanent failure
+            } else if (status === 'FATAL' || status === 'CANCELLED') {                
                 const latestReportId = await model.getLatestReportId(row.ID, reportType);
-                await model.updateSQPReportStatus(row.ID, reportType, 2, latestReportId, status, null, null, null, new Date());
+                
+                // Set status to 3 (retry) if this is a retry operation, otherwise 2 (error)
+                const statusToSet = isRetry ? 3 : 2;
+                
+                await model.updateSQPReportStatus(row.ID, reportType, statusToSet, latestReportId, status, null, null, null, new Date());
+                
+                logger.error({ 
+                    cronDetailID: row.ID, 
+                    reportType, 
+                    status,
+                    isRetry,
+                    sqpDataPullStatus: statusToSet
+                }, `Report ${status} - SQPDataPullStatus set to ${statusToSet} (${isRetry ? 'Retry' : 'Error'})`);
+                
                 await model.logCronActivity({ 
                     cronJobID: row.ID, 
                     reportType, 
@@ -399,13 +439,13 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
                     status: 2, 
                     message: `Report ${status} on attempt ${attempt}`, 
                     reportID: latestReportId || reportId, 
-                    retryCount: 0, 
+                    retryCount: currentRetry, 
                     executionTime: (Date.now() - startTime) / 1000 
                 });
                 await sendFailureNotification(row.ID, row.AmazonSellerID, reportType, `Report ${status}`, 0, reportId);
 				
 				// Throw error to trigger retry mechanism, but this will be caught and handled
-				throw new Error(`Report ${status} - permanent failure`);
+				throw new Error(`Report ${status} - ${isRetry ? 'retry will continue' : 'permanent failure'}`);
 				
 			} else {
 				// Unknown status - treat as error and retry
@@ -431,9 +471,17 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 
 async function downloadCompletedReports(authOverrides = {}, filter = {}, retry = false) {
     const rows = await model.getReportsForDownload(filter, retry);
-    for (const row of rows) {
-        for (const type of env.TYPE_ARRAY) {
-            if (row[`${model.mapPrefix(type)}SQPDataPullStatus`] === 0 || (retry && (row[`${model.mapPrefix(type)}SQPDataPullStatus`] === 2 || row[`${model.mapPrefix(type)}SQPDataPullStatus`] === 3))){
+	let loop = [];
+	if (retry && filter.reportType) {
+		loop = [filter.reportType];
+	} else {
+		loop = env.TYPE_ARRAY;
+	}
+    for (const row of rows) {		
+        for (const type of loop) {
+			const statusField = `${model.mapPrefix(type)}SQPDataPullStatus`;
+            const processStatusField = row[statusField];
+            if (processStatusField === 0 || (retry && processStatusField === 2)) {
                 const reportId = await model.getLatestReportId(row.ID, type);
                 if (!reportId) {
                     await model.logCronActivity({ cronJobID: row.ID, reportType: type, action: 'Download Report', status: 3, message: 'Skipping download: ReportID not found in logs', reportID: null, retryCount: 0, executionTime: 0 });

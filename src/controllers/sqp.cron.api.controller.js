@@ -661,9 +661,10 @@ class SqpCronApiController {
                     // Retry each stuck record's report types before deciding final status
                     const retryResults = [];
                     for (const rec of stuckRecords) {
+                        const authOverrides = await this.buildAuthOverrides(rec.AmazonSellerID);
                         for (const type of rec.stuckReportTypes) {
-                            try {
-                                const rr = await this.retryStuckRecord(rec, type);
+                            try {                                
+                                const rr = await this.retryStuckRecord(rec, type, authOverrides);
                                 retryResults.push(rr);
                             } catch (e) {
                                 retryResults.push({
@@ -677,14 +678,11 @@ class SqpCronApiController {
                             }
                         }
                     }
-                    const retryNotificationsResults = await this.retryNotificationsForRecords(stuckRecords);
-                    totalRetryNotifications += retryNotificationsResults.length;
-                    allResults.push(...retryResults, ...retryNotificationsResults);
-                    
+                    allResults.push(...retryResults);                    
                     logger.info({
                         userId: user.ID,
                         totalStuckRecords: stuckRecords.length,
-                        retryNotificationsCount: retryNotificationsResults.length
+                        retryNotificationsCount: retryResults.length
                     }, 'Notification retry completed for user');
                     
                 } catch (error) {
@@ -706,14 +704,14 @@ class SqpCronApiController {
             }
             
             logger.info({
-                totalRetryNotifications,
+                totalRetryNotifications: allResults.length,
                 totalErrors,
                 results: allResults
             }, 'Notification retry completed');
             
             return SuccessHandler.sendSuccess(res, {
                 message: `Retry notifications for ${totalRetryNotifications} stuck records`,
-                retryNotificationsCount: totalRetryNotifications,
+                retryNotificationsCount: allResults.length,
                 records: allResults
             });
             
@@ -743,21 +741,21 @@ class SqpCronApiController {
                     {
                         [Op.and]: [
                             { WeeklyProcessRunningStatus: { [Op.in]: [1, 2, 3] } },
-                            { WeeklySQPDataPullStatus: { [Op.in]: [0, 2 ,3] } },
+                            { WeeklySQPDataPullStatus: { [Op.in]: [0, 2 ] } },
                             { dtUpdatedOn: { [Op.lte]: cutoffTime } }
                         ]
                     },
                     {
                         [Op.and]: [
                             { MonthlyProcessRunningStatus: { [Op.in]: [1, 2, 3] } },
-                            { MonthlySQPDataPullStatus: { [Op.in]: [0, 2, 3] } },
+                            { MonthlySQPDataPullStatus: { [Op.in]: [0, 2] } },
                             { dtUpdatedOn: { [Op.lte]: cutoffTime } }
                         ]
                     },
                     {
                         [Op.and]: [
                             { QuarterlyProcessRunningStatus: { [Op.in]: [1, 2, 3] } },
-                            { QuarterlySQPDataPullStatus: { [Op.in]: [0, 2, 3] } },
+                            { QuarterlySQPDataPullStatus: { [Op.in]: [0, 2] } },
                             { dtUpdatedOn: { [Op.lte]: cutoffTime } }
                         ]
                     }
@@ -803,7 +801,7 @@ class SqpCronApiController {
     isReportTypeStuck(processStatus, dataPullStatus) {
         return (
             (processStatus === 1 || processStatus === 2 || processStatus === 3 || processStatus === 4) &&
-            (dataPullStatus === 0 || dataPullStatus === 2 || dataPullStatus === 3)
+            (dataPullStatus === 0 || dataPullStatus === 2)
         );
     }
     
@@ -814,8 +812,6 @@ class SqpCronApiController {
             try {
                 // Mark each stuck report type as having retry notifications
                 for (const reportType of record.stuckReportTypes) {
-                    await this.retryNotificationForRecord(record.ID, reportType, record.stuckForHours);
-                    
                     retryResults.push({
                         cronDetailID: record.ID,
                         amazonSellerID: record.AmazonSellerID,
@@ -854,32 +850,23 @@ class SqpCronApiController {
     }
 
     /**
-     * Retry notification for a specific record and report type
-     */
-    async retryNotificationForRecord(cronDetailID, reportType, stuckForHours) {
-        const SqpCronLogs = getSqpCronLogs();
-        logger.info({
-            cronDetailID,
-            reportType,
-            stuckForHours
-        }, 'Logged notification suppression');
-    }
-
-    /**
      * Retry a stuck record's pipeline for a specific report type, then finalize status.
      */
-    async retryStuckRecord(record, reportType) {
-        const authOverrides = await this.buildAuthOverrides(record.AmazonSellerID);
+    async retryStuckRecord(record, reportType, authOverrides) {        
+        let res = null;
         try {
-            await ctrl.checkReportStatuses(authOverrides, { cronDetailID: [record.ID], reportType: reportType }, true );
+            res =await ctrl.checkReportStatuses(authOverrides, { cronDetailID: [record.ID], reportType: reportType }, true );            
         } catch (e) {
             logger.error({ id: record.ID, reportType, error: e.message }, 'Retry status check failed');
+        }        
+        if(res && res[0] && res[0].success) {
+            try {
+                await ctrl.downloadCompletedReports(authOverrides, { cronDetailID: [record.ID], reportType: reportType }, true);
+            } catch (e) {
+                logger.error({ id: record.ID, reportType, error: e.message }, 'Retry download failed');
+            }
         }
-        try {
-            await ctrl.downloadCompletedReports(authOverrides, { cronDetailID: [record.ID], reportType: reportType }, true);
-        } catch (e) {
-            logger.error({ id: record.ID, reportType, error: e.message }, 'Retry download failed');
-        }
+        
         // Re-fetch status and finalize
         const SqpCronDetails = getSqpCronDetails();
         const refreshed = await SqpCronDetails.findOne({
@@ -914,7 +901,7 @@ class SqpCronApiController {
 
         // Mark failed if still not success
         const latestReportId = await model.getLatestReportId(record.ID, reportType);
-        await model.updateSQPReportStatus(record.ID, reportType, 2, latestReportId, 'Retry after 8h failed');
+        await model.updateSQPReportStatus(record.ID, reportType, 3, latestReportId, 'Retry after 8h failed');
         await model.logCronActivity({
             cronJobID: record.ID,
             reportType,

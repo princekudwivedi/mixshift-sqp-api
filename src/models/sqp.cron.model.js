@@ -233,15 +233,16 @@ async function setProcessRunningStatus(cronDetailID, reportType, status) {
 async function getReportsForStatusCheck(filter = {}, retry = false) {
     const SqpCronDetails = getSqpCronDetails();
     const where = {};
-    if (retry) {
-        where[Op.or] = [
-            { WeeklySQPDataPullStatus: { [Op.in]: [2,3] }},
-            { MonthlySQPDataPullStatus: { [Op.in]: [2,3] }},
-            { QuarterlySQPDataPullStatus: { [Op.in]: [2,3] }},
-        ];
+    if (retry) {        
         if (filter.reportType) {
             const prefix = mapPrefix(filter.reportType);
-            where[`${prefix}SQPDataPullStatus`] = { [Op.in]: [2,3] };
+            where[`${prefix}SQPDataPullStatus`] = { [Op.in]: [2] };
+        } else {
+            where[Op.or] = [
+                { WeeklySQPDataPullStatus: 2},
+                { MonthlySQPDataPullStatus: 2},
+                { QuarterlySQPDataPullStatus: 2}
+            ];
         }
     } else {
         where[Op.or] = [
@@ -258,15 +259,16 @@ async function getReportsForStatusCheck(filter = {}, retry = false) {
 async function getReportsForDownload(filter = {}, retry = false) {
     const SqpCronDetails = getSqpCronDetails();
     const where = {};
-    if (retry) {
-        where[Op.or] = [
-            { WeeklySQPDataPullStatus: { [Op.in]: [2,3] }},
-            { MonthlySQPDataPullStatus: { [Op.in]: [2,3] }},
-            { QuarterlySQPDataPullStatus: { [Op.in]: [2,3] }},
-        ];
+    if (retry) {        
         if (filter.reportType) {
             const prefix = mapPrefix(filter.reportType);
-            where[`${prefix}SQPDataPullStatus`] = { [Op.in]: [2,3] };
+            where[`${prefix}SQPDataPullStatus`] = { [Op.in]: [2] };
+        } else {
+            where[Op.or] = [
+                { WeeklySQPDataPullStatus: 2},
+                { MonthlySQPDataPullStatus: 2},
+                { QuarterlySQPDataPullStatus: 2}
+            ];
         }
     } else {
         where[Op.or] = [
