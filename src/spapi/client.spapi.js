@@ -42,11 +42,6 @@ async function buildReportsClient(opts = {}) {
 	const accessToken = opts.accessToken; // Use access_token
 	const merchantRegion = opts.merchantRegion || 'NA';
 	
-	logger.info({ 
-		merchantRegion, 
-		merchantRegionType: typeof merchantRegion,
-		opts: { ...opts, accessToken: opts.accessToken ? '[REDACTED]' : 'none' }
-	}, 'SP-API buildReportsClient input');
 	
 	if (!clientId || !clientSecret) {
 		throw new Error('SP-API clientId and clientSecret are required');

@@ -44,8 +44,6 @@ class SqpCronApiController {
                 authOverrides.accessToken = tokenRow.access_token;
                 logger.info({ 
                     amazonSellerID, 
-                    hasAccessToken: !!tokenRow.access_token,
-                    tokenId: tokenRow.id,
                     expiresIn: tokenRow.expires_in
                 }, 'Token details for seller');
             } else {
