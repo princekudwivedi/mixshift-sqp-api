@@ -94,12 +94,15 @@ class SqpCronApiController {
             let breakUserProcessing = false;
             // Process one user → one seller per run, exit after completing that seller            
             for (const user of users) {
-                try {
-                    console.log('user.ID', user.ID);                    
-                    if (isDevEnv && !allowedUsers.includes(user.ID)) {
-                        continue;
-                    }
+                console.log('user.ID', user.ID);                    
+                if (isDevEnv && !allowedUsers.includes(user.ID)) {
+                    logger.info({ userId: user.ID }, 'Skip user as it is not allowed');
+                    continue;
+                } else {
+                    logger.info({ userId: user.ID }, 'Process user started');
+                    console.log(`🔄 Switching to database for user ${user.ID}...`);
                     await loadDatabase(user.ID);
+                    console.log(`✅ Database switched for user ${user.ID}`);
                     // Check cron limits for this user
                     const cronLimits = await this.checkCronLimits(user.ID);
                     console.log('cronLimits', cronLimits);
@@ -187,12 +190,6 @@ class SqpCronApiController {
                             break;
                         }
                     }
-                } catch (error) {
-                    logger.error({ 
-                        error: error.message, 
-                        userId: user.ID 
-                    }, 'Error processing user in all operations');
-                    totalErrors++;
                 }
             }
             return SuccessHandler.sendProcessingSuccess(

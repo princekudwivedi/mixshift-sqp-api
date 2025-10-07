@@ -75,7 +75,11 @@ async function getActiveASINsBySeller(sellerId = null, limit = true) {
         order: [['LastSQPDataPullEndTime', 'ASC']]
     });
 
+    console.log('pendingAsins', pendingAsins.length);
+    console.log('completedAsins', completedAsins.length);
     const allAsins = [...pendingAsins, ...completedAsins];
+
+    console.log('allAsins', allAsins.length);
 
     logger.info({
         sellerId,
@@ -148,6 +152,7 @@ async function ASINsBySellerUpdated(amazonSellerID, asinList, status, startTime 
 
 async function hasEligibleASINs(sellerId, limit = true) {
     const eligibleAsins = await getActiveASINsBySeller(sellerId, limit);
+    console.log('eligibleAsins', eligibleAsins);
     const hasEligible = eligibleAsins.length > 0;
 
     logger.info({ sellerId, eligibleCount: eligibleAsins.length, hasEligible }, 'Seller ASIN eligibility check');

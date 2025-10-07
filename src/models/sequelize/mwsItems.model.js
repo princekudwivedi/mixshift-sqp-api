@@ -1,5 +1,5 @@
 const { DataTypes } = require('sequelize');
-const { getCurrentSequelize } = require('../../db/tenant.db');
+const { getCurrentSequelize, getCurrentUserId } = require('../../db/tenant.db');
 const { TBL_MWS_ITEMS } = require('../../config/env.config');
 const { makeReadOnly } = require('./utils');
 
@@ -7,8 +7,18 @@ const table = TBL_MWS_ITEMS || 'mws_items';
 
 // Cache for the model to prevent recreating it
 let cachedModel = null;
+let cachedUserId = null;
 
 function getModel() {
+    
+    const currentUserId = getCurrentUserId();
+    
+    // Clear cache if database has changed
+    if (cachedModel && cachedUserId !== currentUserId) {
+        cachedModel = null;
+        cachedUserId = null;
+    }
+    
     if (!cachedModel) {
         const sequelize = getCurrentSequelize();
         cachedModel = sequelize.define(table, {

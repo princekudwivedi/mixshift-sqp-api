@@ -1,13 +1,22 @@
 const { DataTypes } = require('sequelize');
-const { getCurrentSequelize } = require('../../db/tenant.db');
+const { getCurrentSequelize, getCurrentUserId } = require('../../db/tenant.db');
 const { TBL_SQP_CRON_DETAILS } = require('../../config/env.config');
 
 const table = TBL_SQP_CRON_DETAILS;
 
 // Cache for the model to prevent recreating it
 let cachedModel = null;
+let cachedUserId = null;
 
 function getModel() {
+    const currentUserId = getCurrentUserId();
+    
+    // Clear cache if database has changed
+    if (cachedModel && cachedUserId !== currentUserId) {
+        cachedModel = null;
+        cachedUserId = null;
+    }
+    
     if (!cachedModel) {
         const sequelize = getCurrentSequelize();
         cachedModel = sequelize.define(table, {
@@ -32,6 +41,7 @@ function getModel() {
             tableName: table,
             timestamps: false
         });
+        cachedUserId = currentUserId;
     }
     return cachedModel;
 }

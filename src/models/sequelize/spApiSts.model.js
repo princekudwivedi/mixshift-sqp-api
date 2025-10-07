@@ -1,5 +1,5 @@
 const { DataTypes } = require('sequelize');
-const { getCurrentSequelize } = require('../../db/tenant.db');
+const { getCurrentSequelize, getCurrentUserId } = require('../../db/tenant.db');
 const { TBL_STS_TOKENS } = require('../../config/env.config');
 const { makeReadOnly } = require('./utils');
 
@@ -7,6 +7,7 @@ const table = TBL_STS_TOKENS;
 
 // Cache for the model to prevent recreating it
 let cachedModel = null;
+let cachedUserId = null;
 
 let BaseModel = getCurrentSequelize().define(table, {
     id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
@@ -20,6 +21,15 @@ let BaseModel = getCurrentSequelize().define(table, {
 });
 
 function getModel() {
+    
+    const currentUserId = getCurrentUserId();
+    
+    // Clear cache if database has changed
+    if (cachedModel && cachedUserId !== currentUserId) {
+        cachedModel = null;
+        cachedUserId = null;
+    }
+    
     if (!cachedModel) {
         const sequelize = getCurrentSequelize();
         cachedModel = sequelize.define(table, {

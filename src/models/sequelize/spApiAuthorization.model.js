@@ -1,11 +1,12 @@
 const { DataTypes } = require('sequelize');
-const { getCurrentSequelize } = require('../../db/tenant.db');
+const { getCurrentSequelize, getCurrentUserId } = require('../../db/tenant.db');
 
 // Using default table name; if you add a constant later, switch to it
 const table = 'tbl_sp_api_authorization';
 
 // Cache for the model to prevent recreating it
 let cachedModel = null;
+let cachedUserId = null;
 
 let BaseModel = getCurrentSequelize().define(table, {
     id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
@@ -21,6 +22,15 @@ let BaseModel = getCurrentSequelize().define(table, {
 });
 
 function getModel() {
+    
+    const currentUserId = getCurrentUserId();
+    
+    // Clear cache if database has changed
+    if (cachedModel && cachedUserId !== currentUserId) {
+        cachedModel = null;
+        cachedUserId = null;
+    }
+    
     if (!cachedModel) {
         const sequelize = getCurrentSequelize();
         cachedModel = sequelize.define(table, {

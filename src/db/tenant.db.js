@@ -9,13 +9,20 @@ const { Op } = require('sequelize');
  */
 let currentDbName = env.DB_NAME;
 let currentSequelize = null;
+let currentUserId = null;
 
 async function loadDatabase(userId = 0) {
+    // Check if we're already connected to the same user's database
+    if (currentUserId === userId) {
+        return currentSequelize;
+    }
+    
     if (!userId || Number(userId) === 0) {
         // Connect to root database for userId = 0
         logger.info('Connecting to root database (userId = 0)');
         currentDbName = env.DB_NAME;
         currentSequelize = getRootSequelize();
+        currentUserId = 0;
         return currentSequelize;
     }
 
@@ -42,6 +49,7 @@ async function loadDatabase(userId = 0) {
             logger.warn({ userId }, 'User DB mapping not found; staying on root');
             currentDbName = env.DB_NAME;
             currentSequelize = rootSequelize;
+            currentUserId = userId;
             return currentSequelize;
         }
         
@@ -53,6 +61,7 @@ async function loadDatabase(userId = 0) {
             user: env.DB_USER, 
             pass: env.DB_PASS 
         });
+        currentUserId = userId;
         return currentSequelize;
     } catch (error) {
         logger.error({ error: error.message, userId }, 'Error loading tenant database');
@@ -70,6 +79,16 @@ function getCurrentSequelize() {
     return currentSequelize || getRootSequelize(); 
 }
 
+function getCurrentUserId() {
+    return currentUserId;
+}
+
+function clearModelCaches() {
+    // This function will be used to clear model caches when database changes
+    // We'll implement this by requiring all model files to check for database changes
+    logger.info({ currentUserId, currentDbName }, 'Database changed - model caches should be cleared');
+}
+
 function getTenantSequelizeForCurrentDb() {
     return getTenantSequelize({ db: currentDbName, user: env.DB_USER, pass: env.DB_PASS });
 }
@@ -77,7 +96,9 @@ function getTenantSequelizeForCurrentDb() {
 module.exports = { 
     loadDatabase, 
     getCurrentDbName, 
-    getCurrentSequelize,
+    getCurrentSequelize, 
+    getCurrentUserId,
+    clearModelCaches,
     getTenantSequelizeForCurrentDb 
 };
 
