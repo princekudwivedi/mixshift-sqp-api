@@ -1,19 +1,12 @@
 const express = require('express');
 const router = express.Router();
-const sqpApiController = require('../controllers/sqp.api.controller');
 const sqpCronApiController = require('../controllers/sqp.cron.api.controller');
 const AuthMiddleware = require('../middleware/auth.middleware');
-const { requireRole } = require('../middleware/authz.middleware');
 
 // Apply shared middleware to all routes
 router.use(AuthMiddleware.requestLogger);
 router.use(AuthMiddleware.securityHeaders);
 router.use(AuthMiddleware.sanitizeInput);
-
-// SQP API routes (non-cron) - Higher rate limit for regular API usage
-router.use('/sqp', AuthMiddleware.rateLimit(100, 15 * 60 * 1000)); // 100 requests per 15 minutes
-router.get('/sqp/getAsinSkuList/:userId/:sellerID', (req, res) => sqpApiController.getAsinSkuList(req, res));
-router.put('/sqp/updateAsinStatus/:userId/:sellerID/:asin', (req, res) => sqpApiController.updateAsinStatus(req, res));
 
 // Cron routes - Lower rate limit for cron operations
 router.use('/cron/sqp', AuthMiddleware.rateLimit(50, 15 * 60 * 1000)); // 50 requests per 15 minutes for cron endpoints

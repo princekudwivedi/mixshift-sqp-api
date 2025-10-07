@@ -25,22 +25,10 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // Trust proxy for accurate IP addresses
 app.set('trust proxy', 1);
 
-// Health and readiness endpoints
-const { getTenantSequelizeForCurrentDb } = require('./db/tenant.db');
-app.get('/healthz', (req, res) => {
+app.get('/', (req, res) => {
     res.status(200).json({ status: 'ok', time: new Date().toISOString() });
 });
-app.get('/readyz', async (req, res) => {
-    try {
-        const sequelize = getTenantSequelizeForCurrentDb();
-        if (sequelize && sequelize.authenticate) {
-            await sequelize.authenticate();
-        }
-        res.status(200).json({ ready: true, time: new Date().toISOString() });
-    } catch (e) {
-        res.status(503).json({ ready: false, error: e.message, time: new Date().toISOString() });
-    }
-});
+
 app.use('/api/v1', apiRoutes);
 
 // Global error handler

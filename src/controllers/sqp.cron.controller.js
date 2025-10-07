@@ -3,12 +3,9 @@ const dates = require('../utils/dates.utils');
 const model = require('../models/sqp.cron.model');
 const sellerModel = require('../models/sequelize/seller.model');
 const AuthToken = require('../models/authToken.model');
-const StsToken = require('../models/stsToken.model');
 const sp = require('../spapi/client.spapi');
 const jsonSvc = require('../services/sqp.json.processing.service');
 const downloadUrls = require('../models/sqp.download.urls.model');
-const { getModel: getSqpCronDetails } = require('../models/sequelize/sqpCronDetails.model');
-const { sellerDefaults } = require('../config/env.config');
 const { NotificationHelpers, RetryHelpers, DelayHelpers } = require('../helpers/sqp.helpers');
 const env = require('../config/env.config');
 

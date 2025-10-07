@@ -2,7 +2,6 @@ const { query, setDatabase } = require('./mysql.db');
 const logger = require('../utils/logger.utils');
 const env = require('../config/env.config');
 const { getTenantSequelize } = require('../config/sequelize.factory');
-const User = require('../models/sequelize/user.model');
 const UserDbMap = require('../models/sequelize/userDbMap.model');
 const UserDbs = require('../models/sequelize/userDbs.model');
 const Timezones = require('../models/sequelize/timezones.model');

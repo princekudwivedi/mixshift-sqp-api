@@ -8,7 +8,6 @@ const AuthToken = require('../models/authToken.model');
 const StsToken = require('../models/stsToken.model');
 const sellerModel = require('../models/sequelize/seller.model');
 const ctrl = require('./sqp.cron.controller');
-const jsonProcessingService = require('../services/sqp.json.processing.service');
 const model = require('../models/sqp.cron.model');
 const { getModel: getSqpCronDetails } = require('../models/sequelize/sqpCronDetails.model');
 const { getModel: getSqpCronLogs } = require('../models/sequelize/sqpCronLogs.model');
