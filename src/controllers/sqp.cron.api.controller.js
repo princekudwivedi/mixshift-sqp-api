@@ -79,7 +79,7 @@ class SqpCronApiController {
             // Validate inputs
             const validatedUserId = userId ? ValidationHelpers.validateUserId(userId) : null;
             const validatedSellerId = sellerId ? ValidationHelpers.validateUserId(sellerId) : null;
-            
+            console.log('user.ID', 1);
             logger.info({ 
                 userId: validatedUserId, 
                 sellerId: validatedSellerId,
@@ -94,8 +94,10 @@ class SqpCronApiController {
             let totalErrors = 0;
             let breakUserProcessing = false;
             // Process one user → one seller per run, exit after completing that seller
+            console.log('user.ID', 2);
             for (const user of users) {
                 try {
+                    console.log('user.ID', user.ID);
                     await loadDatabase(user.ID);
                     if (isDevEnv && !allowedUsers.includes(user.ID)) {
                         continue;
@@ -103,6 +105,7 @@ class SqpCronApiController {
 
                     // Check cron limits for this user
                     const cronLimits = await this.checkCronLimits(user.ID);
+                    console.log('cronLimits', cronLimits);
                     if (cronLimits.shouldProcess) {                        
                         const sellers = validatedSellerId
                             ? [await sellerModel.getProfileDetailsByID(validatedSellerId)]

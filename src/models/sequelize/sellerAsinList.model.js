@@ -1,12 +1,15 @@
 const { DataTypes } = require('sequelize');
-const sequelize = require('../../config/sequelize.config');
-const { getTenantSequelizeForCurrentDb } = require('../../db/tenant.db');
+const { getCurrentSequelize } = require('../../db/tenant.db');
+
 const { TBL_SELLER_ASIN_LIST } = require('../../config/env.config');
 
 const table = TBL_SELLER_ASIN_LIST;
 
+// Cache for the model to prevent recreating it
+let cachedModel = null;
+
 // Write-allowed model (insert/update/delete/truncate permitted)
-let BaseModel = sequelize.define(table, {
+let BaseModel = getCurrentSequelize().define(table, {
     ID: { type: DataTypes.INTEGER.UNSIGNED, primaryKey: true, autoIncrement: true },
     SellerID: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false },
     AmazonSellerID: { type: DataTypes.STRING(100), allowNull: false },
@@ -26,10 +29,23 @@ let BaseModel = sequelize.define(table, {
 });
 
 function getModel() {
-    const tenantSequelize = getTenantSequelizeForCurrentDb();
-    return tenantSequelize.models[table] || tenantSequelize.define(table, BaseModel.getAttributes(), { tableName: table, timestamps: false, freezeTableName: true });
+    if (!cachedModel) {
+        const sequelize = getCurrentSequelize();
+        cachedModel = sequelize.define(table, {
+            ID: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+            SellerID: DataTypes.STRING,
+            ASIN: DataTypes.STRING,
+            ItemName: DataTypes.STRING,
+            Brand: DataTypes.STRING,
+            dtCreatedOn: DataTypes.DATE,
+            dtUpdatedOn: DataTypes.DATE
+        }, {
+            tableName: table,
+            timestamps: false
+        });
+    }
+    return cachedModel;
 }
 
 module.exports = { getModel };
-
 

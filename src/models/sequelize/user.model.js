@@ -1,11 +1,11 @@
 const { DataTypes } = require('sequelize');
-const sequelize = require('../../config/sequelize.config');
+const { getCurrentSequelize } = require('../../db/tenant.db');
 const { TBL_USERS } = require('../../config/env.config');
 const { makeReadOnly } = require('./utils');
 
 const table = TBL_USERS; // 'users'
 
-const User = sequelize.define(table, {
+const User = getCurrentSequelize().define(table, {
     ID: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
     AgencyName: { type: DataTypes.STRING(255), allowNull: false },
     FirstName: { type: DataTypes.STRING(255), allowNull: false },
@@ -56,7 +56,7 @@ const User = sequelize.define(table, {
 async function getAllAgencyUserList() {
     try {
         const { QueryTypes } = require('sequelize');
-        const sequelize = require('../../config/sequelize.config');
+        const sequelize = getCurrentSequelize();
         
         // First check if any agency user has active cron priority flag
         const hasActiveCronPriorityFlag = await checkCronPriorityFlagActiveOrNotForAnyAgencyUser();
@@ -124,7 +124,7 @@ async function getAllAgencyUserList() {
 async function checkCronPriorityFlagActiveOrNotForAnyAgencyUser() {
     try {
         const { QueryTypes } = require('sequelize');
-        const sequelize = require('../../config/sequelize.config');
+        const sequelize = getCurrentSequelize();
         
         const query = `
             SELECT user.ID

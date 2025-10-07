@@ -4,7 +4,7 @@ const sqpCronApiController = require('../controllers/sqp.cron.api.controller');
 const AuthMiddleware = require('../middleware/auth.middleware');
 
 // Apply shared middleware to all routes
-router.use(AuthMiddleware.requestLogger);
+// router.use(AuthMiddleware.requestLogger);
 router.use(AuthMiddleware.securityHeaders);
 router.use(AuthMiddleware.sanitizeInput);
 

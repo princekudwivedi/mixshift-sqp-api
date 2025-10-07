@@ -5,6 +5,7 @@ const compression = require('compression');
 const logger = require('./utils/logger.utils');
 const apiRoutes = require('./routes/api.routes');
 const { AsyncErrorHandler } = require('./middleware/response.handlers');
+const { addConnectionStats, getHealthCheckData } = require('./middleware/connection.monitor');
 
 const app = express();
 
@@ -25,8 +26,18 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // Trust proxy for accurate IP addresses
 app.set('trust proxy', 1);
 
+// Add connection monitoring middleware
+app.use(addConnectionStats);
+
 app.get('/', (req, res) => {
     res.status(200).json({ status: 'ok', time: new Date().toISOString() });
+});
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+    const healthData = getHealthCheckData();
+    const statusCode = healthData.database.connected ? 200 : 503;
+    res.status(statusCode).json(healthData);
 });
 
 app.use('/api/v1', apiRoutes);

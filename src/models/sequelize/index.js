@@ -1,4 +1,4 @@
-const sequelize = require('../../config/sequelize.config');
+const { getCurrentSequelize } = require('../../db/tenant.db');
 
 // Writable models
 // Note: SqpCronDetails and SqpCronLogs are tenant-aware via getModel(); do not import here

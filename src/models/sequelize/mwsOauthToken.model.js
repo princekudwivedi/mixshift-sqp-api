@@ -1,11 +1,11 @@
 const { DataTypes } = require('sequelize');
-const sequelize = require('../../config/sequelize.config');
+const { getCurrentSequelize } = require('../../db/tenant.db');
 const { TBL_MWS_OAUTH_TOKEN } = require('../../config/env.config');
 const { makeReadOnly } = require('./utils');
 
 const table = TBL_MWS_OAUTH_TOKEN;
 
-const MwsOauthToken = sequelize.define(table, {
+const MwsOauthToken = getCurrentSequelize().define(table, {
     id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
     AmazonSellerID: { type: DataTypes.STRING(250), allowNull: false },
     auth_token: { type: DataTypes.TEXT, allowNull: false },

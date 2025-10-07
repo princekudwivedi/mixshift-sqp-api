@@ -1,11 +1,14 @@
 const { DataTypes } = require('sequelize');
-const sequelize = require('../../config/sequelize.config');
-const { getTenantSequelizeForCurrentDb } = require('../../db/tenant.db');
+const { getCurrentSequelize } = require('../../db/tenant.db');
+
 const { TBL_SQP_CRON_LOGS } = require('../../config/env.config');
 
 const table = TBL_SQP_CRON_LOGS;
 
-let BaseModel = sequelize.define(table, {
+// Cache for the model to prevent recreating it
+let cachedModel = null;
+
+let BaseModel = getCurrentSequelize().define(table, {
     ID: { type: DataTypes.BIGINT, primaryKey: true, autoIncrement: true },
     CronJobID: { type: DataTypes.BIGINT },
     ReportType: { type: DataTypes.STRING(32) },
@@ -24,10 +27,20 @@ let BaseModel = sequelize.define(table, {
 });
 
 function getModel() {
-    const tenantSequelize = getTenantSequelizeForCurrentDb();
-    return tenantSequelize.models[table] || tenantSequelize.define(table, BaseModel.getAttributes(), { tableName: table, timestamps: false, freezeTableName: true });
+    if (!cachedModel) {
+        const sequelize = getCurrentSequelize();
+        cachedModel = sequelize.define(TBL_SQP_CRON_LOGS, {
+            ID: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+            // Add other fields as needed - this is a basic structure
+            dtCreatedOn: DataTypes.DATE,
+            dtUpdatedOn: DataTypes.DATE
+        }, {
+            tableName: TBL_SQP_CRON_LOGS,
+            timestamps: false
+        });
+    }
+    return cachedModel;
 }
 
 module.exports = { getModel };
-
 

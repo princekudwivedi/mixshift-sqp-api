@@ -1,11 +1,11 @@
 const { DataTypes } = require('sequelize');
-const sequelize = require('../../config/sequelize.config');
+const { getCurrentSequelize } = require('../../db/tenant.db');
 const { TBL_TIMEZONES } = require('../../config/env.config');
 const { makeReadOnly } = require('./utils');
 
 const table = TBL_TIMEZONES; // 'timezones'
 
-const Timezones = sequelize.define(table, {
+const Timezones = getCurrentSequelize().define(table, {
     ID: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
     CountryRegion: { type: DataTypes.STRING(255), allowNull: false },
     Timezone: { type: DataTypes.STRING(255), allowNull: false },

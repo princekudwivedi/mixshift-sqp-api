@@ -1,10 +1,12 @@
 const { DataTypes } = require('sequelize');
-const sequelize = require('../../config/sequelize.config');
-const { getTenantSequelizeForCurrentDb } = require('../../db/tenant.db');
+const { getCurrentSequelize } = require('../../db/tenant.db');
 
 const table = 'sqp_weekly';
 
-let BaseModel = sequelize.define(table, {
+// Cache for the model to prevent recreating it
+let cachedModel = null;
+
+let BaseModel = getCurrentSequelize().define(table, {
     ID: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
     CronJobID: { type: DataTypes.BIGINT },
     ReportDate: { type: DataTypes.DATEONLY },
@@ -53,10 +55,20 @@ let BaseModel = sequelize.define(table, {
 });
 
 function getModel() {
-    const tenantSequelize = getTenantSequelizeForCurrentDb();
-    return tenantSequelize.models[table] || tenantSequelize.define(table, BaseModel.getAttributes(), { tableName: table, timestamps: false, freezeTableName: true });
+    if (!cachedModel) {
+        const sequelize = getCurrentSequelize();
+        cachedModel = sequelize.define('sqp_weekly', {
+            ID: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+            // Add other fields as needed - this is a basic structure
+            dtCreatedOn: DataTypes.DATE,
+            dtUpdatedOn: DataTypes.DATE
+        }, {
+            tableName: 'sqp_weekly',
+            timestamps: false
+        });
+    }
+    return cachedModel;
 }
 
 module.exports = { getModel };
-
 

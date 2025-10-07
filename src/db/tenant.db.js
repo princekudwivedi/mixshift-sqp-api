@@ -1,64 +1,85 @@
-const { query, setDatabase } = require('./mysql.db');
 const logger = require('../utils/logger.utils');
 const env = require('../config/env.config');
-const { getTenantSequelize } = require('../config/sequelize.factory');
-const UserDbMap = require('../models/sequelize/userDbMap.model');
-const UserDbs = require('../models/sequelize/userDbs.model');
-const Timezones = require('../models/sequelize/timezones.model');
-const { TBL_USERS } = require('../config/env.config');
+const { getRootSequelize, getTenantSequelize } = require('../config/sequelize.factory');
+const { Op } = require('sequelize');
 
 /**
  * - userId = 0 → select primary (root) DB
- * - userId > 0 → query master for user DB name, switch pool to that DB, set timezone
+ * - userId > 0 → query master for user DB name, switch to that DB
  */
 let currentDbName = env.DB_NAME;
+let currentSequelize = null;
 
 async function loadDatabase(userId = 0) {
     if (!userId || Number(userId) === 0) {
         // Connect to root database for userId = 0
         logger.info('Connecting to root database (userId = 0)');
         currentDbName = env.DB_NAME;
-        setDatabase(env.DB_NAME); // Root database
-        return;
+        currentSequelize = getRootSequelize();
+        return currentSequelize;
     }
 
     // For userId > 0: First connect to root database to query user mapping
     logger.info('Connecting to root database to query user mapping');
-    currentDbName = env.DB_NAME;
-    setDatabase(env.DB_NAME); // Root database where users table exists
+    const rootSequelize = getRootSequelize();
+    
+    try {
+        // Use Sequelize to query user mapping
+        const userMapping = await rootSequelize.query(`
+            SELECT DB.DB_Name AS dbName, tz.Timezone AS tz
+            FROM users AS user
+            LEFT JOIN user_database_mapping AS map ON map.UserID = user.ID
+            LEFT JOIN user_databases AS DB ON map.MappedDB_ID = DB.DB_ID
+            LEFT JOIN timezones AS tz ON tz.ID = user.iTimezoneID
+            WHERE user.isDeleted = '0' AND DB.DB_AppType = '1' AND user.ID = :userId
+            LIMIT 1
+        `, {
+            replacements: { userId: Number(userId) },
+            type: rootSequelize.QueryTypes.SELECT
+        });
 
-    const rows = await query(
-        `SELECT DB.DB_Name AS dbName, tz.Timezone AS tz
-         FROM ${TBL_USERS} AS user
-         LEFT JOIN ${UserDbMap.getTableName()} AS map ON map.UserID = user.ID
-         LEFT JOIN ${UserDbs.getTableName()} AS DB ON map.MappedDB_ID = DB.DB_ID
-         LEFT JOIN ${Timezones.getTableName()} AS tz ON tz.ID = user.iTimezoneID
-         WHERE user.isDeleted = '0' AND DB.DB_AppType = '1' AND user.ID = ?
-         LIMIT 1`,
-        [Number(userId)]
-    );
-    if (!rows || rows.length === 0 || !rows[0].dbName) {
-        logger.warn({ userId }, 'User DB mapping not found; staying on root');
-        return;
-    }
-    
-    // Switch to the user's tenant database
-    logger.info({ tenantDb: rows[0].dbName }, 'Switching to tenant database');
-    currentDbName = rows[0].dbName;
-    setDatabase(rows[0].dbName);
-    
-    if (rows[0].tz) {
-        try { process.env.TZ = rows[0].tz; } catch (_) {}
-        logger.info({ tz: rows[0].tz }, 'Timezone set from tenant');
+        if (!userMapping || userMapping.length === 0 || !userMapping[0].dbName) {
+            logger.warn({ userId }, 'User DB mapping not found; staying on root');
+            currentDbName = env.DB_NAME;
+            currentSequelize = rootSequelize;
+            return currentSequelize;
+        }
+        
+        // Switch to the user's tenant database
+        logger.info({ tenantDb: userMapping[0].dbName }, 'Switching to tenant database');
+        currentDbName = userMapping[0].dbName;
+        currentSequelize = getTenantSequelize({ 
+            db: userMapping[0].dbName, 
+            user: env.DB_USER, 
+            pass: env.DB_PASS 
+        });
+        return currentSequelize;
+    } catch (error) {
+        logger.error({ error: error.message, userId }, 'Error loading tenant database');
+        currentDbName = env.DB_NAME;
+        currentSequelize = rootSequelize;
+        return currentSequelize;
     }
 }
 
-function getCurrentDbName() { return currentDbName; }
+function getCurrentDbName() { 
+    return currentDbName; 
+}
+
+function getCurrentSequelize() { 
+    return currentSequelize || getRootSequelize(); 
+}
 
 function getTenantSequelizeForCurrentDb() {
     return getTenantSequelize({ db: currentDbName, user: env.DB_USER, pass: env.DB_PASS });
 }
 
-module.exports = { loadDatabase, getCurrentDbName, getTenantSequelizeForCurrentDb };
+module.exports = { 
+    loadDatabase, 
+    getCurrentDbName, 
+    getCurrentSequelize,
+    getTenantSequelizeForCurrentDb 
+};
+
 
 

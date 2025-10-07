@@ -16,23 +16,35 @@ module.exports = {
 
 		], 
 		exec_mode: "cluster",
-		instances: 2,
+		instances: 1, // Reduced from 2 to 1 to prevent connection overload
 		env_file: ".env",
         env: {
           "PORT": 4212,
-          "NODE_ENV": "local"
+          "NODE_ENV": "local",
+          "DB_CONNECTION_LIMIT": 5,
+          "DB_ACQUIRE_TIMEOUT": 60000,
+          "DB_IDLE_TIMEOUT": 300000
         },
         env_development: {
           "PORT": 4212,
           "NODE_ENV": "development",
+          "DB_CONNECTION_LIMIT": 5,
+          "DB_ACQUIRE_TIMEOUT": 60000,
+          "DB_IDLE_TIMEOUT": 300000
         },
         env_staging: {
           "PORT": 4212,
           "NODE_ENV": "staging",
+          "DB_CONNECTION_LIMIT": 8,
+          "DB_ACQUIRE_TIMEOUT": 60000,
+          "DB_IDLE_TIMEOUT": 300000
         },
         env_production: {
           "PORT": 4212,
           "NODE_ENV": "production",
+          "DB_CONNECTION_LIMIT": 10,
+          "DB_ACQUIRE_TIMEOUT": 60000,
+          "DB_IDLE_TIMEOUT": 300000
         }
       }
   ]

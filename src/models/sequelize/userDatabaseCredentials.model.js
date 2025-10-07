@@ -1,11 +1,11 @@
 const { DataTypes } = require('sequelize');
-const sequelize = require('../../config/sequelize.config');
+const { getCurrentSequelize } = require('../../db/tenant.db');
 const { TBL_USER_DATABASE_CREDENTIALS } = require('../../config/env.config');
 const { makeReadOnly } = require('./utils');
 
 const table = TBL_USER_DATABASE_CREDENTIALS;
 
-const UserDatabaseCredentials = sequelize.define(table, {
+const UserDatabaseCredentials = getCurrentSequelize().define(table, {
     ID: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
     AgencyUserID: { type: DataTypes.INTEGER, allowNull: false },
     DatabaseID: { type: DataTypes.INTEGER, allowNull: false },

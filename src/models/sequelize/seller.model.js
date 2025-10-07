@@ -1,6 +1,6 @@
 const { DataTypes, Op } = require('sequelize');
-const sequelize = require('../../config/sequelize.config');
-const { getTenantSequelizeForCurrentDb } = require('../../db/tenant.db');
+const { getCurrentSequelize } = require('../../db/tenant.db');
+
 const { TBL_SELLER } = require('../../config/env.config');
 const { makeReadOnly } = require('./utils');
 const SellerMarketplacesMapping = require('./sellerMarketplacesMapping.model');
@@ -11,7 +11,7 @@ const MwsAccessKeys = require('./mwsAccessKeys.model');
 const table = TBL_SELLER;
 
 // Define model on the base sequelize (structure only); we'll rebind per-tenant for queries
-let Seller = sequelize.define(table, {
+let Seller = getCurrentSequelize().define(table, {
     ID: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
     AgencyName: { type: DataTypes.STRING(255) },
     MerchantAlias: { type: DataTypes.STRING(100) },
@@ -113,12 +113,10 @@ let Seller = sequelize.define(table, {
 
 module.exports = makeReadOnly(Seller);
 
-
-
 // Attach read-only helper methods for cron needs
 function getBoundModel() {
     // Create/return a model bound to the current tenant sequelize
-    const tenantSequelize = getTenantSequelizeForCurrentDb();
+    const tenantSequelize = getCurrentSequelize();
     return tenantSequelize.models[table] || tenantSequelize.define(table, Seller.getAttributes(), { tableName: table, timestamps: false, freezeTableName: true });
 }
 
