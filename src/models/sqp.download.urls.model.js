@@ -91,6 +91,8 @@ async function updateDownloadUrlStatusByCriteria(cronJobID, reportType, status, 
             ReportType: reportType,
             Status: status || 'PENDING',
             ProcessStatus: 'PENDING',
+            DownloadAttempts: 0,
+            MaxDownloadAttempts: 3,
             ErrorMessage: errorMessage || null,
             FilePath: filePath || null,
             FileSize: fileSize || null,
@@ -135,6 +137,7 @@ async function storeDownloadUrl(row) {
 		} catch (err) {
 			logger.error({
 				error: err.message,
+				stack: err.stack,
 				cronJobID: row.CronJobID,
 				reportType: row.ReportType,
 				payload

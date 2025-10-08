@@ -14,20 +14,20 @@ let BaseModel = getCurrentSequelize().define(table, {
     CronJobID: { type: DataTypes.BIGINT },
     ReportType: { type: DataTypes.STRING(32) },
     Status: { type: DataTypes.STRING(32) },
-    DownloadAttempts: { type: DataTypes.INTEGER },
-    MaxDownloadAttempts: { type: DataTypes.INTEGER },
+    DownloadAttempts: { type: DataTypes.INTEGER, defaultValue: 0 },
+    MaxDownloadAttempts: { type: DataTypes.INTEGER, defaultValue: 3 },
     ErrorMessage: { type: DataTypes.TEXT },
     FilePath: { type: DataTypes.STRING(500) },
-    FileSize: { type: DataTypes.BIGINT },
+    FileSize: { type: DataTypes.BIGINT, defaultValue: 0 },
     DownloadStartTime: { type: DataTypes.DATE },
     DownloadEndTime: { type: DataTypes.DATE },
     ProcessStatus: { type: DataTypes.STRING(32) },
-    ProcessAttempts: { type: DataTypes.INTEGER },
-    MaxProcessAttempts: { type: DataTypes.INTEGER },
-    SuccessCount: { type: DataTypes.INTEGER },
-    FailCount: { type: DataTypes.INTEGER },
-    TotalRecords: { type: DataTypes.INTEGER },
-    FullyImported: { type: DataTypes.TINYINT },
+    ProcessAttempts: { type: DataTypes.INTEGER, defaultValue: 0 },
+    MaxProcessAttempts: { type: DataTypes.INTEGER, defaultValue: 3 },
+    SuccessCount: { type: DataTypes.INTEGER, defaultValue: 0 },
+    FailCount: { type: DataTypes.INTEGER, defaultValue: 0 },
+    TotalRecords: { type: DataTypes.INTEGER, defaultValue: 0 },
+    FullyImported: { type: DataTypes.TINYINT, defaultValue: 0 },
     LastProcessAt: { type: DataTypes.DATE },
     LastProcessError: { type: DataTypes.TEXT },
     dtCreatedOn: { type: DataTypes.DATE },
@@ -50,14 +50,33 @@ function getModel() {
     if (!cachedModel) {
         const sequelize = getCurrentSequelize();
         cachedModel = sequelize.define(TBL_SQP_DOWNLOAD_URLS, {
-            ID: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
-            // Add other fields as needed - this is a basic structure
-            dtCreatedOn: DataTypes.DATE,
-            dtUpdatedOn: DataTypes.DATE
+            ID: { type: DataTypes.BIGINT, primaryKey: true, autoIncrement: true },
+            CronJobID: { type: DataTypes.BIGINT },            
+            ReportType: { type: DataTypes.STRING(32) },
+            Status: { type: DataTypes.STRING(32) },
+            DownloadAttempts: { type: DataTypes.INTEGER, defaultValue: 0 },
+            MaxDownloadAttempts: { type: DataTypes.INTEGER, defaultValue: 3 },
+            ErrorMessage: { type: DataTypes.TEXT },
+            FilePath: { type: DataTypes.STRING(500) },
+            FileSize: { type: DataTypes.BIGINT, defaultValue: 0 },
+            DownloadStartTime: { type: DataTypes.DATE },
+            DownloadEndTime: { type: DataTypes.DATE },
+            ProcessStatus: { type: DataTypes.STRING(32) },
+            ProcessAttempts: { type: DataTypes.INTEGER, defaultValue: 0 },
+            MaxProcessAttempts: { type: DataTypes.INTEGER, defaultValue: 3 },
+            SuccessCount: { type: DataTypes.INTEGER, defaultValue: 0 },
+            FailCount: { type: DataTypes.INTEGER, defaultValue: 0 },
+            TotalRecords: { type: DataTypes.INTEGER, defaultValue: 0 },
+            FullyImported: { type: DataTypes.TINYINT, defaultValue: 0 },
+            LastProcessAt: { type: DataTypes.DATE },
+            LastProcessError: { type: DataTypes.TEXT },
+            dtCreatedOn: { type: DataTypes.DATE },
+            dtUpdatedOn: { type: DataTypes.DATE }
         }, {
             tableName: TBL_SQP_DOWNLOAD_URLS,
             timestamps: false
         });
+        cachedUserId = currentUserId;
     }
     return cachedModel;
 }
