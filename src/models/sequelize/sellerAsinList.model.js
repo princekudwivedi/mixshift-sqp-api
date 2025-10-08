@@ -16,12 +16,37 @@ let BaseModel = getCurrentSequelize().define(table, {
     AmazonSellerID: { type: DataTypes.STRING(100), allowNull: false },
     ASIN: { type: DataTypes.STRING(20), allowNull: false },
     IsActive: { type: DataTypes.TINYINT, allowNull: true, defaultValue: 0 },
-    LastSQPDataPullStatus: { type: DataTypes.ENUM('Pending','InProgress','Completed','Failed'), allowNull: true },
-    LastSQPDataPullStartTime: { type: DataTypes.DATE, allowNull: true },
-    LastSQPDataPullEndTime: { type: DataTypes.DATE, allowNull: true },
+    
     LatestRecordDateRangeWeekly: { type: DataTypes.STRING(255), allowNull: true },
     LatestRecordDateRangeMonthly: { type: DataTypes.STRING(255), allowNull: true },
     LatestRecordDateRangeQuarterly: { type: DataTypes.STRING(255), allowNull: true },
+
+    // Weekly fields
+    WeeklyLastSQPDataPullStatus: { type: DataTypes.TINYINT, allowNull: true },
+    WeeklyLastSQPDataPullStartTime: { type: DataTypes.DATE, allowNull: true },
+    WeeklyLastSQPDataPullEndTime: { type: DataTypes.DATE, allowNull: true },
+    
+    // Monthly fields
+    MonthlyLastSQPDataPullStatus: { type: DataTypes.TINYINT, allowNull: true },
+    MonthlyLastSQPDataPullStartTime: { type: DataTypes.DATE, allowNull: true },
+    MonthlyLastSQPDataPullEndTime: { type: DataTypes.DATE, allowNull: true },
+    
+    // Quarterly fields
+    QuarterlyLastSQPDataPullStatus: { type: DataTypes.TINYINT, allowNull: true },
+    QuarterlyLastSQPDataPullStartTime: { type: DataTypes.DATE, allowNull: true },
+    QuarterlyLastSQPDataPullEndTime: { type: DataTypes.DATE, allowNull: true },    
+    
+    LastSQPDataPullStatus: { type: DataTypes.TINYINT,  allowNull: true, comment: `1 - InProgress,
+        2 - Completed,
+        4 - Week Completed,
+        5 - Month Completed,
+        6 - Quarter Completed,
+        7 - Week Completed & Month Completed,
+        8 - Week Completed & Quarter Completed,
+        9 - Month Completed & Quarter Completed` },    
+    LastSQPDataPullStartTime: { type: DataTypes.DATE, allowNull: true },
+    LastSQPDataPullEndTime: { type: DataTypes.DATE, allowNull: true },
+
     dtCreatedOn: { type: DataTypes.DATE, allowNull: false },
     dtUpdatedOn: { type: DataTypes.DATE, allowNull: true }
 }, {
@@ -47,12 +72,37 @@ function getModel() {
             AmazonSellerID: { type: DataTypes.STRING(100), allowNull: false },
             ASIN: { type: DataTypes.STRING(20), allowNull: false },
             IsActive: { type: DataTypes.TINYINT, allowNull: true, defaultValue: 0 },
-            LastSQPDataPullStatus: { type: DataTypes.ENUM('Pending','InProgress','Completed','Failed'), allowNull: true },
-            LastSQPDataPullStartTime: { type: DataTypes.DATE, allowNull: true },
-            LastSQPDataPullEndTime: { type: DataTypes.DATE, allowNull: true },
+            
             LatestRecordDateRangeWeekly: { type: DataTypes.STRING(255), allowNull: true },
             LatestRecordDateRangeMonthly: { type: DataTypes.STRING(255), allowNull: true },
             LatestRecordDateRangeQuarterly: { type: DataTypes.STRING(255), allowNull: true },
+
+            // Weekly fields
+            WeeklyLastSQPDataPullStatus: { type: DataTypes.TINYINT, allowNull: true },
+            WeeklyLastSQPDataPullStartTime: { type: DataTypes.DATE, allowNull: true },
+            WeeklyLastSQPDataPullEndTime: { type: DataTypes.DATE, allowNull: true },
+            
+            // Monthly fields
+            MonthlyLastSQPDataPullStatus: { type: DataTypes.TINYINT, allowNull: true },
+            MonthlyLastSQPDataPullStartTime: { type: DataTypes.DATE, allowNull: true },
+            MonthlyLastSQPDataPullEndTime: { type: DataTypes.DATE, allowNull: true },
+            
+            // Quarterly fields
+            QuarterlyLastSQPDataPullStatus: { type: DataTypes.TINYINT, allowNull: true },
+            QuarterlyLastSQPDataPullStartTime: { type: DataTypes.DATE, allowNull: true },
+            QuarterlyLastSQPDataPullEndTime: { type: DataTypes.DATE, allowNull: true },    
+            
+            LastSQPDataPullStatus: { type: DataTypes.TINYINT,  allowNull: true, comment: `1 - InProgress,
+                2 - Completed,
+                4 - Week Completed,
+                5 - Month Completed,
+                6 - Quarter Completed,
+                7 - Week Completed & Month Completed,
+                8 - Week Completed & Quarter Completed,
+                9 - Month Completed & Quarter Completed` },    
+            LastSQPDataPullStartTime: { type: DataTypes.DATE, allowNull: true },
+            LastSQPDataPullEndTime: { type: DataTypes.DATE, allowNull: true },
+            
             dtCreatedOn: { type: DataTypes.DATE, allowNull: false },
             dtUpdatedOn: { type: DataTypes.DATE, allowNull: true }
         }, {

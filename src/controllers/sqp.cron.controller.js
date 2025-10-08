@@ -12,24 +12,31 @@ const env = require('../config/env.config');
 /**
  * Send failure notification when max retries are reached
  */
-async function sendFailureNotification(cronDetailID, amazonSellerID, reportType, errorMessage, retryCount, reportId = null) {
+async function sendFailureNotification(cronDetailID, amazonSellerID, reportType, errorMessage, retryCount, reportId = null, isFatalError = false) {
 	try {
+		// Determine notification type and message
+		const notificationType = isFatalError ? 'FATAL ERROR' : 'MAX RETRIES REACHED';
+		const notificationReason = isFatalError 
+			? 'Amazon returned FATAL/CANCELLED status - no retries attempted'
+			: `Max retries (${retryCount}) exhausted`;
+		
 		logger.error({
 			cronDetailID,
 			amazonSellerID,
 			reportType,
 			errorMessage,
-			retryCount
-		}, 'SENDING FAILURE NOTIFICATION - Max retries reached');
+			retryCount,
+			isFatalError,
+			notificationType
+		}, `SENDING FAILURE NOTIFICATION - ${notificationType}`);
 		
 		// Log the notification
         await model.logCronActivity({
 			cronJobID: cronDetailID,
-			amazonSellerID: amazonSellerID,
 			reportType: reportType,
 			action: 'Failure Notification',
 			status: 2,
-			message: `NOTIFICATION: Report failed after ${retryCount} attempts. Error: ${errorMessage}`,
+			message: `NOTIFICATION: Report failed after ${retryCount} attempts. ${notificationReason}. Error: ${errorMessage}`,
             reportID: reportId,
 			retryCount: retryCount,
 			executionTime: 0
@@ -40,16 +47,22 @@ async function sendFailureNotification(cronDetailID, amazonSellerID, reportType,
         const cc = NotificationHelpers.parseList(process.env.NOTIFY_CC || require('../config/env.config').env.NOTIFY_CC);
         const bcc = NotificationHelpers.parseList(process.env.NOTIFY_BCC || require('../config/env.config').env.NOTIFY_BCC);
         if ((to.length + cc.length + bcc.length) > 0) {
-            const subject = `SQP Cron Failed after ${retryCount} attempts [${reportType}]`;
+            // Different subject lines for FATAL vs retry exhaustion
+            const subject = isFatalError 
+                ? `SQP Cron FATAL Error [${reportType}] - No retries`
+                : `SQP Cron Failed after ${retryCount} attempts [${reportType}]`;
+            
             const html = `
-                <h3>SQP Cron Failure</h3>
+                <h3>SQP Cron Failure${isFatalError ? ' - FATAL Error' : ''}</h3>
                 <p><strong>Cron Detail ID:</strong> ${cronDetailID}</p>
                 <p><strong>Seller:</strong> ${amazonSellerID}</p>
                 <p><strong>Report Type:</strong> ${reportType}</p>
-                <p><strong>Report ID:</strong> ${reportId || ''}</p>
+                <p><strong>Report ID:</strong> ${reportId || 'N/A'}</p>
                 <p><strong>Retry Count:</strong> ${retryCount}</p>
-                <p><strong>Last Error:</strong> ${errorMessage}</p>
-                <p>Time: ${new Date().toISOString()}</p>
+                <p><strong>Failure Type:</strong> ${isFatalError ? 'Amazon FATAL/CANCELLED (immediate)' : 'Max retry attempts exhausted'}</p>
+                <p><strong>Error:</strong> ${errorMessage}</p>
+                <p><strong>Time:</strong> ${new Date().toISOString()}</p>
+                ${isFatalError ? '<p><em>Note: This report returned a FATAL/CANCELLED status from Amazon and cannot be recovered. No retry attempts were made.</em></p>' : ''}
             `;
             await NotificationHelpers.sendEmail({ subject, html, to, cc, bcc });
         } else {
@@ -58,7 +71,8 @@ async function sendFailureNotification(cronDetailID, amazonSellerID, reportType,
 		
 	} catch (notificationError) {
 		logger.error({ 
-			notificationError: notificationError.message,
+			notificationError: notificationError ? (notificationError.message || String(notificationError)) : 'Unknown error',
+			errorStack: notificationError?.stack,
 			cronDetailID,
 			amazonSellerID,
 			reportType
@@ -75,16 +89,15 @@ async function requestForSeller(seller, authOverrides = {}, spReportType = confi
 			logger.warn({ sellerId: seller.idSellerAccount }, 'No eligible ASINs for seller (pending or ${env.MAX_DAYS_AGO}+ day old completed)');
 			return [];
 		}
-		// Mark ASINs as Pending and set start time
-		const startTime = new Date();
-		await model.ASINsBySellerUpdated(seller.AmazonSellerID, asins, 'Pending', startTime);		
+		// Prepare to mark ASINs as In Progress and set start time
+		const startTime = new Date();				
 		logger.info({ 
 			sellerId: seller.idSellerAccount,
 			amazonSellerID: seller.AmazonSellerID,
 			asinCount: asins.length, 
 			asins: asins.slice(0, 5),
 			startTime: startTime.toISOString()
-		}, 'Found ASINs for seller and marked as Pending');
+		}, 'Found ASINs for seller - will mark as InProgress per chunk');
 		
 		const chunks = model.splitASINsIntoChunks(asins, 200);
 		logger.info({ chunkCount: chunks.length }, 'Split ASINs into chunks');
@@ -100,14 +113,12 @@ async function requestForSeller(seller, authOverrides = {}, spReportType = confi
 
 			for (const type of env.TYPE_ARRAY) {
 				logger.info({ type }, 'Requesting report for type');
+				await model.ASINsBySellerUpdated(seller.AmazonSellerID, chunk.asins, 1, type, startTime); // 1 = InProgress
                 // ProcessRunningStatus = 1 (Request Report)
                 await model.setProcessRunningStatus(cronDetailID, type, 1);
                 await model.logCronActivity({ cronJobID: cronDetailID, reportType: type, action: 'Request Report', status: 1, message: 'Requesting report' });
                 await requestSingleReport(chunk, seller, cronDetailID, type, authOverrides, spReportType);
-			}
-
-			// Mark ASINs as InProgress
-			await model.ASINsBySellerUpdated(seller.AmazonSellerID, chunk.asins, 'InProgress');
+			}			
 			logger.info({ 
 				sellerId: seller.idSellerAccount,
 				amazonSellerID: seller.AmazonSellerID,
@@ -120,8 +131,8 @@ async function requestForSeller(seller, authOverrides = {}, spReportType = confi
 		return cronDetailIDs;
 	} catch (error) {
 		logger.error({ 
-			error: error.message, 
-			stack: error.stack,
+			error: error ? (error.message || String(error)) : 'Unknown error', 
+			stack: error?.stack,
 			seller: seller.idSellerAccount 
 		}, 'Error in requestForSeller');
 		throw error;
@@ -412,44 +423,21 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 				
 				// Wait before retrying
 				await DelayHelpers.wait(delaySeconds, 'Before retry IN_QUEUE or IN_PROGRESS');
-				
+
 				// Throw error to trigger retry mechanism
 				throw new Error(`Report still ${status.toLowerCase().replace('_',' ')} after ${delaySeconds}s wait - retrying`);
 				
             } else if (status === 'FATAL' || status === 'CANCELLED') {                
-                const latestReportId = await model.getLatestReportId(row.ID, reportType);
-                
-                // Set status to 3 (retry) if this is a retry operation, otherwise 2 (error)
-                const statusToSet = isRetry ? 3 : 2;
-                
-                await model.updateSQPReportStatus(row.ID, reportType, statusToSet, latestReportId, status, null, null, null, new Date());
-                
-                logger.error({ 
-                    cronDetailID: row.ID, 
-                    reportType, 
-                    status,
-                    isRetry,
-                    sqpDataPullStatus: statusToSet
-                }, `Report ${status} - SQPDataPullStatus set to ${statusToSet} (${isRetry ? 'Retry' : 'Error'})`);
-                
-                await model.logCronActivity({ 
-                    cronJobID: row.ID, 
-                    reportType, 
-                    action: 'Check Status', 
-                    status: 2, 
-                    message: `Report ${status} on attempt ${attempt}`, 
-                    reportID: latestReportId || reportId, 
-                    retryCount: currentRetry, 
-                    executionTime: (Date.now() - startTime) / 1000 
-                });
-                await sendFailureNotification(row.ID, row.AmazonSellerID, reportType, `Report ${status}`, 0, reportId);
-				
-				// Throw error to trigger retry mechanism, but this will be caught and handled
-				throw new Error(`Report ${status} - ${isRetry ? 'retry will continue' : 'permanent failure'}`);
-				
+				// Fatal or cancelled status - treat as error
+				const res = await handleFatalOrUnknownStatus(row, reportType, status);
+				return res;
 			} else {
-				// Unknown status - treat as error and retry
-				throw new Error(`Unknown report status: ${status}`);
+				// Unknown status - treat as error
+				if(!status) {
+					status = 'UNKNOWN';
+				}
+				const res = await handleFatalOrUnknownStatus(row, reportType, status);
+				return res;
 			}
 		}
 	});
@@ -590,7 +578,7 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 						logger.info({ filePath, fileSize, attempt }, 'Report JSON saved to disk');
 					}
 				} catch (fileErr) {
-					logger.warn({ error: fileErr.message, attempt }, 'Failed to save JSON file');
+					logger.warn({ error: fileErr ? (fileErr.message || String(fileErr)) : 'Unknown error', attempt }, 'Failed to save JSON file');
 				}
 
 				// Update the existing record in sqp_download_urls with file metadata and set status to COMPLETED
@@ -622,7 +610,8 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 						}, 'Import process completed after download');
 					} catch (importError) {
 						logger.error({ 
-							error: importError.message, 
+							error: importError ? (importError.message || String(importError)) : 'Unknown error', 
+							stack: importError?.stack,
 							cronDetailID: row.ID, 
 							reportType 
 						}, 'Error during import process - file saved but import failed');
@@ -682,6 +671,87 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 	}
 	
 	return result;
+}
+
+async function handleFatalOrUnknownStatus(row, reportType, status) {	
+	const reportId = await model.getLatestReportId(row.ID, reportType);
+    const statusToSet = 3; // Failed status
+    const endDate = new Date();
+    
+    await model.updateSQPReportStatus(row.ID, reportType, statusToSet, reportId, status, null, null, null, endDate);
+    
+    logger.fatal({ 
+        cronDetailID: row.ID, 
+        reportType, 
+        status, 
+        sqpDataPullStatus: statusToSet 
+    }, `Report ${status} - Permanent failure`);
+    
+    await model.logCronActivity({
+        cronJobID: row.ID,
+        reportType,
+        action: 'Fatal Error',  // Changed from 'Check Status' to 'Fatal Error'
+        status: 2,              // Keep status 2 (error/failed)
+        message: `Report ${status} - Permanent failure`,
+        reportID: reportId,
+        retryCount: 0,
+        executionTime: 0
+    });    
+    
+    try {
+        // Parse ASINs from the row's ASIN_List
+        const asins = row.ASIN_List ? row.ASIN_List.split(/\s+/).filter(Boolean).map(a => a.trim()) : [];
+        
+        if (asins.length > 0 && row.AmazonSellerID) {
+            await model.ASINsBySellerUpdated(
+                row.AmazonSellerID,
+                asins,
+                3,           // Status 3 = Failed
+                reportType,  // WEEK/MONTH/QUARTER
+                null,        // startTime already set
+                endDate      // endTime when failed
+            );
+            
+            logger.info({
+                cronDetailID: row.ID,
+                reportType,
+                asinCount: asins.length,
+                status: 3
+            }, `Updated ${asins.length} ASINs to failed status (3) for ${reportType}`);
+        }
+    } catch (asinUpdateError) {
+        logger.error({
+            error: asinUpdateError.message,
+            cronDetailID: row.ID,
+            reportType
+        }, 'Failed to update ASIN statuses to failed');
+    }
+    
+    // FATAL/CANCELLED = Send notification immediately with 0 attempts
+    // This is different from regular failures which notify after 3 retry attempts
+    await sendFailureNotification(
+        row.ID, 
+        row.AmazonSellerID, 
+        reportType, 
+        `Amazon returned ${status} status - report cannot be recovered`, 
+        0,  // 0 attempts for FATAL - sent immediately
+        reportId,
+        true  // isFatalError flag
+    );
+    
+    logger.info({ 
+        cronDetailID: row.ID, 
+        reportType 
+    }, 'FATAL notification sent immediately (not after retry attempts)');
+    
+    // Return success (don't throw - notification already sent, status already set)
+    // Throwing here would trigger another notification
+    return { 
+        message: `Report ${status} - permanent failure handled, notification sent`,
+		skipped: true,
+        reportID: reportId,
+        data: { status, handled: true }
+    };
 }
 
 module.exports = {

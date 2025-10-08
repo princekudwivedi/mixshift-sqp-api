@@ -779,9 +779,9 @@ class SqpCronApiController {
     async findStuckRecords() {
         const SqpCronDetails = getSqpCronDetails();
         
-        // Calculate time (8.5 hours ago)
+        // Calculate time (1 hour ago)
         const cutoffTime = new Date();
-        cutoffTime.setHours(cutoffTime.getHours() - 8.5);
+        cutoffTime.setHours(cutoffTime.getHours() - 1);
         
         logger.info({ cutoffTime: cutoffTime.toISOString() }, 'Scanning for records stuck since cutoff time');
         
@@ -791,14 +791,14 @@ class SqpCronApiController {
                 [Op.or]: [                    
                     {
                         [Op.and]: [
-                            { WeeklyProcessRunningStatus: { [Op.in]: [1, 2, 3] } },
-                            { WeeklySQPDataPullStatus: { [Op.in]: [0, 2 ] } },
+                            { WeeklyProcessRunningStatus: { [Op.in]: [1, 2, 3, 4] } },
+                            { WeeklySQPDataPullStatus: { [Op.in]: [0, 2] } },
                             { dtUpdatedOn: { [Op.lte]: cutoffTime } }
                         ]
                     },
                     {
                         [Op.and]: [
-                            { MonthlyProcessRunningStatus: { [Op.in]: [1, 2, 3] } },
+                            { MonthlyProcessRunningStatus: { [Op.in]: [1, 2, 3, 4] } },
                             { MonthlySQPDataPullStatus: { [Op.in]: [0, 2] } },
                             { dtUpdatedOn: { [Op.lte]: cutoffTime } }
                         ]
@@ -854,51 +854,7 @@ class SqpCronApiController {
             (processStatus === 1 || processStatus === 2 || processStatus === 3 || processStatus === 4) &&
             (dataPullStatus === 0 || dataPullStatus === 2)
         );
-    }
-    
-    async retryNotificationsForRecords(stuckRecords) {
-        const retryResults = [];
-        
-        for (const record of stuckRecords) {
-            try {
-                // Mark each stuck report type as having retry notifications
-                for (const reportType of record.stuckReportTypes) {
-                    retryResults.push({
-                        cronDetailID: record.ID,
-                        amazonSellerID: record.AmazonSellerID,
-                        reportType,
-                        stuckForHours: record.stuckForHours,
-                        retryAt: new Date().toISOString()
-                    });
-                }
-                
-                logger.warn({
-                    cronDetailID: record.ID,
-                    amazonSellerID: record.AmazonSellerID,
-                    stuckReportTypes: record.stuckReportTypes,
-                    stuckForHours: record.stuckForHours
-                }, 'Retry notifications for stuck record');
-                
-            } catch (error) {
-                logger.error({
-                    error: error.message,
-                    cronDetailID: record.ID,
-                    amazonSellerID: record.AmazonSellerID,
-                    stuckReportTypes: record.stuckReportTypes
-                }, 'Failed to retry notifications for record');
-                
-                retryResults.push({
-                    cronDetailID: record.ID,
-                    amazonSellerID: record.AmazonSellerID,
-                    reportType: 'ALL',
-                    error: error.message,
-                    retryAt: null
-                });
-            }
-        }
-        
-        return retryResults;
-    }
+    }   
 
     /**
      * Retry a stuck record's pipeline for a specific report type, then finalize status.

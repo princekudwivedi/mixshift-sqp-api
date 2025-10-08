@@ -104,8 +104,7 @@ async function createReport(sellerProfile, payload, authOverrides = {}) {
 				AmazonSellerID: sellerProfile.AmazonSellerID,
 				MerchantRegion: sellerProfile.MerchantRegion,
 				MerchantRegionType: typeof sellerProfile.MerchantRegion
-			},
-			authOverrides: { ...authOverrides, accessToken: authOverrides.accessToken ? '[REDACTED]' : 'none' }
+			}
 		}, 'createReport input');
 		
 		// Add merchant region to auth overrides

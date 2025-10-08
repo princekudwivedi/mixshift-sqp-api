@@ -35,6 +35,7 @@ function getModel() {
             QuarterlySQPDataPullStatus: { type: DataTypes.TINYINT },
             QuarterlySQPDataPullStartDate: { type: DataTypes.DATE },
             QuarterlySQPDataPullEndDate: { type: DataTypes.DATE },
+            dtCronStartDate: { type: DataTypes.DATE },
             dtCreatedOn: { type: DataTypes.DATE },
             dtUpdatedOn: { type: DataTypes.DATE }
         }, {

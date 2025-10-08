@@ -140,8 +140,8 @@ class RetryHelpers {
                 const isRetryable = this.isRetryableError(error);
                 
                 logger.error({
-                    error: error.message,
-                    stack: error.stack,
+                    error: error ? (error.message || String(error)) : 'Unknown error',
+                    stack: error?.stack,
                     cronDetailID,
                     reportType,
                     action,
@@ -156,13 +156,15 @@ class RetryHelpers {
                         cronDetailID,
                         reportType,
                         action,
-                        error: error.message
+                        error: error ? (error.message || String(error)) : 'Unknown error'
                     }, `Non-retryable error encountered, failing immediately`);
+                    
+                    const errorMsg = error ? (error.message || String(error)) : 'Unknown error';
                     
                     return {
                         success: false,
                         attempt,
-                        error: error.message,
+                        error: errorMsg,
                         finalFailure: true,
                         nonRetryable: true
                     };
@@ -190,7 +192,7 @@ class RetryHelpers {
                             reportType,
                             2, // error
                             existingReportId,
-                            error.message,
+                            error ? (error.message || String(error)) : 'Unknown error',
                             null, // reportDocumentId unchanged
                             null, // isCompleted unchanged
                             null, // startDate unchanged
@@ -201,12 +203,14 @@ class RetryHelpers {
                     }
 
                     // Also log the failure row
+                    const errorMsg = error ? (error.message || String(error)) : 'Unknown error';
+                    
                     await model.logCronActivity({
                         cronJobID: cronDetailID,
                         reportType: reportType,
                         action: action,
                         status: 2,
-                        message: `${action} failed after ${maxRetries} attempts: ${error.message}`,
+                        message: `${action} failed after ${maxRetries} attempts: ${errorMsg}`,
                         reportID: (context && (context.reportId || context.reportID)) || null,
                         retryCount: newRetryCount,
                         executionTime: 0
@@ -224,14 +228,14 @@ class RetryHelpers {
                             contextReportId: context?.reportId,
                             contextReportID: context?.reportID
                         }, 'Sending failure notification with reportId');
-                        await sendFailureNotification(cronDetailID, amazonSellerID, reportType, error.message, newRetryCount, reportId);
+                        await sendFailureNotification(cronDetailID, amazonSellerID, reportType, errorMsg, newRetryCount, reportId);
                     }
 
                     return {
                         success: false,
                         attempt,
                         retryCount: newRetryCount,
-                        error: error.message,
+                        error: errorMsg,
                         finalFailure: true
                     };
                 } else {
@@ -250,7 +254,7 @@ class RetryHelpers {
                         reportType: reportType,
                         action: action,
                         status: 3, // Will retry
-                        message: `${action} attempt ${attempt} failed, will retry (${attempt + 1}/${maxRetries}): ${error.message}`,
+                        message: `${action} attempt ${attempt} failed, will retry (${attempt + 1}/${maxRetries}): ${error ? (error.message || String(error)) : 'Unknown error'}`,
                         reportID: (context && (context.reportId || context.reportID)) || null,
                         retryCount: newRetryCount,
                         executionTime: 0

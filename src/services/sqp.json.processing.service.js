@@ -14,6 +14,48 @@ const { getModel: getSqpDownloadUrls } = require('../models/sequelize/sqpDownloa
 const dates = require('../utils/dates.utils');
 const { DateHelpers } = require('../helpers/sqp.helpers');
 
+const STATUS_MAPPING = {
+    1: 'InProgress',
+    2: 'Completed', // All completed
+    4: 'Week Completed',
+    5: 'Month Completed',
+    6: 'Quarter Completed',
+    7: 'Week Completed & Month Completed',
+    8: 'Week Completed & Quarter Completed',
+    9: 'Month Completed & Quarter Completed'
+};
+
+/**
+ * Compute numeric status based on week, month, quarter completion.
+ * Input values: 1 = completed, 0 = pending, 2/3 = failed
+ * Returns: { code, text }
+ */
+function getNumericStatus(weeklyStatus, monthlyStatus, quarterlyStatus) {
+    const completedParts = [];
+
+    if (weeklyStatus === 1) completedParts.push('Week');
+    if (monthlyStatus === 1) completedParts.push('Month');
+    if (quarterlyStatus === 1) completedParts.push('Quarter');
+
+    let code;
+
+    if (completedParts.length === 3) code = 2; // All completed
+    else if (completedParts.length === 2) {
+        if (completedParts.includes('Week') && completedParts.includes('Month')) code = 7;
+        else if (completedParts.includes('Week') && completedParts.includes('Quarter')) code = 8;
+        else if (completedParts.includes('Month') && completedParts.includes('Quarter')) code = 9;
+    } 
+    else if (completedParts.length === 1) {
+        if (completedParts[0] === 'Week') code = 4;
+        else if (completedParts[0] === 'Month') code = 5;
+        else if (completedParts[0] === 'Quarter') code = 6;
+    } 
+    else code = 1; // InProgress if nothing completed
+
+    return { code, text: STATUS_MAPPING[code] };
+}
+
+
 /**
  * Handle report completion - unified function for both data and no-data scenarios
  * This function handles the complete flow for report completion including date ranges
@@ -131,66 +173,56 @@ async function handleReportCompletion(cronJobID, reportType, amazonSellerID = nu
 					jsonAsins
 				});
 				
-				// Check if ALL report types are finished (completed or failed)
+				const statusForThisReport = hasData ? 2 : 2; // Both are "completed" (can differentiate if needed)
+				const endTime = new Date();
+
+				await model.ASINsBySellerUpdated(
+					finalAmazonSellerID, 
+					cronAsins, 
+					statusForThisReport, 
+					reportType,  
+					null,        // startTime - already set when cron started
+					endTime      // endTime - now when report finished
+				);
+
+				console.log(`✅ Updated ${reportType} status to ${statusForThisReport} for ${cronAsins.length} ASINs`, {
+					cronJobID,
+					amazonSellerID: finalAmazonSellerID,
+					reportType,
+					asinCount: cronAsins.length,
+					status: statusForThisReport,
+					hasData,
+					endTime: endTime.toISOString()
+				});
+
+				// OPTIONAL: Check if ALL report types are finished for logging/notification
 				const SqpCronDetails = getSqpCronDetails();
 				const cronDetail = await SqpCronDetails.findOne({ 
 					where: { ID: cronJobID }, 
 					attributes: ['WeeklySQPDataPullStatus', 'MonthlySQPDataPullStatus', 'QuarterlySQPDataPullStatus'] 
 				});
-				
+
 				if (cronDetail) {
 					const weeklyStatus = cronDetail.WeeklySQPDataPullStatus;
 					const monthlyStatus = cronDetail.MonthlySQPDataPullStatus;
 					const quarterlyStatus = cronDetail.QuarterlySQPDataPullStatus;
 					
-					// Check if all reports are finished (status 1 = Success, status 2 = Failed, status 3 = Retry Failed)
-					const allFinished = weeklyStatus !== null && weeklyStatus !== 0 && 
-										monthlyStatus !== null && monthlyStatus !== 0 && 
-										quarterlyStatus !== null && quarterlyStatus !== 0;
+					// Check if all are finished (1=completed, 3=failed, or null=not started)
+					const allFinished = [weeklyStatus, monthlyStatus, quarterlyStatus].every(
+						s => s === null || s === 1 || s === 3
+					);
 					
 					if (allFinished) {
-						// Determine overall status based on results
-						const hasAnySuccess = weeklyStatus === 1 || monthlyStatus === 1 || quarterlyStatus === 1;
-						const hasAnyFailure = weeklyStatus === 2 || monthlyStatus === 2 || quarterlyStatus === 2;
-						
-						let finalStatus;
-						if (hasAnySuccess && !hasAnyFailure) {
-							// All successful
-							finalStatus = 'Completed';
-						} else if (hasAnySuccess && hasAnyFailure) {
-							// Mixed results - some success, some failure
-							finalStatus = 'Completed';
-						} else {
-							// All failed
-							finalStatus = 'Failed';
-						}
-						
-						// Mark ASINs with final status
-						await model.ASINsBySellerUpdated(finalAmazonSellerID, cronAsins, finalStatus, null, new Date());
-						
-						console.log(`🎯 ALL REPORTS FINISHED: Marked ${cronAsins.length} ASINs as ${finalStatus} in seller_ASIN_list`, {
+						console.log(`🎯 ALL REPORTS FINISHED for CronJobID ${cronJobID}`, {
 							cronJobID,
 							amazonSellerID: finalAmazonSellerID,
 							asinCount: cronAsins.length,
 							weeklyStatus,
 							monthlyStatus,
-							quarterlyStatus,
-							finalStatus,
-							hasAnySuccess,
-							hasAnyFailure,
-							scenario: hasData ? 'with-data' : 'no-data'
-						});
-					} else {
-						console.log(`Not all reports finished yet - ASINs will be marked when all report types complete`, {
-							cronJobID,
-							reportType,
-							weeklyStatus,
-							monthlyStatus,
-							quarterlyStatus,
-							scenario: hasData ? 'with-data' : 'no-data'
+							quarterlyStatus
 						});
 					}
-				}
+				}			
 				
 				console.log(`Successfully updated seller_ASIN_list date ranges for ${reportType}`, {
 					cronJobID,
