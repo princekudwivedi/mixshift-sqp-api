@@ -33,14 +33,11 @@ function getModel() {
     if (!cachedModel) {
         const sequelize = getCurrentSequelize();
         cachedModel = sequelize.define(table, {
-            ID: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
-            SellerID: DataTypes.STRING,
-            AccessKeyId: DataTypes.STRING,
-            SecretAccessKey: DataTypes.STRING,
-            SessionToken: DataTypes.TEXT,
-            Expiration: DataTypes.DATE,
-            dtCreatedOn: DataTypes.DATE,
-            dtUpdatedOn: DataTypes.DATE
+            id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+            accessKeyId: { type: DataTypes.TEXT, allowNull: false },
+            secretAccessKey: { type: DataTypes.TEXT, allowNull: false },
+            SessionToken: { type: DataTypes.TEXT, allowNull: false },
+            expire_at: { type: DataTypes.DATE, allowNull: false }
         }, {
             tableName: table,
             timestamps: false
