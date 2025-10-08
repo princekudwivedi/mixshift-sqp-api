@@ -112,6 +112,35 @@ const config = {
     GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT: env('GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT', 'GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT'),
     MAX_ASINS_PER_REQUEST: toInt(env('MAX_ASINS_PER_REQUEST', '15'), 15),
     MAX_DAYS_AGO: toInt(env('MAX_DAYS_AGO', '2'), 2),
+    
+    // Timeout settings
+    HTTP_TIMEOUT_MS: toInt(env('HTTP_TIMEOUT_MS', '120000'), 120000), // 2 minutes
+    DOWNLOAD_TIMEOUT_MS: toInt(env('DOWNLOAD_TIMEOUT_MS', '300000'), 300000), // 5 minutes
+    API_TIMEOUT_MS: toInt(env('API_TIMEOUT_MS', '60000'), 60000), // 1 minute
+    
+    // Memory limits
+    MAX_FILE_SIZE_MB: toInt(env('MAX_FILE_SIZE_MB', '100'), 100),
+    MAX_MEMORY_USAGE_MB: toInt(env('MAX_MEMORY_USAGE_MB', '500'), 500),
+    MAX_JSON_SIZE_MB: toInt(env('MAX_JSON_SIZE_MB', '50'), 50),
+    
+    // Retry settings
+    MAX_RETRIES: toInt(env('MAX_RETRIES', '3'), 3),
+    RETRY_BASE_DELAY_MS: toInt(env('RETRY_BASE_DELAY_MS', '1000'), 1000),
+    RETRY_MAX_DELAY_MS: toInt(env('RETRY_MAX_DELAY_MS', '30000'), 30000),
+    INITIAL_DELAY_SECONDS: toInt(env('INITIAL_DELAY_SECONDS', '30'), 30),
+    
+    // Rate limiting
+    API_RATE_LIMIT_PER_MINUTE: toInt(env('API_RATE_LIMIT_PER_MINUTE', '60'), 60),
+    RATE_LIMIT_WINDOW_MS: toInt(env('RATE_LIMIT_WINDOW_MS', '60000'), 60000),
+    
+    // Circuit breaker
+    CIRCUIT_BREAKER_THRESHOLD: toInt(env('CIRCUIT_BREAKER_THRESHOLD', '5'), 5),
+    CIRCUIT_BREAKER_TIMEOUT_MS: toInt(env('CIRCUIT_BREAKER_TIMEOUT_MS', '60000'), 60000),
+    
+    // Database connection limits
+    DB_CONNECTION_POOL_MAX: toInt(env('DB_CONNECTION_POOL_MAX', '5'), 5),
+    DB_CONNECTION_POOL_MIN: toInt(env('DB_CONNECTION_POOL_MIN', '0'), 0),
+    DB_CONNECTION_TIMEOUT_MS: toInt(env('DB_CONNECTION_TIMEOUT_MS', '60000'), 60000),
 
     // Report Types
     TYPE_ARRAY: env('TYPE_ARRAY', ['WEEK', 'MONTH', 'QUARTER']),

@@ -50,7 +50,7 @@ class RetryHelpers {
 
         // Check if this report type has already reached max retries
         if (skipIfMaxRetriesReached) {
-            const currentRetryCount = 0;
+            const currentRetryCount = await model.getRetryCount(cronDetailID, reportType);
             if (currentRetryCount >= maxRetries) {
                 logger.info({
                     cronDetailID,
@@ -135,6 +135,10 @@ class RetryHelpers {
 
             } catch (error) {
                 lastError = error;
+                
+                // Classify error type to determine if retryable
+                const isRetryable = this.isRetryableError(error);
+                
                 logger.error({
                     error: error.message,
                     stack: error.stack,
@@ -142,8 +146,27 @@ class RetryHelpers {
                     reportType,
                     action,
                     attempt,
-                    maxRetries
+                    maxRetries,
+                    isRetryable
                 }, `Error in ${action} attempt ${attempt}`);
+
+                // Only retry if error is retryable
+                if (!isRetryable) {
+                    logger.error({
+                        cronDetailID,
+                        reportType,
+                        action,
+                        error: error.message
+                    }, `Non-retryable error encountered, failing immediately`);
+                    
+                    return {
+                        success: false,
+                        attempt,
+                        error: error.message,
+                        finalFailure: true,
+                        nonRetryable: true
+                    };
+                }
 
                 // Increment retry count for this attempt
                 await model.incrementRetryCount(cronDetailID, reportType);
@@ -250,6 +273,70 @@ class RetryHelpers {
             finalFailure: true
         };
     }
+
+    /**
+     * Classify error type to determine if it's retryable
+     * @param {Error} error - The error to classify
+     * @returns {boolean} - True if error is retryable, false otherwise
+     */
+    static isRetryableError(error) {
+        if (!error || !error.message) return false;
+        
+        const message = error.message.toLowerCase();
+        const status = error.status || error.statusCode || error.code;
+        
+        // Non-retryable errors (permanent failures)
+        const nonRetryablePatterns = [
+            /invalid.*token/i,
+            /unauthorized/i,
+            /forbidden/i,
+            /not found/i,
+            /bad request/i,
+            /validation error/i,
+            /invalid.*parameter/i,
+            /missing.*required/i,
+            /authentication.*failed/i,
+            /permission.*denied/i
+        ];
+        
+        // Check for non-retryable patterns
+        if (nonRetryablePatterns.some(pattern => pattern.test(message))) {
+            return false;
+        }
+        
+        // Check for non-retryable HTTP status codes
+        if (status && [400, 401, 403, 404, 422].includes(status)) {
+            return false;
+        }
+        
+        // Retryable errors (temporary failures)
+        const retryablePatterns = [
+            /timeout/i,
+            /network/i,
+            /connection/i,
+            /rate limit/i,
+            /temporary/i,
+            /server error/i,
+            /service unavailable/i,
+            /too many requests/i,
+            /internal server error/i,
+            /gateway timeout/i,
+            /bad gateway/i
+        ];
+        
+        // Check for retryable patterns
+        if (retryablePatterns.some(pattern => pattern.test(message))) {
+            return true;
+        }
+        
+        // Check for retryable HTTP status codes
+        if (status && [429, 500, 502, 503, 504].includes(status)) {
+            return true;
+        }
+        
+        // Default to retryable for unknown errors (conservative approach)
+        return true;
+    }
 }
 
 /**
@@ -257,19 +344,39 @@ class RetryHelpers {
  */
 class ValidationHelpers {
     /**
-     * Sanitize string input
+     * Sanitize string input with comprehensive security measures
      */
     static sanitizeString(input, maxLength = 255) {
         if (typeof input !== 'string') return '';
-        return input.trim().substring(0, maxLength).replace(/[<>\"'&]/g, '');
+        
+        return input
+            .trim()
+            .substring(0, maxLength)
+            .replace(/[<>\"'&]/g, '')  // XSS protection
+            .replace(/[';-]/g, '')  // SQL injection protection
+            .replace(/[^\w\s\-\.@]/g, '') // Allow only safe characters
+            .replace(/\s+/g, ' ')      // Normalize whitespace
+            .trim();
     }
 
     /**
-     * Validate and sanitize numeric input
+     * Validate and sanitize numeric input with bounds checking
      */
-    static sanitizeNumber(input, defaultValue = 0) {
+    static sanitizeNumber(input, defaultValue = 0, min = -Infinity, max = Infinity) {
+        if (input === null || input === undefined || input === '') {
+            return defaultValue;
+        }
+        
         const num = Number(input);
-        return isNaN(num) ? defaultValue : num;
+        if (isNaN(num) || !isFinite(num)) {
+            return defaultValue;
+        }
+        
+        // Apply bounds
+        if (num < min) return min;
+        if (num > max) return max;
+        
+        return num;
     }
 
     /**
@@ -292,14 +399,61 @@ class ValidationHelpers {
     }
 
     /**
-     * Validate user ID
+     * Validate user ID with proper bounds checking
      */
     static validateUserId(userId) {
-        const id = this.sanitizeNumber(userId);
-        if (id <= 0) {
-            throw new Error('Invalid user ID');
+        if (userId === null || userId === undefined || userId === '') {
+            throw new Error('Invalid user ID: must be between 1 and 999999999');
         }
-        return id;
+        
+        const num = Number(userId);
+        if (isNaN(num) || !isFinite(num)) {
+            throw new Error('Invalid user ID: must be between 1 and 999999999');
+        }
+        
+        if (num < 1 || num > 999999999) {
+            throw new Error('Invalid user ID: must be between 1 and 999999999');
+        }
+        
+        return num;
+    }
+
+    /**
+     * Validate and sanitize email input
+     */
+    static validateEmail(email) {
+        if (!email || typeof email !== 'string') {
+            throw new Error('Email is required');
+        }
+        
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        const sanitizedEmail = this.sanitizeString(email.toLowerCase(), 254);
+        
+        if (!emailRegex.test(sanitizedEmail)) {
+            throw new Error('Invalid email format');
+        }
+        
+        return sanitizedEmail;
+    }
+
+    /**
+     * Validate required fields in an object
+     */
+    static validateRequiredFields(obj, requiredFields) {
+        if (!obj || typeof obj !== 'object') {
+            throw new Error('Object is required for validation');
+        }
+        
+        const missingFields = requiredFields.filter(field => {
+            const value = obj[field];
+            return value === null || value === undefined || value === '';
+        });
+        
+        if (missingFields.length > 0) {
+            throw new Error(`Missing required fields: ${missingFields.join(', ')}`);
+        }
+        
+        return true;
     }
 }
 
@@ -308,31 +462,98 @@ class ValidationHelpers {
  */
 class DateHelpers {
     /**
-     * Get report date for a specific period
+     * Get report date for a specific period with error handling
      */
     static getReportDateForPeriod(reportType, timezone = datesUtils.DENVER_TZ, useDenverTz = true) {
-        const today = useDenverTz ? datesUtils.getNowInDenver(timezone) : new Date();
-        switch (reportType) {
-            case 'WEEK':
-                // Use the current week's end date (Saturday)
-                const daysUntilSaturday = 6 - today.getDay();
-                const weekEnd = new Date(today);
-                weekEnd.setDate(today.getDate() + daysUntilSaturday);
-                return weekEnd.toISOString().split('T')[0];
-                
-            case 'MONTH':
-                // Use the current month's end date
-                const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-                return monthEnd.toISOString().split('T')[0];
-                
-            case 'QUARTER':
-                // Use the current quarter's end date
-                const quarter = Math.floor(today.getMonth() / 3);
-                const quarterEnd = new Date(today.getFullYear(), (quarter + 1) * 3, 0);
-                return quarterEnd.toISOString().split('T')[0];
-                
-            default:
-                return today.toISOString().split('T')[0];
+        try {
+            // Validate inputs
+            if (!reportType || typeof reportType !== 'string') {
+                throw new Error('Report type is required and must be a string');
+            }
+            
+            if (!timezone || typeof timezone !== 'string') {
+                throw new Error('Timezone is required and must be a string');
+            }
+            
+            const today = useDenverTz ? datesUtils.getNowInDenver(timezone) : new Date();
+            
+            // Validate date object
+            if (!today || isNaN(today.getTime())) {
+                throw new Error('Invalid date object created');
+            }
+            
+            switch (reportType.toUpperCase()) {
+                case 'WEEK':
+                    // Use the current week's end date (Saturday)
+                    const daysUntilSaturday = 6 - today.getDay();
+                    const weekEnd = new Date(today);
+                    weekEnd.setDate(today.getDate() + daysUntilSaturday);
+                    return weekEnd.toISOString().split('T')[0];
+                    
+                case 'MONTH':
+                    // Use the current month's end date
+                    const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+                    return monthEnd.toISOString().split('T')[0];
+                    
+                case 'QUARTER':
+                    // Use the current quarter's end date
+                    const quarter = Math.floor(today.getMonth() / 3);
+                    const quarterEnd = new Date(today.getFullYear(), (quarter + 1) * 3, 0);
+                    return quarterEnd.toISOString().split('T')[0];
+                    
+                default:
+                    logger.warn({ reportType }, 'Unknown report type, using current date');
+                    return today.toISOString().split('T')[0];
+            }
+        } catch (error) {
+            logger.error({ 
+                error: error.message, 
+                reportType, 
+                timezone, 
+                useDenverTz 
+            }, 'Date calculation failed, using fallback');
+            
+            // Fallback to current date
+            return new Date().toISOString().split('T')[0];
+        }
+    }
+
+    /**
+     * Validate date string format
+     */
+    static validateDateString(dateString) {
+        if (!dateString || typeof dateString !== 'string') {
+            throw new Error('Date string is required');
+        }
+        
+        const date = new Date(dateString);
+        if (isNaN(date.getTime())) {
+            throw new Error('Invalid date format');
+        }
+        
+        return date;
+    }
+
+    /**
+     * Get date range with validation
+     */
+    static getDateRange(startDate, endDate) {
+        try {
+            const start = this.validateDateString(startDate);
+            const end = this.validateDateString(endDate);
+            
+            if (start > end) {
+                throw new Error('Start date cannot be after end date');
+            }
+            
+            return {
+                start: start.toISOString().split('T')[0],
+                end: end.toISOString().split('T')[0],
+                days: Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1
+            };
+        } catch (error) {
+            logger.error({ error: error.message, startDate, endDate }, 'Date range validation failed');
+            throw error;
         }
     }
 }
@@ -354,18 +575,42 @@ class FileHelpers {
     }
 
     /**
-     * Read JSON file safely
+     * Read JSON file safely with size limits and validation
      */
-    static async readJsonFile(filePath) {
+    static async readJsonFile(filePath, maxSizeMB = 100) {
+        let stats = null;
         try {
             if (!(await this.fileExists(filePath))) {
                 throw new Error(`File not found: ${filePath}`);
             }
 
+            // Check file size before reading
+            stats = await fs.stat(filePath);
+            const maxSize = maxSizeMB * 1024 * 1024;
+            
+            if (stats.size > maxSize) {
+                throw new Error(`File too large: ${stats.size} bytes (max: ${maxSize} bytes)`);
+            }
+
+            // Validate file extension
+            if (!filePath.toLowerCase().endsWith('.json')) {
+                throw new Error('File must be JSON format');
+            }
+
             const content = await fs.readFile(filePath, 'utf8');
-            return JSON.parse(content);
+            
+            // Validate JSON content
+            try {
+                return JSON.parse(content);
+            } catch (parseError) {
+                throw new Error(`Invalid JSON format: ${parseError.message}`);
+            }
         } catch (error) {
-            logger.error({ error: error.message, filePath }, 'Error reading JSON file');
+            logger.error({ 
+                error: error.message, 
+                filePath, 
+                fileSize: stats?.size 
+            }, 'Error reading JSON file');
             throw error;
         }
     }
@@ -385,15 +630,54 @@ class FileHelpers {
     }
 
     /**
-     * Get file size in bytes
+     * Get file size in bytes with validation
      */
     static async getFileSize(filePath) {
         try {
+            if (!filePath) {
+                throw new Error('File path is required');
+            }
+            
             const stats = await fs.stat(filePath);
             return stats.size;
         } catch (error) {
             logger.error({ error: error.message, filePath }, 'Error getting file size');
             return 0;
+        }
+    }
+
+    /**
+     * Validate file path for security
+     */
+    static validateFilePath(filePath) {
+        if (!filePath || typeof filePath !== 'string') {
+            throw new Error('File path is required');
+        }
+        
+        // Check for path traversal attacks
+        if (filePath.includes('..') || filePath.includes('~')) {
+            throw new Error('Invalid file path: path traversal detected');
+        }
+        
+        // Check for absolute paths in restricted directories
+        const restrictedPaths = ['/etc/', '/sys/', '/proc/', '/dev/'];
+        if (restrictedPaths.some(path => filePath.startsWith(path))) {
+            throw new Error('Invalid file path: access to restricted directory');
+        }
+        
+        return true;
+    }
+
+    /**
+     * Create directory safely
+     */
+    static async createDirectory(dirPath) {
+        try {
+            await fs.mkdir(dirPath, { recursive: true });
+            return true;
+        } catch (error) {
+            logger.error({ error: error.message, dirPath }, 'Error creating directory');
+            throw error;
         }
     }
 }
@@ -654,7 +938,7 @@ class DelayHelpers {
         }, `Waiting ${effectiveDelay}s before operation${context ? ` (${context})` : ''}`);
 
         // Wait
-        this.wait(effectiveDelay, context);
+        await this.wait(effectiveDelay, context);
 
         logger.info({ 
             cronDetailID, 
@@ -688,9 +972,232 @@ class DelayHelpers {
      * @param {number} seconds - Delay in seconds
      */
     static async wait(seconds, context = '') {
-        logger.info({ seconds, context }, `Waiting ${seconds}s${context ? ` (${context})` : ''}`);
-        await new Promise(resolve => setTimeout(resolve, seconds * 1000));
-        logger.info({ seconds, context }, `Delay completed${context ? ` (${context})` : ''}, ready to proceed`);
+        const maxWait = 300; // 5 minutes max
+        const safeSeconds = Math.min(Math.max(seconds, 0), maxWait);
+        
+        if (safeSeconds !== seconds) {
+            logger.warn({ 
+                original: seconds, 
+                safe: safeSeconds, 
+                context 
+            }, 'Wait time capped to prevent excessive delays');
+        }
+        
+        logger.info({ 
+            seconds: safeSeconds, 
+            original: seconds,
+            context 
+        }, `Waiting ${safeSeconds}s${context ? ` (${context})` : ''}`);
+        
+        await new Promise(resolve => setTimeout(resolve, safeSeconds * 1000));
+        
+        logger.info({ 
+            seconds: safeSeconds, 
+            context 
+        }, `Delay completed${context ? ` (${context})` : ''}, ready to proceed`);
+    }
+}
+
+/**
+ * Circuit Breaker pattern for API calls
+ */
+class CircuitBreaker {
+    constructor(threshold = 5, timeout = 60000) {
+        this.failureThreshold = threshold;
+        this.timeout = timeout;
+        this.failureCount = 0;
+        this.lastFailureTime = null;
+        this.state = 'CLOSED'; // CLOSED, OPEN, HALF_OPEN
+        this.successCount = 0;
+        this.halfOpenMaxCalls = 3;
+    }
+    
+    async execute(operation, context = {}) {
+        if (this.state === 'OPEN') {
+            if (Date.now() - this.lastFailureTime > this.timeout) {
+                this.state = 'HALF_OPEN';
+                this.successCount = 0;
+                logger.info({ context }, 'Circuit breaker transitioning to HALF_OPEN');
+            } else {
+                const error = new Error('Circuit breaker is OPEN - service unavailable');
+                error.code = 'CIRCUIT_BREAKER_OPEN';
+                throw error;
+            }
+        }
+        
+        if (this.state === 'HALF_OPEN' && this.successCount >= this.halfOpenMaxCalls) {
+            this.state = 'CLOSED';
+            this.failureCount = 0;
+            logger.info({ context }, 'Circuit breaker transitioning to CLOSED');
+        }
+        
+        try {
+            const result = await operation();
+            this.onSuccess(context);
+            return result;
+        } catch (error) {
+            this.onFailure(error, context);
+            throw error;
+        }
+    }
+    
+    onSuccess(context) {
+        this.failureCount = 0;
+        if (this.state === 'HALF_OPEN') {
+            this.successCount++;
+        }
+        logger.debug({ context, state: this.state }, 'Circuit breaker operation succeeded');
+    }
+    
+    onFailure(error, context) {
+        this.failureCount++;
+        this.lastFailureTime = Date.now();
+        
+        if (this.failureCount >= this.failureThreshold) {
+            this.state = 'OPEN';
+            logger.error({ 
+                error: error.message, 
+                failureCount: this.failureCount,
+                context 
+            }, 'Circuit breaker opened due to failures');
+        }
+    }
+    
+    getState() {
+        return {
+            state: this.state,
+            failureCount: this.failureCount,
+            lastFailureTime: this.lastFailureTime,
+            successCount: this.successCount
+        };
+    }
+    
+    reset() {
+        this.state = 'CLOSED';
+        this.failureCount = 0;
+        this.successCount = 0;
+        this.lastFailureTime = null;
+        logger.info('Circuit breaker reset');
+    }
+}
+
+/**
+ * Rate Limiter for API requests
+ */
+class RateLimiter {
+    constructor(maxRequests = 100, windowMs = 60000) {
+        this.maxRequests = maxRequests;
+        this.windowMs = windowMs;
+        this.requests = new Map();
+        this.cleanupInterval = setInterval(() => this.cleanup(), windowMs);
+    }
+    
+    async checkLimit(identifier) {
+        const now = Date.now();
+        const windowStart = now - this.windowMs;
+        
+        // Clean old requests
+        if (this.requests.has(identifier)) {
+            const userRequests = this.requests.get(identifier);
+            const validRequests = userRequests.filter(time => time > windowStart);
+            this.requests.set(identifier, validRequests);
+            
+            if (validRequests.length >= this.maxRequests) {
+                const oldestRequest = Math.min(...validRequests);
+                const resetTime = oldestRequest + this.windowMs;
+                const waitTime = Math.max(0, resetTime - now);
+                
+                const error = new Error(`Rate limit exceeded. Try again in ${Math.ceil(waitTime / 1000)} seconds`);
+                error.code = 'RATE_LIMIT_EXCEEDED';
+                error.retryAfter = Math.ceil(waitTime / 1000);
+                throw error;
+            }
+        }
+        
+        // Add current request
+        if (!this.requests.has(identifier)) {
+            this.requests.set(identifier, []);
+        }
+        this.requests.get(identifier).push(now);
+    }
+    
+    cleanup() {
+        const now = Date.now();
+        const windowStart = now - this.windowMs;
+        
+        for (const [identifier, requests] of this.requests.entries()) {
+            const validRequests = requests.filter(time => time > windowStart);
+            if (validRequests.length === 0) {
+                this.requests.delete(identifier);
+            } else {
+                this.requests.set(identifier, validRequests);
+            }
+        }
+    }
+    
+    getStats(identifier) {
+        if (!this.requests.has(identifier)) {
+            return { requests: 0, remaining: this.maxRequests };
+        }
+        
+        const now = Date.now();
+        const windowStart = now - this.windowMs;
+        const validRequests = this.requests.get(identifier).filter(time => time > windowStart);
+        
+        return {
+            requests: validRequests.length,
+            remaining: Math.max(0, this.maxRequests - validRequests.length),
+            resetTime: validRequests.length > 0 ? Math.min(...validRequests) + this.windowMs : now
+        };
+    }
+    
+    destroy() {
+        if (this.cleanupInterval) {
+            clearInterval(this.cleanupInterval);
+        }
+    }
+}
+
+/**
+ * Memory monitoring and management
+ */
+class MemoryMonitor {
+    static checkMemoryUsage() {
+        const usage = process.memoryUsage();
+        const heapUsedMB = usage.heapUsed / 1024 / 1024;
+        const heapTotalMB = usage.heapTotal / 1024 / 1024;
+        const externalMB = usage.external / 1024 / 1024;
+        
+        const stats = {
+            heapUsed: Math.round(heapUsedMB),
+            heapTotal: Math.round(heapTotalMB),
+            external: Math.round(externalMB),
+            rss: Math.round(usage.rss / 1024 / 1024),
+            arrayBuffers: Math.round(usage.arrayBuffers / 1024 / 1024)
+        };
+        
+        // Log warning if memory usage is high
+        if (heapUsedMB > 500) { // 500MB threshold
+            logger.warn(stats, 'High memory usage detected');
+            
+            // Force garbage collection if available
+            if (global.gc) {
+                global.gc();
+                logger.info('Forced garbage collection');
+            }
+        }
+        
+        return stats;
+    }
+    
+    static getMemoryStats() {
+        return this.checkMemoryUsage();
+    }
+    
+    static isMemoryUsageHigh(thresholdMB = 500) {
+        const usage = process.memoryUsage();
+        const heapUsedMB = usage.heapUsed / 1024 / 1024;
+        return heapUsedMB > thresholdMB;
     }
 }
 
@@ -701,5 +1208,23 @@ module.exports = {
     FileHelpers,
     DataProcessingHelpers,
     NotificationHelpers,
-    DelayHelpers
+    DelayHelpers,
+    CircuitBreaker,
+    RateLimiter,
+    MemoryMonitor
 };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

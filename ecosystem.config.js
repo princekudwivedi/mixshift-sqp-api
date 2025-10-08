@@ -1,51 +1,50 @@
 module.exports = {
   apps : [
-      {
-        name: "sqp-data-node-backend",
-        script: "/var/www/html/sqp-data-node-backend/src/server.js",
-        watch: true,
-		error_file: '/var/www/html/sqp-data-node-backend/pm2/error.log',
-        out_file: '/var/www/html/sqp-data-node-backend/pm2/output.log',
-        log_file: '/var/www/html/sqp-data-node-backend/pm2/combined.log',
-        ignore_watch: [
-			"/var/www/html/sqp-data-node-backend/logs/*", 
-			"/var/www/html/sqp-data-node-backend/node_modules/*", 
-			"/var/www/html/sqp-data-node-backend/db/*",
-			"/var/www/html/sqp-data-node-backend/pm2/*",
-			"/var/www/html/sqp-data-node-backend/reports/*"
-
-		], 
-		exec_mode: "cluster",
-		instances: 1, // Reduced from 2 to 1 to prevent connection overload
-		env_file: ".env",
-        env: {
-          "PORT": 4212,
-          "NODE_ENV": "local",
-          "DB_CONNECTION_LIMIT": 5,
-          "DB_ACQUIRE_TIMEOUT": 60000,
-          "DB_IDLE_TIMEOUT": 300000
-        },
-        env_development: {
-          "PORT": 4212,
-          "NODE_ENV": "development",
-          "DB_CONNECTION_LIMIT": 5,
-          "DB_ACQUIRE_TIMEOUT": 60000,
-          "DB_IDLE_TIMEOUT": 300000
-        },
-        env_staging: {
-          "PORT": 4212,
-          "NODE_ENV": "staging",
-          "DB_CONNECTION_LIMIT": 8,
-          "DB_ACQUIRE_TIMEOUT": 60000,
-          "DB_IDLE_TIMEOUT": 300000
-        },
-        env_production: {
-          "PORT": 4212,
-          "NODE_ENV": "production",
-          "DB_CONNECTION_LIMIT": 10,
-          "DB_ACQUIRE_TIMEOUT": 60000,
-          "DB_IDLE_TIMEOUT": 300000
-        }
+    {
+      name: "sqp-data-node-backend",
+      script: "/var/www/html/sqp-data-node-backend/src/server.js",
+      watch: true,
+      error_file: '/var/www/html/sqp-data-node-backend/pm2/error.log',
+      out_file: '/var/www/html/sqp-data-node-backend/pm2/output.log',
+      log_file: '/var/www/html/sqp-data-node-backend/pm2/combined.log',
+      ignore_watch: [
+        "/var/www/html/sqp-data-node-backend/logs/*", 
+        "/var/www/html/sqp-data-node-backend/node_modules/*", 
+        "/var/www/html/sqp-data-node-backend/db/*",
+        "/var/www/html/sqp-data-node-backend/pm2/*",
+        "/var/www/html/sqp-data-node-backend/reports/*"
+      ], 
+      exec_mode: "cluster",
+      instances: 1, // Reduced from 2 to 1 to prevent connection overload
+      env_file: ".env",
+      env: {
+        "PORT": 4212,
+        "NODE_ENV": "local",
+        "DB_CONNECTION_LIMIT": 5,
+        "DB_ACQUIRE_TIMEOUT": 60000,
+        "DB_IDLE_TIMEOUT": 300000
+      },
+      env_development: {
+        "PORT": 4212,
+        "NODE_ENV": "development",
+        "DB_CONNECTION_LIMIT": 5,
+        "DB_ACQUIRE_TIMEOUT": 60000,
+        "DB_IDLE_TIMEOUT": 300000
+      },
+      env_staging: {
+        "PORT": 4212,
+        "NODE_ENV": "staging",
+        "DB_CONNECTION_LIMIT": 8,
+        "DB_ACQUIRE_TIMEOUT": 60000,
+        "DB_IDLE_TIMEOUT": 300000
+      },
+      env_production: {
+        "PORT": 4212,
+        "NODE_ENV": "production",
+        "DB_CONNECTION_LIMIT": 10,
+        "DB_ACQUIRE_TIMEOUT": 60000,
+        "DB_IDLE_TIMEOUT": 300000
       }
+    }
   ]
 }

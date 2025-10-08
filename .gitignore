@@ -7,3 +7,4 @@ database
 /examples/
 /logs
 package-lock.json
+coverage/

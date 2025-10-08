@@ -1,5 +1,5 @@
 const { SuccessHandler, ErrorHandler } = require('../middleware/response.handlers');
-const { ValidationHelpers } = require('../helpers/sqp.helpers');
+const { ValidationHelpers, CircuitBreaker, RateLimiter, MemoryMonitor } = require('../helpers/sqp.helpers');
 const { loadDatabase } = require('../db/tenant.db');
 const { getAllAgencyUserList } = require('../models/sequelize/user.model');
 const { getModel: getSellerAsinList } = require('../models/sequelize/sellerAsinList.model');
@@ -22,6 +22,19 @@ const { DelayHelpers } = require('../helpers/sqp.helpers');
  * Handles legacy cron endpoints with proper error handling and validation
  */
 class SqpCronApiController {
+    constructor() {
+        // Initialize efficiency helpers
+        this.circuitBreaker = new CircuitBreaker(
+            Number(process.env.CIRCUIT_BREAKER_THRESHOLD) || 5,
+            Number(process.env.CIRCUIT_BREAKER_TIMEOUT_MS) || 60000
+        );
+        this.rateLimiter = new RateLimiter(
+            Number(process.env.API_RATE_LIMIT_PER_MINUTE) || 100,
+            Number(process.env.RATE_LIMIT_WINDOW_MS) || 60000
+        );
+        // MemoryMonitor uses static methods, no instance needed
+    }
+
     /**
      * Build authentication overrides for a seller
      */
@@ -124,6 +137,17 @@ class SqpCronApiController {
                         for (const s of sellers) {
                             if (!s) continue;                        
                             try {
+                                // Check memory usage before processing
+                                const memoryStats = MemoryMonitor.getMemoryStats();
+                                if (MemoryMonitor.isMemoryUsageHigh(Number(process.env.MAX_MEMORY_USAGE_MB) || 500)) {
+                                    logger.warn({ 
+                                        memoryUsage: memoryStats.heapUsed,
+                                        threshold: process.env.MAX_MEMORY_USAGE_MB || 500
+                                    }, 'High memory usage detected, skipping seller processing');
+                                    breakUserProcessing = false;
+                                    continue;
+                                }
+
                                 // Check if seller has eligible ASINs before processing
                                 const hasEligible = await model.hasEligibleASINs(s.idSellerAccount);
                                 if (!hasEligible) {
@@ -139,26 +163,39 @@ class SqpCronApiController {
                                     sellerId: s.idSellerAccount, 
                                     amazonSellerID: s.AmazonSellerID 
                                 }, 'Processing seller with eligible ASINs');
+
+                                // Check rate limit before making API calls
+                                await this.rateLimiter.checkLimit(s.AmazonSellerID);
+                                
                                 const authOverrides = await this.buildAuthOverrides(s.AmazonSellerID);
                                 
-                                // Step 1: Request report and create cron detail
-                                const cronDetailIDs = await ctrl.requestForSeller(s, authOverrides, env.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT);
+                                // Step 1: Request report with circuit breaker protection
+                                const cronDetailIDs = await this.circuitBreaker.execute(
+                                    () => ctrl.requestForSeller(s, authOverrides, env.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT),
+                                    { sellerId: s.idSellerAccount, operation: 'requestForSeller' }
+                                );
                                 totalProcessed++;
 
                                 if (cronDetailIDs.length > 0) {
                                     await DelayHelpers.wait(Number(process.env.INITIAL_DELAY_SECONDS) || 30, 'Before status check');
-                                    // Step 2: Check status only for this cronDetailId
+                                    // Step 2: Check status with circuit breaker protection
                                     try {
-                                        await ctrl.checkReportStatuses(authOverrides, { cronDetailID: cronDetailIDs });
+                                        await this.circuitBreaker.execute(
+                                            () => ctrl.checkReportStatuses(authOverrides, { cronDetailID: cronDetailIDs }),
+                                            { sellerId: s.idSellerAccount, operation: 'checkReportStatuses' }
+                                        );
                                         totalProcessed++;
                                     } catch (error) {
                                         logger.error({ error: error.message, cronDetailID: cronDetailIDs }, 'Error checking report statuses (scoped)');
                                         totalErrors++;
                                     }
 
-                                    // Step 3: Download only for this cronDetailId
+                                    // Step 3: Download with circuit breaker protection
                                     try {
-                                        await ctrl.downloadCompletedReports(authOverrides, { cronDetailID: cronDetailIDs });
+                                        await this.circuitBreaker.execute(
+                                            () => ctrl.downloadCompletedReports(authOverrides, { cronDetailID: cronDetailIDs }),
+                                            { sellerId: s.idSellerAccount, operation: 'downloadCompletedReports' }
+                                        );
                                         totalProcessed++;
                                     } catch (error) {
                                         logger.error({ error: error.message, cronDetailID: cronDetailIDs }, 'Error downloading reports (scoped)');
@@ -190,6 +227,20 @@ class SqpCronApiController {
                     }
                 }
             }
+            
+            // Log final system status
+            const finalMemoryStats = MemoryMonitor.getMemoryStats();
+            const circuitBreakerState = this.circuitBreaker.getState();
+            const rateLimiterStats = this.rateLimiter.getStats();
+            
+            logger.info({
+                totalProcessed,
+                totalErrors,
+                memoryUsage: finalMemoryStats.heapUsed,
+                circuitBreakerState: circuitBreakerState.state,
+                rateLimiterStats
+            }, 'Cron operations completed - system status');
+            
             return SuccessHandler.sendProcessingSuccess(
                 res,
                 totalProcessed,
