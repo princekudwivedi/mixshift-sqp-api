@@ -84,7 +84,7 @@ async function requestForSeller(seller, authOverrides = {}, spReportType = confi
 	logger.info({ seller: seller.idSellerAccount }, 'Requesting SQP reports for seller');
 	
 	try {
-		const asins = await model.getActiveASINsBySeller(seller.idSellerAccount);
+		const { asins, reportTypes } = await model.getActiveASINsBySeller(seller.idSellerAccount);
 		if (!asins.length) {
 			logger.warn({ sellerId: seller.idSellerAccount }, 'No eligible ASINs for seller (pending or ${env.MAX_DAYS_AGO}+ day old completed)');
 			return [];
@@ -102,23 +102,27 @@ async function requestForSeller(seller, authOverrides = {}, spReportType = confi
 		const chunks = model.splitASINsIntoChunks(asins, 200);
 		logger.info({ chunkCount: chunks.length }, 'Split ASINs into chunks');
 		let cronDetailIDs = [];
+		let cronDetailData = [];
 		
 		for (let i = 0; i < chunks.length; i++) {
 			const chunk = chunks[i];
 			logger.info({ chunkIndex: i, asinCount: chunk.asins.length }, 'Processing chunk');
 			
-			const cronDetailID = await model.createSQPCronDetail(seller.AmazonSellerID, chunk.asin_string);
-			logger.info({ cronDetailID }, 'Created cron detail');
+			const cronDetailRow = await model.createSQPCronDetail(seller.AmazonSellerID, chunk.asin_string);
+			const cronDetailID = cronDetailRow.ID;
+			// Convert Sequelize instance to plain object
+			const cronDetailObject = cronDetailRow.toJSON ? cronDetailRow.toJSON() : cronDetailRow.dataValues;
+			logger.info({ cronDetailID: cronDetailID }, 'Created cron detail');
 			cronDetailIDs.push(cronDetailID);
-
-			for (const type of env.TYPE_ARRAY) {
+			cronDetailData.push(cronDetailObject);
+			for (const type of reportTypes) {
 				logger.info({ type }, 'Requesting report for type');
 				await model.ASINsBySellerUpdated(seller.AmazonSellerID, chunk.asins, 1, type, startTime); // 1 = InProgress
                 // ProcessRunningStatus = 1 (Request Report)
                 await model.setProcessRunningStatus(cronDetailID, type, 1);
                 await model.logCronActivity({ cronJobID: cronDetailID, reportType: type, action: 'Request Report', status: 1, message: 'Requesting report' });
                 await requestSingleReport(chunk, seller, cronDetailID, type, authOverrides, spReportType);
-			}			
+			}
 			logger.info({ 
 				sellerId: seller.idSellerAccount,
 				amazonSellerID: seller.AmazonSellerID,
@@ -128,7 +132,7 @@ async function requestForSeller(seller, authOverrides = {}, spReportType = confi
 				cronDetailID
 			}, 'Marked ASINs as InProgress after request');
 		}
-		return cronDetailIDs;
+		return { cronDetailIDs, cronDetailData };
 	} catch (error) {
 		logger.error({ 
 			error: error ? (error.message || String(error)) : 'Unknown error', 
@@ -279,23 +283,24 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 
 async function checkReportStatuses(authOverrides = {}, filter = {}, retry = false) {
     logger.info('Starting checkReportStatuses');
-    const rows = await model.getReportsForStatusCheck(filter, retry);
+    const { cronDetailID, cronDetailData } = filter;
+	const rows = cronDetailData;
     logger.info({ reportCount: rows.length }, 'Found reports for status check');
     
     if (rows.length === 0) {
         logger.info('No reports found for status check');
         return [];
     }
-
-    const res = [];
-	let loop = [];
-	if (retry && filter.reportType) {
-		loop = [filter.reportType];
-	} else {
-		loop = env.TYPE_ARRAY;
-	}
+	const res = [];
     for (const row of rows) {
-        logger.info({ rowId: row.ID }, 'Processing report row');
+        logger.info({ rowId: row.ID }, 'Processing report row');		
+		let loop = [];
+		if (retry && filter.reportType) {
+			loop = [filter.reportType];
+		} else {
+			loop = await model.getReportsForStatusType(row, retry);
+		}
+		
         for (const type of loop) {
             const statusField = `${model.mapPrefix(type)}SQPDataPullStatus`;
             const processStatusField = row[statusField];
@@ -458,14 +463,16 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 }
 
 async function downloadCompletedReports(authOverrides = {}, filter = {}, retry = false) {
-    const rows = await model.getReportsForDownload(filter, retry);
-	let loop = [];
-	if (retry && filter.reportType) {
-		loop = [filter.reportType];
-	} else {
-		loop = env.TYPE_ARRAY;
-	}
-    for (const row of rows) {		
+    //const rows = await model.getReportsForDownload(filter, retry);
+	const { cronDetailID, cronDetailData } = filter;
+	const rows = cronDetailData;	
+    for (const row of rows) {
+		let loop = [];
+		if (retry && filter.reportType) {
+			loop = [filter.reportType];
+		} else {
+			loop = await model.getReportsForStatusType(row, retry);
+		}
         for (const type of loop) {
 			const statusField = `${model.mapPrefix(type)}SQPDataPullStatus`;
             const processStatusField = row[statusField];

@@ -40,19 +40,8 @@ class SqpCronApiController {
      */
     async buildAuthOverrides(amazonSellerID) {
         try {
-            // Simple in-memory TTL cache for auth overrides
-            // if (!this._authCache) this._authCache = new Map();
-            // const ttlMs = Number(process.env.AUTH_CACHE_TTL_MS || 5 * 60 * 1000);
-            // const cacheKey = `auth:${amazonSellerID}`;
-            // const now = Date.now();
-            // const cached = this._authCache.get(cacheKey);
-            // if (cached && (now - cached.storedAt) < ttlMs) {
-            //     return cached.value;
-            // }
-
             const authOverrides = {};
-            const tokenRow = await AuthToken.getSavedToken(amazonSellerID);
-            
+            const tokenRow = await AuthToken.getSavedToken(amazonSellerID);            
             if (tokenRow && tokenRow.access_token) {
                 authOverrides.accessToken = tokenRow.access_token;
                 logger.info({ 
@@ -62,17 +51,6 @@ class SqpCronApiController {
             } else {
                 logger.warn({ amazonSellerID }, 'No access token found for seller');
             }
-            
-            // Get AWS STS credentials for SigV4 signing
-            const sts = await StsToken.getLatestTokenDetails();
-            if (sts) {
-                authOverrides.awsAccessKeyId = sts.accessKeyId;
-                authOverrides.awsSecretAccessKey = sts.secretAccessKey;
-                authOverrides.awsSessionToken = sts.SessionToken;
-            }
-            
-            // Store in cache
-            //this._authCache.set(cacheKey, { value: authOverrides, storedAt: now });
             return authOverrides;
         } catch (error) {
             logger.error({ error: error.message, amazonSellerID }, 'Error building auth overrides');
@@ -170,10 +148,11 @@ class SqpCronApiController {
                                 const authOverrides = await this.buildAuthOverrides(s.AmazonSellerID);
                                 
                                 // Step 1: Request report with circuit breaker protection
-                                const cronDetailIDs = await this.circuitBreaker.execute(
+                                const { cronDetailIDs, cronDetailData } = await this.circuitBreaker.execute(
                                     () => ctrl.requestForSeller(s, authOverrides, env.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT),
                                     { sellerId: s.idSellerAccount, operation: 'requestForSeller' }
                                 );
+                                console.log('cronDetailData', cronDetailData);
                                 totalProcessed++;
 
                                 if (cronDetailIDs.length > 0) {
@@ -181,7 +160,7 @@ class SqpCronApiController {
                                     // Step 2: Check status with circuit breaker protection
                                     try {
                                         await this.circuitBreaker.execute(
-                                            () => ctrl.checkReportStatuses(authOverrides, { cronDetailID: cronDetailIDs }),
+                                            () => ctrl.checkReportStatuses(authOverrides, { cronDetailID: cronDetailIDs, cronDetailData: cronDetailData }),
                                             { sellerId: s.idSellerAccount, operation: 'checkReportStatuses' }
                                         );
                                         totalProcessed++;
@@ -193,7 +172,7 @@ class SqpCronApiController {
                                     // Step 3: Download with circuit breaker protection
                                     try {
                                         await this.circuitBreaker.execute(
-                                            () => ctrl.downloadCompletedReports(authOverrides, { cronDetailID: cronDetailIDs }),
+                                            () => ctrl.downloadCompletedReports(authOverrides, { cronDetailID: cronDetailIDs, cronDetailData: cronDetailData }),
                                             { sellerId: s.idSellerAccount, operation: 'downloadCompletedReports' }
                                         );
                                         totalProcessed++;
@@ -692,7 +671,7 @@ class SqpCronApiController {
                         continue;
                     }
                     await loadDatabase(user.ID);
-                    //stuck in progress/pending status for 8-9 hours
+                    //stuck in progress/pending status for 1 hour
                     const stuckRecords = await this.findStuckRecords();                    
                     if (stuckRecords.length === 0) {
                         logger.info({ userId: user.ID }, 'No stuck records found for user');
@@ -830,9 +809,9 @@ class SqpCronApiController {
             },
             attributes: [
                 'ID', 'AmazonSellerID', 'dtCronStartDate', 'dtCreatedOn', 'dtUpdatedOn',
-                'WeeklyProcessRunningStatus', 'WeeklySQPDataPullStatus', 'WeeklySQPDataPullEndDate',
-                'MonthlyProcessRunningStatus', 'MonthlySQPDataPullStatus', 'MonthlySQPDataPullEndDate',
-                'QuarterlyProcessRunningStatus', 'QuarterlySQPDataPullStatus', 'QuarterlySQPDataPullEndDate'
+                'WeeklyProcessRunningStatus', 'WeeklySQPDataPullStatus', 'WeeklySQPDataPullEndDate', 'WeeklySQPDataPullStartDate',
+                'MonthlyProcessRunningStatus', 'MonthlySQPDataPullStatus', 'MonthlySQPDataPullEndDate', 'MonthlySQPDataPullStartDate',
+                'QuarterlyProcessRunningStatus', 'QuarterlySQPDataPullStatus', 'QuarterlySQPDataPullEndDate', 'QuarterlySQPDataPullStartDate'
             ]
         });
         
@@ -878,13 +857,17 @@ class SqpCronApiController {
     async retryStuckRecord(record, reportType, authOverrides) {        
         let res = null;
         try {
-            res =await ctrl.checkReportStatuses(authOverrides, { cronDetailID: [record.ID], reportType: reportType }, true );            
+            res =await ctrl.checkReportStatuses(authOverrides, { cronDetailID: [record.ID], reportType: reportType, cronDetailData: [record] }, true );            
         } catch (e) {
             logger.error({ id: record.ID, reportType, error: e.message }, 'Retry status check failed');
         }        
         if(res && res[0] && res[0].success) {
             try {
-                await ctrl.downloadCompletedReports(authOverrides, { cronDetailID: [record.ID], reportType: reportType }, true);
+                await ctrl.downloadCompletedReports(authOverrides, { cronDetailID: [record.ID], reportType: reportType, cronDetailData: [record] }, true);
+                
+                // Wait for import to complete (give it env.INITIAL_DELAY_SECONDS seconds to finish)
+                logger.info({ id: record.ID, reportType }, ' Waiting 10s for import to complete before checking final status');
+                await DelayHelpers.wait(10, 'After download/import before status check');
             } catch (e) {
                 logger.error({ id: record.ID, reportType, error: e.message }, 'Retry download failed');
             }
@@ -902,10 +885,26 @@ class SqpCronApiController {
         });
         const prefix = model.mapPrefix(reportType);
         const statusField = `${prefix}SQPDataPullStatus`;
+        const processStatusField = `${prefix}ProcessRunningStatus`;
         const current = refreshed ? refreshed[statusField] : null;
+        const currentProcess = refreshed ? refreshed[processStatusField] : null;
 
-        if (current === 1) {
-            logger.info({ id: record.ID, reportType }, 'Retry succeeded - marked as success');
+        logger.info({ 
+            id: record.ID, 
+            reportType, 
+            currentStatus: current,
+            currentProcessStatus: currentProcess,
+            expectedStatus: 1,
+            expectedProcessStatus: 4
+        }, 'Checking final status after retry');
+
+        if (current === 1) {  // 1 = Completed in sqp_cron_details
+            logger.info({ 
+                id: record.ID, 
+                reportType, 
+                currentStatus: current,
+                currentProcessStatus: currentProcess
+            }, 'Retry succeeded - report completed and imported');
             return { cronDetailID: record.ID, amazonSellerID: record.AmazonSellerID, reportType, retried: true, success: true };
         }
 
@@ -924,7 +923,7 @@ class SqpCronApiController {
 
         // Mark failed if still not success
         const latestReportId = await model.getLatestReportId(record.ID, reportType);
-        await model.updateSQPReportStatus(record.ID, reportType, 3, latestReportId, 'Retry after 8h failed');
+        await model.updateSQPReportStatus(record.ID, reportType, 3, latestReportId, 'Retry after 1h failed');
         await model.logCronActivity({
             cronJobID: record.ID,
             reportType,
@@ -937,7 +936,7 @@ class SqpCronApiController {
         
         // Only send notification if retry count has reached maximum (3)
         if (actualRetryCount >= 3) {
-            await ctrl.sendFailureNotification(record.ID, record.AmazonSellerID, reportType, 'Retry after 8h failed', actualRetryCount, latestReportId);
+            await ctrl.sendFailureNotification(record.ID, record.AmazonSellerID, reportType, 'Retry after 1h failed', actualRetryCount, latestReportId);
         }
         
         logger.warn({ id: record.ID, reportType }, 'Retry failed - marked as failure');
