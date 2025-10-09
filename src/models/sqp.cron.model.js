@@ -37,112 +37,192 @@ function mapPrefix(reportType) {
     if (reportType === 'QUARTER') return 'Quarterly';
     return '';
 }
-
+async function getReportsForStatusType(row, retry = false) {
+    const SqpCronLogs = getSqpCronLogs(); 
+    const reportTypes = [];
+    let where = {};
+    if (retry) {
+        where = { CronJobID: row.ID, ReportType: row.ReportType, Status: { [Op.in]: [0, 2] } };
+    } else {
+        where = { CronJobID: row.ID };
+    }
+    const logs = await SqpCronLogs.findAll({ where });
+    reportTypes.push(...logs.map(l => l.ReportType));
+    return reportTypes;
+}
 async function getActiveASINsBySeller(sellerId = null, limit = true, reportType = null) {
     const SellerAsinList = getSellerAsinList();
     const sellerFilter = sellerId ? { SellerID: sellerId } : {};
-    
-    // Determine which status field to check based on reportType
+    const currentDay = new Date();
+    const retryCutoffTime = new Date();
+    retryCutoffTime.setDate(currentDay.getDate() - env.MAX_DAYS_AGO);
+
+    // Determine report-specific fields
     let statusField, endTimeField;
     if (reportType) {
         const prefix = mapPrefix(reportType);
         statusField = `${prefix}LastSQPDataPullStatus`;
         endTimeField = `${prefix}LastSQPDataPullEndTime`;
     }
-    
-    // Build base where clause
-    let baseWhere = { IsActive: 1, ...sellerFilter };
-    
-    // If reportType specified, check that specific period's status is null
-    // Otherwise, check if ALL periods are null (truly new ASIN)
-    if (reportType) {
-        baseWhere[statusField] = null;
-    } else {
-        // For general query, get ASINs that don't have status in any period
-        baseWhere[Op.and] = [
-            { WeeklyLastSQPDataPullStatus: null },
-            { MonthlyLastSQPDataPullStatus: null },
-            { QuarterlyLastSQPDataPullStatus: null }
-        ];
-    }
-    
-    // Pending ASINs
-    const pendingAsins = await SellerAsinList.findAll({
-        where: baseWhere,
-        attributes: ['ASIN'],
-        ...(limit ? { limit: env.MAX_ASINS_PER_REQUEST } : {}),
-        order: [['dtCreatedOn', 'ASC']]
-    });
-    
-    if (!limit) logger.info({ batchSize: pendingAsins.length }, 'Selected all pending ASINs for processing');
 
-    // Return early if enough pending ASINs
-    if (pendingAsins.length >= env.MAX_ASINS_PER_REQUEST) {
-        logger.info({ sellerId, batchSize: pendingAsins.length }, `Selected ${env.MAX_ASINS_PER_REQUEST} pending ASINs for processing`);
-        return pendingAsins.map(r => r.ASIN).filter(Boolean);
-    }
-
-    // Completed ASINs (older than MAX_DAYS_AGO)
-    const maxDaysAgo = new Date();
-    maxDaysAgo.setDate(maxDaysAgo.getDate() - env.MAX_DAYS_AGO);
-
-    let completedWhere = {
-        IsActive: 1,
-        ...sellerFilter
+    // Helper: Build pending or retry conditions
+    const pendingOrRetryCondition = (type) => {
+        if (statusField && endTimeField) {
+            return {
+                [Op.or]: [
+                    { [statusField]: null },
+                    { [statusField]: { [Op.ne]: 2 }, [endTimeField]: { [Op.lte]: retryCutoffTime } }
+                ]
+            };
+        }
+        const fieldMap = {
+            'Week': ['WeeklyLastSQPDataPullStatus', 'WeeklyLastSQPDataPullStartTime'],
+            'Month': ['MonthlyLastSQPDataPullStatus', 'MonthlyLastSQPDataPullStartTime'],
+            'Quarter': ['QuarterlyLastSQPDataPullStatus', 'QuarterlyLastSQPDataPullStartTime']
+        };
+        const [status, time] = fieldMap[type] || [];
+        return {
+            [Op.or]: [
+                { [status]: null },
+                { [status]: { [Op.ne]: 2 }, [time]: { [Op.lte]: retryCutoffTime } }
+            ]
+        };
     };
     
-    // If reportType specified, only check that period's completed status
-    if (reportType) {
-        completedWhere[statusField] = { [Op.in]: [2] }; // 2 = Completed
-        completedWhere[endTimeField] = { [Op.lte]: maxDaysAgo };
-    } else {
-        // For general query, get ASINs where ANY period is completed and old
-        completedWhere[Op.or] = [
-            {
-                WeeklyLastSQPDataPullStatus: 2,
-                WeeklyLastSQPDataPullEndTime: { [Op.lte]: maxDaysAgo }
-            },
-            {
-                MonthlyLastSQPDataPullStatus: 2,
-                MonthlyLastSQPDataPullEndTime: { [Op.lte]: maxDaysAgo }
-            },
-            {
-                QuarterlyLastSQPDataPullStatus: 2,
-                QuarterlyLastSQPDataPullEndTime: { [Op.lte]: maxDaysAgo }
-            }
-        ];
+    const scenario1 = async () => {
+        const where = {
+            IsActive: 1,
+            ...sellerFilter,
+            [Op.and]: [
+                pendingOrRetryCondition('Week'),
+                pendingOrRetryCondition('Month'),
+                pendingOrRetryCondition('Quarter')
+            ]
+        };
+        return await findASINs(where, ['WEEK', 'MONTH', 'QUARTER']);
+    };
+
+    const scenario2 = async () => {
+        const where = {
+            IsActive: 1,
+            ...sellerFilter,
+            QuarterlyLastSQPDataPullStatus: 2,
+            MonthlyLastSQPDataPullStatus: 2,
+            WeeklyLastSQPDataPullStatus: { [Op.ne]: 2 },
+            WeeklyLastSQPDataPullStartTime: { [Op.lt]: currentDay }
+        };
+        return await findASINs(where, ['WEEK']);
+    };
+
+    const scenario3 = async () => {
+        const where = {
+            IsActive: 1,
+            ...sellerFilter,
+            QuarterlyLastSQPDataPullStatus: 2,            
+            WeeklyLastSQPDataPullStatus: 2,
+            MonthlyLastSQPDataPullStatus: { [Op.ne]: 2 },
+            MonthlyLastSQPDataPullStartTime: { [Op.lt]: currentDay }
+            
+        };
+        return await findASINs(where, ['MONTH']);
+    };
+
+    const scenario4 = async () => {
+        const where = {
+            IsActive: 1,
+            ...sellerFilter,
+            WeeklyLastSQPDataPullStatus: 2,
+            MonthlyLastSQPDataPullStatus: 2,
+            QuarterlyLastSQPDataPullStatus: { [Op.ne]: 2 },
+            QuarterlyLastSQPDataPullStartTime: { [Op.lt]: currentDay }
+        };
+        return await findASINs(where, ['QUARTER']);
+    };
+
+    const scenario5 = async () => {
+        const where = {
+            IsActive: 1,
+            ...sellerFilter,
+            WeeklyLastSQPDataPullStatus: 2,
+            MonthlyLastSQPDataPullStatus: { [Op.ne]: 2 },
+            QuarterlyLastSQPDataPullStatus: { [Op.ne]: 2 },
+            MonthlyLastSQPDataPullStartTime: { [Op.lt]: currentDay },
+            QuarterlyLastSQPDataPullStartTime: { [Op.lt]: currentDay }
+        };
+        return await findASINs(where, ['MONTH', 'QUARTER']);
+    };
+
+    const scenario6 = async () => {
+        const where = {
+            IsActive: 1,
+            ...sellerFilter,            
+            QuarterlyLastSQPDataPullStatus: 2,
+            WeeklyLastSQPDataPullStatus: { [Op.ne]: 2 },
+            MonthlyLastSQPDataPullStatus: { [Op.ne]: 2 },
+            WeeklyLastSQPDataPullStartTime: { [Op.lt]: currentDay },
+            MonthlyLastSQPDataPullStartTime: { [Op.lt]: currentDay }
+        };
+        return await findASINs(where, ['WEEK','MONTH']);
+    };
+
+    const scenario7 = async () => {
+        const where = {
+            IsActive: 1,
+            ...sellerFilter,            
+            MonthlyLastSQPDataPullStatus: 2,
+            WeeklyLastSQPDataPullStatus: { [Op.ne]: 2 },
+            QuarterlyLastSQPDataPullStatus: { [Op.ne]: 2 },
+            WeeklyLastSQPDataPullStartTime: { [Op.lt]: currentDay },
+            QuarterlyLastSQPDataPullStartTime: { [Op.lt]: currentDay }
+        };
+        return await findASINs(where, ['WEEK','QUARTER']);
+    };
+
+
+    const scenario8 = async () => {
+        const where = {
+            IsActive: 1,
+            ...sellerFilter,                        
+            MonthlyLastSQPDataPullStatus: { [Op.ne]: 2 },
+            MonthlyLastSQPDataPullStartTime: { [Op.lt]: currentDay },
+            WeeklyLastSQPDataPullStatus: { [Op.ne]: 2 },
+            QuarterlyLastSQPDataPullStatus: { [Op.ne]: 2 },
+            WeeklyLastSQPDataPullStartTime: { [Op.lt]: currentDay },
+            QuarterlyLastSQPDataPullStartTime: { [Op.lt]: currentDay }
+        };
+        return await findASINs(where, ['WEEK','MONTH','QUARTER']);
+    };    
+
+    // Helper: Query ASINs
+    const findASINs = async (where, reportTypes) => {
+        // Filter by reportType if provided
+        const filteredReports = reportType ? reportTypes.filter(t => t === reportType) : reportTypes;
+        if (filteredReports.length === 0) return { reportTypes: [], asins: [] };
+
+        const asins = await SellerAsinList.findAll({
+            where,
+            attributes: ['ASIN'],
+            ...(limit ? { limit: env.MAX_ASINS_PER_REQUEST } : {}),
+            order: [['dtCreatedOn', 'ASC']]
+        });
+
+        if (asins.length > 0) {
+            logger.info({ sellerId, count: asins.length }, `Scenario matched: ${filteredReports.join('|')}`);
+            return { reportTypes: filteredReports, asins: asins.map(a => a.ASIN) };
+        }
+        return { reportTypes: [], asins: [] };
+    };
+
+    // Execute scenarios in order
+    for (const scenario of [scenario1, scenario2, scenario3, scenario4, scenario5, scenario6, scenario7, scenario8]) {
+        const result = await scenario();
+        if (result.asins.length > 0) return result;
     }
 
-    const completedAsins = await SellerAsinList.findAll({
-        where: completedWhere,
-        attributes: ['ASIN'],
-        ...(limit ? { limit: env.MAX_ASINS_PER_REQUEST - pendingAsins.length } : {}),
-        order: reportType 
-            ? [[endTimeField, 'ASC']]
-            : [
-                [literal(`COALESCE(WeeklyLastSQPDataPullEndTime, MonthlyLastSQPDataPullEndTime, QuarterlyLastSQPDataPullEndTime)`), 'ASC']
-            ]
-    });
-
-    console.log('pendingAsins', pendingAsins.length);
-    console.log('completedAsins', completedAsins.length);
-    const allAsins = [...pendingAsins, ...completedAsins];
-
-    console.log('allAsins', allAsins.length);
-
-    logger.info({
-        sellerId,
-        reportType,
-        pendingCount: pendingAsins.length,
-        completedCount: completedAsins.length,
-        totalBatchSize: allAsins.length,
-        pendingAsins: pendingAsins.map(r => r.ASIN).slice(0, 5),
-        completedAsins: completedAsins.map(r => r.ASIN).slice(0, 5),
-        maxDaysAgo: maxDaysAgo.toISOString()
-    }, 'Selected ASINs for processing (pending + eligible completed)');
-
-    return allAsins.map(r => r.ASIN).filter(Boolean);
+    logger.info({ sellerId }, 'No eligible ASINs found for any scenario');
+    return { reportTypes: [], asins: [] };
 }
+
 
 async function ASINsBySellerUpdated(amazonSellerID, asinList, status, reportType, startTime = null, endTime = null) {
     try {
@@ -212,18 +292,27 @@ async function ASINsBySellerUpdated(amazonSellerID, asinList, status, reportType
 }
 
 async function hasEligibleASINs(sellerId, reportType = null, limit = true) {
-    const eligibleAsins = await getActiveASINsBySeller(sellerId, limit, reportType);
-    console.log('eligibleAsins', eligibleAsins);
-    const hasEligible = eligibleAsins.length > 0;
+    const { asins, reportTypes } = await getActiveASINsBySeller(sellerId, limit, reportType);
+    console.log('eligibleAsins', asins);
+    const hasEligible = asins.length > 0;
 
-    logger.info({ sellerId, reportType, eligibleCount: eligibleAsins.length, hasEligible }, 'Seller ASIN eligibility check');
+    logger.info({ sellerId, reportType, eligibleCount: asins.length, hasEligible, reportTypes }, 'Seller ASIN eligibility check');
     return hasEligible;
 }
 
 async function createSQPCronDetail(amazonSellerID, asinString) {
     const SqpCronDetails = getSqpCronDetails();
-    const row = await SqpCronDetails.create({ AmazonSellerID: amazonSellerID, ASIN_List: asinString, dtCreatedOn: new Date(), dtCronStartDate: new Date(), dtUpdatedOn: new Date() });
-    return row.ID;
+    const row = await SqpCronDetails.create({ 
+        AmazonSellerID: amazonSellerID, 
+        ASIN_List: asinString, 
+        dtCreatedOn: new Date(), 
+        dtCronStartDate: new Date(), 
+        dtUpdatedOn: new Date() 
+    });
+    
+    // Fetch the complete record with all columns to ensure all fields are populated
+    const completeRow = await SqpCronDetails.findByPk(row.ID);
+    return completeRow;
 }
 
 async function updateSQPReportStatus(cronDetailID, reportType, status, _reportId = null, _lastError = null, _documentId = null, _downloadCompleted = null, startDate = undefined, endDate = undefined) {
@@ -476,7 +565,8 @@ module.exports = {
     getRetryCount,
     incrementRetryCount,
     ASINsBySellerUpdated,
-    hasEligibleASINs
+    hasEligibleASINs,
+    getReportsForStatusType
 };
 
 
