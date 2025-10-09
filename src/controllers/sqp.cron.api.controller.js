@@ -11,7 +11,7 @@ const ctrl = require('./sqp.cron.controller');
 const model = require('../models/sqp.cron.model');
 const { getModel: getSqpCronDetails } = require('../models/sequelize/sqpCronDetails.model');
 const { getModel: getSqpCronLogs } = require('../models/sequelize/sqpCronLogs.model');
-const { Op } = require('sequelize');
+const { Op, literal } = require('sequelize');
 const logger = require('../utils/logger.utils');
 const env = require('../config/env.config');
 const isDevEnv = ["local", "development"].includes(env.NODE_ENV);
@@ -786,37 +786,53 @@ class SqpCronApiController {
         logger.info({ cutoffTime: cutoffTime.toISOString() }, 'Scanning for records stuck since cutoff time');
         
         // Find records that are stuck in progress or pending status
+        // Include records where dtUpdatedOn < dtCronStartDate (stale/stuck)
         const stuckRecords = await SqpCronDetails.findAll({
             where: {
-                [Op.or]: [                    
+                [Op.or]: [
                     {
                         [Op.and]: [
                             { WeeklyProcessRunningStatus: { [Op.in]: [1, 2, 3, 4] } },
                             { WeeklySQPDataPullStatus: { [Op.in]: [0, 2] } },
-                            { dtUpdatedOn: { [Op.lte]: cutoffTime } }
+                            {
+                                [Op.or]: [
+                                    { dtUpdatedOn: { [Op.lte]: cutoffTime } },
+                                    literal('dtUpdatedOn < dtCronStartDate')
+                                ]
+                            }
                         ]
                     },
                     {
                         [Op.and]: [
                             { MonthlyProcessRunningStatus: { [Op.in]: [1, 2, 3, 4] } },
                             { MonthlySQPDataPullStatus: { [Op.in]: [0, 2] } },
-                            { dtUpdatedOn: { [Op.lte]: cutoffTime } }
+                            {
+                                [Op.or]: [
+                                    { dtUpdatedOn: { [Op.lte]: cutoffTime } },
+                                    literal('dtUpdatedOn < dtCronStartDate')
+                                ]
+                            }
                         ]
                     },
                     {
                         [Op.and]: [
                             { QuarterlyProcessRunningStatus: { [Op.in]: [1, 2, 3] } },
                             { QuarterlySQPDataPullStatus: { [Op.in]: [0, 2] } },
-                            { dtUpdatedOn: { [Op.lte]: cutoffTime } }
+                            {
+                                [Op.or]: [
+                                    { dtUpdatedOn: { [Op.lte]: cutoffTime } },
+                                    literal('dtUpdatedOn < dtCronStartDate')
+                                ]
+                            }
                         ]
                     }
                 ]
             },
             attributes: [
-                'ID', 'AmazonSellerID', 'dtCreatedOn', 'dtUpdatedOn',
-                'WeeklyProcessRunningStatus', 'WeeklySQPDataPullStatus',
-                'MonthlyProcessRunningStatus', 'MonthlySQPDataPullStatus',
-                'QuarterlyProcessRunningStatus', 'QuarterlySQPDataPullStatus'
+                'ID', 'AmazonSellerID', 'dtCronStartDate', 'dtCreatedOn', 'dtUpdatedOn',
+                'WeeklyProcessRunningStatus', 'WeeklySQPDataPullStatus', 'WeeklySQPDataPullEndDate',
+                'MonthlyProcessRunningStatus', 'MonthlySQPDataPullStatus', 'MonthlySQPDataPullEndDate',
+                'QuarterlyProcessRunningStatus', 'QuarterlySQPDataPullStatus', 'QuarterlySQPDataPullEndDate'
             ]
         });
         

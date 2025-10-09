@@ -14,48 +14,6 @@ const { getModel: getSqpDownloadUrls } = require('../models/sequelize/sqpDownloa
 const dates = require('../utils/dates.utils');
 const { DateHelpers } = require('../helpers/sqp.helpers');
 
-const STATUS_MAPPING = {
-    1: 'InProgress',
-    2: 'Completed', // All completed
-    4: 'Week Completed',
-    5: 'Month Completed',
-    6: 'Quarter Completed',
-    7: 'Week Completed & Month Completed',
-    8: 'Week Completed & Quarter Completed',
-    9: 'Month Completed & Quarter Completed'
-};
-
-/**
- * Compute numeric status based on week, month, quarter completion.
- * Input values: 1 = completed, 0 = pending, 2/3 = failed
- * Returns: { code, text }
- */
-function getNumericStatus(weeklyStatus, monthlyStatus, quarterlyStatus) {
-    const completedParts = [];
-
-    if (weeklyStatus === 1) completedParts.push('Week');
-    if (monthlyStatus === 1) completedParts.push('Month');
-    if (quarterlyStatus === 1) completedParts.push('Quarter');
-
-    let code;
-
-    if (completedParts.length === 3) code = 2; // All completed
-    else if (completedParts.length === 2) {
-        if (completedParts.includes('Week') && completedParts.includes('Month')) code = 7;
-        else if (completedParts.includes('Week') && completedParts.includes('Quarter')) code = 8;
-        else if (completedParts.includes('Month') && completedParts.includes('Quarter')) code = 9;
-    } 
-    else if (completedParts.length === 1) {
-        if (completedParts[0] === 'Week') code = 4;
-        else if (completedParts[0] === 'Month') code = 5;
-        else if (completedParts[0] === 'Quarter') code = 6;
-    } 
-    else code = 1; // InProgress if nothing completed
-
-    return { code, text: STATUS_MAPPING[code] };
-}
-
-
 /**
  * Handle report completion - unified function for both data and no-data scenarios
  * This function handles the complete flow for report completion including date ranges
