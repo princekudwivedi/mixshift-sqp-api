@@ -104,19 +104,22 @@ class RetryHelpers {
                     startTime: t0
                 });
 
-                // Success! Log and return
-                await model.logCronActivity({
-                    cronJobID: cronDetailID,
-                    reportType: reportType,
-                    action: action,
-                    status: 1,
-                    message: result.message || `${action} successful on attempt ${attempt}`,
-                    reportID: result.reportID || (context && (context.reportId || context.reportID)) || null,
-                    reportDocumentID: result.reportDocumentID || null,
-                    retryCount: currentRetry,
-                    executionTime: (Date.now() - t0) / 1000,
-                    ...result.logData
-                });
+                // Success! Log and return (skip if already logged - e.g., FATAL errors)
+                // FATAL errors are already logged in handleFatalOrUnknownStatus with status: 2
+                if (!result.skipped) {
+                    await model.logCronActivity({
+                        cronJobID: cronDetailID,
+                        reportType: reportType,
+                        action: action,
+                        status: 1,
+                        message: result.message || `${action} successful on attempt ${attempt}`,
+                        reportID: result.reportID || (context && (context.reportId || context.reportID)) || null,
+                        reportDocumentID: result.reportDocumentID || null,
+                        retryCount: currentRetry,
+                        executionTime: (Date.now() - t0) / 1000,
+                        ...result.logData
+                    });
+                }
 
                 logger.info({
                     cronDetailID,

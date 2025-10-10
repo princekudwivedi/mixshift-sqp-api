@@ -44,7 +44,7 @@ async function getReportsForStatusType(row, retry = false) {
     if (retry) {
         where = { CronJobID: row.ID, ReportType: row.ReportType, Status: { [Op.in]: [0, 2] } };
     } else {
-        where = { CronJobID: row.ID };
+        where = { CronJobID: row.ID, Status: { [Op.in]: [1] } };
     }
     const logs = await SqpCronLogs.findAll({ where });
     reportTypes.push(...logs.map(l => l.ReportType));

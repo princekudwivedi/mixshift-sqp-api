@@ -746,17 +746,20 @@ class SqpCronApiController {
             res =await ctrl.checkReportStatuses(authOverrides, { cronDetailID: [record.ID], reportType: reportType, cronDetailData: [record] }, true );            
         } catch (e) {
             logger.error({ id: record.ID, reportType, error: e.message }, 'Retry status check failed');
-        }        
-        if(res && res[0] && res[0].success) {
+        }
+        // Check if status check was successful AND not skipped (e.g., FATAL errors are skipped)
+        if(res && res[0] && res[0].success && !res[0].data?.handled) {
             try {
                 await ctrl.downloadCompletedReports(authOverrides, { cronDetailID: [record.ID], reportType: reportType, cronDetailData: [record] }, true);
-                
-                // Wait for import to complete (give it env.INITIAL_DELAY_SECONDS seconds to finish)
-                logger.info({ id: record.ID, reportType }, ' Waiting 10s for import to complete before checking final status');
-                await DelayHelpers.wait(10, 'After download/import before status check');
             } catch (e) {
                 logger.error({ id: record.ID, reportType, error: e.message }, 'Retry download failed');
             }
+        } else if (res && res[0] && res[0].data?.handled) {
+            logger.info({ 
+                id: record.ID, 
+                reportType,
+                status: res[0].data?.status 
+            }, 'Status check returned handled error (FATAL/CANCELLED) - skipping download');
         }
         
         // Re-fetch status and finalize

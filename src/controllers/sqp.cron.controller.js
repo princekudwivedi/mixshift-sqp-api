@@ -300,7 +300,7 @@ async function checkReportStatuses(authOverrides = {}, filter = {}, retry = fals
 		} else {
 			loop = await model.getReportsForStatusType(row, retry);
 		}
-		
+		logger.info({ loop }, `Loop status check ${cronDetailID}`);
         for (const type of loop) {
             const statusField = `${model.mapPrefix(type)}SQPDataPullStatus`;
             const processStatusField = row[statusField];
@@ -472,10 +472,24 @@ async function downloadCompletedReports(authOverrides = {}, filter = {}, retry =
 		} else {
 			loop = await model.getReportsForStatusType(row, retry);
 		}
+		logger.info({ loop }, `Loop download ${cronDetailID}`);
         for (const type of loop) {
 			const statusField = `${model.mapPrefix(type)}SQPDataPullStatus`;
             const processStatusField = row[statusField];
-            if (processStatusField === 0 || (retry && processStatusField === 2)) {
+            
+            // Skip download if:
+            // - Status is 3 (failed/FATAL)
+            // - Status is not 0 or 2 when in retry mode
+            if (processStatusField === 3) {
+                logger.info({ 
+                    cronDetailID: row.ID, 
+                    reportType: type,
+                    status: processStatusField 
+                }, 'Skipping download - report status is FAILED (3)');
+                continue;
+            }
+            
+            if (processStatusField === 0 || (retry && processStatusField === 2 && processStatusField !== 3)) {
                 const reportId = await model.getLatestReportId(row.ID, type);
                 if (!reportId) {
                     await model.logCronActivity({ cronJobID: row.ID, reportType: type, action: 'Download Report', status: 3, message: 'Skipping download: ReportID not found in logs', reportID: null, retryCount: 0, executionTime: 0 });
