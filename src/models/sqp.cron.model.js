@@ -109,7 +109,7 @@ async function getActiveASINsBySeller(sellerId = null, limit = true, reportType 
             QuarterlyLastSQPDataPullStatus: 2,
             MonthlyLastSQPDataPullStatus: 2,
             WeeklyLastSQPDataPullStatus: { [Op.ne]: 2 },
-            WeeklyLastSQPDataPullStartTime: { [Op.lt]: currentDay }
+            WeeklyLastSQPDataPullStartTime: { [Op.lt]: retryCutoffTime }
         };
         return await findASINs(where, ['WEEK']);
     };
@@ -121,7 +121,7 @@ async function getActiveASINsBySeller(sellerId = null, limit = true, reportType 
             QuarterlyLastSQPDataPullStatus: 2,            
             WeeklyLastSQPDataPullStatus: 2,
             MonthlyLastSQPDataPullStatus: { [Op.ne]: 2 },
-            MonthlyLastSQPDataPullStartTime: { [Op.lt]: currentDay }
+            MonthlyLastSQPDataPullStartTime: { [Op.lt]: retryCutoffTime }
             
         };
         return await findASINs(where, ['MONTH']);
@@ -134,7 +134,7 @@ async function getActiveASINsBySeller(sellerId = null, limit = true, reportType 
             WeeklyLastSQPDataPullStatus: 2,
             MonthlyLastSQPDataPullStatus: 2,
             QuarterlyLastSQPDataPullStatus: { [Op.ne]: 2 },
-            QuarterlyLastSQPDataPullStartTime: { [Op.lt]: currentDay }
+            QuarterlyLastSQPDataPullStartTime: { [Op.lt]: retryCutoffTime }
         };
         return await findASINs(where, ['QUARTER']);
     };
@@ -146,8 +146,8 @@ async function getActiveASINsBySeller(sellerId = null, limit = true, reportType 
             WeeklyLastSQPDataPullStatus: 2,
             MonthlyLastSQPDataPullStatus: { [Op.ne]: 2 },
             QuarterlyLastSQPDataPullStatus: { [Op.ne]: 2 },
-            MonthlyLastSQPDataPullStartTime: { [Op.lt]: currentDay },
-            QuarterlyLastSQPDataPullStartTime: { [Op.lt]: currentDay }
+            MonthlyLastSQPDataPullStartTime: { [Op.lt]: retryCutoffTime },
+            QuarterlyLastSQPDataPullStartTime: { [Op.lt]: retryCutoffTime }
         };
         return await findASINs(where, ['MONTH', 'QUARTER']);
     };
@@ -159,8 +159,8 @@ async function getActiveASINsBySeller(sellerId = null, limit = true, reportType 
             QuarterlyLastSQPDataPullStatus: 2,
             WeeklyLastSQPDataPullStatus: { [Op.ne]: 2 },
             MonthlyLastSQPDataPullStatus: { [Op.ne]: 2 },
-            WeeklyLastSQPDataPullStartTime: { [Op.lt]: currentDay },
-            MonthlyLastSQPDataPullStartTime: { [Op.lt]: currentDay }
+            WeeklyLastSQPDataPullStartTime: { [Op.lt]: retryCutoffTime },
+            MonthlyLastSQPDataPullStartTime: { [Op.lt]: retryCutoffTime }
         };
         return await findASINs(where, ['WEEK','MONTH']);
     };
@@ -172,8 +172,8 @@ async function getActiveASINsBySeller(sellerId = null, limit = true, reportType 
             MonthlyLastSQPDataPullStatus: 2,
             WeeklyLastSQPDataPullStatus: { [Op.ne]: 2 },
             QuarterlyLastSQPDataPullStatus: { [Op.ne]: 2 },
-            WeeklyLastSQPDataPullStartTime: { [Op.lt]: currentDay },
-            QuarterlyLastSQPDataPullStartTime: { [Op.lt]: currentDay }
+            WeeklyLastSQPDataPullStartTime: { [Op.lt]: retryCutoffTime },
+            QuarterlyLastSQPDataPullStartTime: { [Op.lt]: retryCutoffTime }
         };
         return await findASINs(where, ['WEEK','QUARTER']);
     };
@@ -184,11 +184,11 @@ async function getActiveASINsBySeller(sellerId = null, limit = true, reportType 
             IsActive: 1,
             ...sellerFilter,                        
             MonthlyLastSQPDataPullStatus: { [Op.ne]: 2 },
-            MonthlyLastSQPDataPullStartTime: { [Op.lt]: currentDay },
+            MonthlyLastSQPDataPullStartTime: { [Op.lt]: retryCutoffTime },
             WeeklyLastSQPDataPullStatus: { [Op.ne]: 2 },
             QuarterlyLastSQPDataPullStatus: { [Op.ne]: 2 },
-            WeeklyLastSQPDataPullStartTime: { [Op.lt]: currentDay },
-            QuarterlyLastSQPDataPullStartTime: { [Op.lt]: currentDay }
+            WeeklyLastSQPDataPullStartTime: { [Op.lt]: retryCutoffTime },
+            QuarterlyLastSQPDataPullStartTime: { [Op.lt]: retryCutoffTime }
         };
         return await findASINs(where, ['WEEK','MONTH','QUARTER']);
     };    
