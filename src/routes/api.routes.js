@@ -17,8 +17,6 @@ router.get('/cron/sqp/retry-report', (req, res) => sqpCronApiController.retryNot
 
 // ASIN sync cron routes
 router.get('/cron/asin/syncSellerAsins/:userId/:amazonSellerID', (req, res) => sqpCronApiController.syncSellerAsins(req, res));
-router.get('/cron/asin/cronSyncAllSellerAsins/:userId', (req, res) => sqpCronApiController.cronSyncAllSellerAsins(req, res));
-router.get('/cron/asin/cronSyncAllUsersSellerAsins', (req, res) => sqpCronApiController.cronSyncAllUsersSellerAsins(req, res));
 
 // Shared error handling middleware for all routes
 router.use((err, req, res, next) => {
