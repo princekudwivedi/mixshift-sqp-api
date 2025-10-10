@@ -462,8 +462,7 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 	return result;
 }
 
-async function downloadCompletedReports(authOverrides = {}, filter = {}, retry = false) {
-    //const rows = await model.getReportsForDownload(filter, retry);
+async function downloadCompletedReports(authOverrides = {}, filter = {}, retry = false) {    
 	const { cronDetailID, cronDetailData } = filter;
 	const rows = cronDetailData;	
     for (const row of rows) {

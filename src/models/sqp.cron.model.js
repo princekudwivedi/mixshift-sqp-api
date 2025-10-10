@@ -380,39 +380,6 @@ async function setProcessRunningStatus(cronDetailID, reportType, status) {
     }
 }
 
-function buildCronDetailsFilter(filter = {}, retry = false) {
-    const where = {};
-
-    if (retry) {
-        where[Op.or] = [
-            { WeeklySQPDataPullStatus: { [Op.in]: [0, 2] } },
-            { MonthlySQPDataPullStatus: { [Op.in]: [0, 2] } },
-            { QuarterlySQPDataPullStatus: { [Op.in]: [0, 2] } }
-        ];
-    } else {
-        where[Op.or] = [
-            { WeeklySQPDataPullStatus: 0 },
-            { MonthlySQPDataPullStatus: 0 },
-            { QuarterlySQPDataPullStatus: 0 }
-        ];
-    }
-
-    if (filter.cronDetailID) {
-        where.ID = Array.isArray(filter.cronDetailID) ? { [Op.in]: filter.cronDetailID } : filter.cronDetailID;
-    }
-
-    return where;
-}
-
-async function getReportsByFilter(filter = {}, retry = false) {
-    const SqpCronDetails = getSqpCronDetails();
-    const where = buildCronDetailsFilter(filter, retry);
-    return SqpCronDetails.findAll({ where });
-}
-// Alias for clarity
-const getReportsForStatusCheck = getReportsByFilter;
-const getReportsForDownload = getReportsByFilter;
-
 /**
  * Check cron details of sellers by date - checkCronDetailsOfSellersByDate
  * @param {number} idUserAccount - User account ID (0 for all)
@@ -557,9 +524,7 @@ module.exports = {
     getLatestReportId,
     updateSQPReportStatus,
     logCronActivity,
-    setProcessRunningStatus,
-    getReportsForStatusCheck,
-    getReportsForDownload,
+    setProcessRunningStatus,    
     checkCronDetailsOfSellersByDate,
     handleCronError,
     getRetryCount,

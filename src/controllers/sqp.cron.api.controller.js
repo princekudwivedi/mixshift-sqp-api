@@ -17,6 +17,7 @@ const env = require('../config/env.config');
 const isDevEnv = ["local", "development"].includes(env.NODE_ENV);
 const allowedUsers = [8];
 const { DelayHelpers } = require('../helpers/sqp.helpers');
+const asinResetService = require('../services/asin.reset.service');
 /**
  * SQP Cron API Controller
  * Handles legacy cron endpoints with proper error handling and validation
@@ -826,6 +827,27 @@ class SqpCronApiController {
         
         logger.warn({ id: record.ID, reportType }, 'Retry failed - marked as failure');
         return { cronDetailID: record.ID, amazonSellerID: record.AmazonSellerID, reportType, retried: true, success: false };
+    }
+
+    /**
+     * Automatic reset based on current date
+     * Detects if it's start of new week/month/quarter and resets accordingly
+     * - Weekly: Every Monday
+     * - Monthly: 3rd of each month (reports available after 3rd)
+     * - Quarterly: 20th of Jan/Apr/Jul/Oct (reports available around 20th)
+     */
+    async resetAsinStatus(req, res) {
+        try {
+            logger.info('Automatic ASIN reset check triggered');
+
+            const result = await asinResetService.resetAsinStatus();
+
+            return SuccessHandler.sendSuccess(res, result, 'Automatic ASIN reset completed');
+
+        } catch (error) {
+            logger.error({ error: error.message }, 'Error in resetAsinStatus');
+            return ErrorHandler.sendError(res, error, 'Failed to run automatic ASIN reset');
+        }
     }
 }
 
