@@ -66,7 +66,7 @@ async function getActiveASINsBySeller(sellerId = null, limit = true, reportType 
     }
 
     // Helper: Build pending or retry conditions
-    const pendingOrRetryCondition = (type) => {
+    const pendingCondition = (type) => {
         if (statusField && endTimeField) {
             return {
                 [Op.or]: [
@@ -94,9 +94,9 @@ async function getActiveASINsBySeller(sellerId = null, limit = true, reportType 
             IsActive: 1,
             ...sellerFilter,
             [Op.and]: [
-                pendingOrRetryCondition('Week'),
-                pendingOrRetryCondition('Month'),
-                pendingOrRetryCondition('Quarter')
+                pendingCondition('Week'),
+                pendingCondition('Month'),
+                pendingCondition('Quarter')
             ]
         };
         return await findASINs(where, ['WEEK', 'MONTH', 'QUARTER']);
