@@ -835,7 +835,7 @@ class SqpCronApiController {
     /**
      * Automatic reset based on current date
      * Detects if it's start of new week/month/quarter and resets accordingly
-     * - Weekly: Every Monday
+     * - Weekly: Every Tuesday
      * - Monthly: 3rd of each month (reports available after 3rd)
      * - Quarterly: 20th of Jan/Apr/Jul/Oct (reports available around 20th)
      */

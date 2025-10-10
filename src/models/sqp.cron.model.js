@@ -89,6 +89,7 @@ async function getActiveASINsBySeller(sellerId = null, limit = true, reportType 
         };
     };
     
+    
     const scenario1 = async () => {
         const where = {
             IsActive: 1,
@@ -105,41 +106,17 @@ async function getActiveASINsBySeller(sellerId = null, limit = true, reportType 
     const scenario2 = async () => {
         const where = {
             IsActive: 1,
-            ...sellerFilter,
+            ...sellerFilter,            
             QuarterlyLastSQPDataPullStatus: 2,
-            MonthlyLastSQPDataPullStatus: 2,
             WeeklyLastSQPDataPullStatus: { [Op.ne]: 2 },
-            WeeklyLastSQPDataPullStartTime: { [Op.lt]: retryCutoffTime }
+            MonthlyLastSQPDataPullStatus: { [Op.ne]: 2 },
+            WeeklyLastSQPDataPullStartTime: { [Op.lt]: retryCutoffTime },
+            MonthlyLastSQPDataPullStartTime: { [Op.lt]: retryCutoffTime }
         };
-        return await findASINs(where, ['WEEK']);
+        return await findASINs(where, ['WEEK','MONTH']);
     };
 
     const scenario3 = async () => {
-        const where = {
-            IsActive: 1,
-            ...sellerFilter,
-            QuarterlyLastSQPDataPullStatus: 2,            
-            WeeklyLastSQPDataPullStatus: 2,
-            MonthlyLastSQPDataPullStatus: { [Op.ne]: 2 },
-            MonthlyLastSQPDataPullStartTime: { [Op.lt]: retryCutoffTime }
-            
-        };
-        return await findASINs(where, ['MONTH']);
-    };
-
-    const scenario4 = async () => {
-        const where = {
-            IsActive: 1,
-            ...sellerFilter,
-            WeeklyLastSQPDataPullStatus: 2,
-            MonthlyLastSQPDataPullStatus: 2,
-            QuarterlyLastSQPDataPullStatus: { [Op.ne]: 2 },
-            QuarterlyLastSQPDataPullStartTime: { [Op.lt]: retryCutoffTime }
-        };
-        return await findASINs(where, ['QUARTER']);
-    };
-
-    const scenario5 = async () => {
         const where = {
             IsActive: 1,
             ...sellerFilter,
@@ -152,20 +129,8 @@ async function getActiveASINsBySeller(sellerId = null, limit = true, reportType 
         return await findASINs(where, ['MONTH', 'QUARTER']);
     };
 
-    const scenario6 = async () => {
-        const where = {
-            IsActive: 1,
-            ...sellerFilter,            
-            QuarterlyLastSQPDataPullStatus: 2,
-            WeeklyLastSQPDataPullStatus: { [Op.ne]: 2 },
-            MonthlyLastSQPDataPullStatus: { [Op.ne]: 2 },
-            WeeklyLastSQPDataPullStartTime: { [Op.lt]: retryCutoffTime },
-            MonthlyLastSQPDataPullStartTime: { [Op.lt]: retryCutoffTime }
-        };
-        return await findASINs(where, ['WEEK','MONTH']);
-    };
 
-    const scenario7 = async () => {
+    const scenario4 = async () => {
         const where = {
             IsActive: 1,
             ...sellerFilter,            
@@ -178,20 +143,44 @@ async function getActiveASINsBySeller(sellerId = null, limit = true, reportType 
         return await findASINs(where, ['WEEK','QUARTER']);
     };
 
-
-    const scenario8 = async () => {
+    const scenario5 = async () => {
         const where = {
             IsActive: 1,
-            ...sellerFilter,                        
-            MonthlyLastSQPDataPullStatus: { [Op.ne]: 2 },
-            MonthlyLastSQPDataPullStartTime: { [Op.lt]: retryCutoffTime },
+            ...sellerFilter,
+            QuarterlyLastSQPDataPullStatus: 2,
+            MonthlyLastSQPDataPullStatus: 2,
             WeeklyLastSQPDataPullStatus: { [Op.ne]: 2 },
+            WeeklyLastSQPDataPullStartTime: { [Op.lt]: retryCutoffTime }
+        };
+        return await findASINs(where, ['WEEK']);
+    };
+
+    const scenario6 = async () => {
+        const where = {
+            IsActive: 1,
+            ...sellerFilter,
+            QuarterlyLastSQPDataPullStatus: 2,            
+            WeeklyLastSQPDataPullStatus: 2,
+            MonthlyLastSQPDataPullStatus: { [Op.ne]: 2 },
+            MonthlyLastSQPDataPullStartTime: { [Op.lt]: retryCutoffTime }
+            
+        };
+        return await findASINs(where, ['MONTH']);
+    };
+
+    const scenario7 = async () => {
+        const where = {
+            IsActive: 1,
+            ...sellerFilter,
+            WeeklyLastSQPDataPullStatus: 2,
+            MonthlyLastSQPDataPullStatus: 2,
             QuarterlyLastSQPDataPullStatus: { [Op.ne]: 2 },
-            WeeklyLastSQPDataPullStartTime: { [Op.lt]: retryCutoffTime },
             QuarterlyLastSQPDataPullStartTime: { [Op.lt]: retryCutoffTime }
         };
-        return await findASINs(where, ['WEEK','MONTH','QUARTER']);
-    };    
+        return await findASINs(where, ['QUARTER']);
+    };
+
+    
 
     // Helper: Query ASINs
     const findASINs = async (where, reportTypes) => {
@@ -214,9 +203,12 @@ async function getActiveASINsBySeller(sellerId = null, limit = true, reportType 
     };
 
     // Execute scenarios in order
-    for (const scenario of [scenario1, scenario2, scenario3, scenario4, scenario5, scenario6, scenario7, scenario8]) {
+    for (const scenario of [scenario1, scenario2, scenario3, scenario4, scenario5, scenario6, scenario7]) {        
         const result = await scenario();
-        if (result.asins.length > 0) return result;
+        if (result.asins.length > 0){
+            console.log('scenario', scenario);
+            return result;
+        } 
     }
 
     logger.info({ sellerId }, 'No eligible ASINs found for any scenario');
