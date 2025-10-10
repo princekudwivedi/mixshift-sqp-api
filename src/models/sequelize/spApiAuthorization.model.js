@@ -13,7 +13,7 @@ let BaseModel = getCurrentSequelize().define(table, {
     AmazonSellerID: { type: DataTypes.STRING(255), allowNull: false },
     access_token: { type: DataTypes.TEXT, allowNull: true },
     refresh_token: { type: DataTypes.TEXT, allowNull: true },
-    expires_in: { type: DataTypes.INTEGER, allowNull: true },
+    expires_in: { type: DataTypes.DATE, allowNull: true },
     iLostAccess: { type: DataTypes.TINYINT, allowNull: true },
     dtLostAccessOn: { type: DataTypes.DATE, allowNull: true }
 }, {
@@ -38,7 +38,7 @@ function getModel() {
             AmazonSellerID: { type: DataTypes.STRING(255), allowNull: false },
             access_token: { type: DataTypes.TEXT, allowNull: true },
             refresh_token: { type: DataTypes.TEXT, allowNull: true },
-            expires_in: { type: DataTypes.INTEGER, allowNull: true },
+            expires_in: { type: DataTypes.DATE, allowNull: true },
             iLostAccess: { type: DataTypes.TINYINT, allowNull: true },
             dtLostAccessOn: { type: DataTypes.DATE, allowNull: true }
         }, {

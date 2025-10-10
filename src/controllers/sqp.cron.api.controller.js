@@ -15,7 +15,7 @@ const { Op, literal } = require('sequelize');
 const logger = require('../utils/logger.utils');
 const env = require('../config/env.config');
 const isDevEnv = ["local", "development"].includes(env.NODE_ENV);
-const allowedUsers = [8, 3];
+const allowedUsers = [8];
 const { DelayHelpers } = require('../helpers/sqp.helpers');
 /**
  * SQP Cron API Controller
@@ -37,20 +37,40 @@ class SqpCronApiController {
 
     /**
      * Build authentication overrides for a seller
+     * Automatically refreshes token if expired or about to expire
      */
     async buildAuthOverrides(amazonSellerID) {
         try {
             const authOverrides = {};
-            const tokenRow = await AuthToken.getSavedToken(amazonSellerID);            
-            if (tokenRow && tokenRow.access_token) {
-                authOverrides.accessToken = tokenRow.access_token;
+            
+            // Use the new getValidAccessToken which automatically refreshes if needed
+            const authService = require('../services/auth.service');
+            const tokenResult = await authService.getValidAccessToken(amazonSellerID);
+            
+            if (tokenResult.accessToken) {
+                authOverrides.accessToken = tokenResult.accessToken;
+                
                 logger.info({ 
                     amazonSellerID, 
-                    expiresIn: tokenRow.expires_in
-                }, 'Token details for seller');
+                    wasRefreshed: tokenResult.wasRefreshed,
+                    refreshFailed: tokenResult.refreshFailed || false
+                }, tokenResult.wasRefreshed 
+                    ? 'Token refreshed successfully for seller' 
+                    : 'Using existing valid token for seller');
+                    
+                if (tokenResult.refreshFailed) {
+                    logger.warn({ 
+                        amazonSellerID,
+                        error: tokenResult.error 
+                    }, 'Token refresh failed, using existing token - may encounter authentication errors');
+                }
             } else {
-                logger.warn({ amazonSellerID }, 'No access token found for seller');
+                logger.warn({ 
+                    amazonSellerID,
+                    error: tokenResult.error 
+                }, 'No valid access token available for seller');
             }
+            
             return authOverrides;
         } catch (error) {
             logger.error({ error: error.message, amazonSellerID }, 'Error building auth overrides');

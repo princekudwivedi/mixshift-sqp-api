@@ -68,6 +68,51 @@ class AuthToken {
     }
 
     /**
+     * Update token after refresh (ALLOWED for token refresh operations)
+     * @param {string} amazonSellerID - Amazon Seller ID
+     * @param {Object} tokenData - Token data to update
+     * @returns {boolean} - Success status
+     */
+    async updateRefreshedToken(amazonSellerID, tokenData) {
+        try {
+            const SpApiAuthorization = getSpApiAuthorization();
+            
+            const updateData = {
+                access_token: tokenData.access_token,
+                expires_in: tokenData.expires_in
+            };
+            
+            // Update refresh token if provided
+            if (tokenData.refresh_token) {
+                updateData.refresh_token = tokenData.refresh_token;
+            }
+            
+            const [updated] = await SpApiAuthorization.update(updateData, {
+                where: { AmazonSellerID: amazonSellerID }
+            });
+            
+            if (updated > 0) {
+                logger.info({ 
+                    amazonSellerID, 
+                    expiresAt: tokenData.expires_in
+                }, 'Token updated after refresh');
+                return true;
+            } else {
+                logger.warn({ amazonSellerID }, 'No token record found to update');
+                return false;
+            }
+            
+        } catch (error) {
+            logger.error({ 
+                amazonSellerID,
+                error: error.message,
+                stack: error.stack
+            }, 'Failed to update refreshed token');
+            throw error;
+        }
+    }
+
+    /**
      * Create new token
      */
     async create() { throw new Error('Write operation not allowed on read-only auth token model'); }
