@@ -18,6 +18,8 @@ const isDevEnv = ["local", "development"].includes(env.NODE_ENV);
 const allowedUsers = [8];
 const { DelayHelpers } = require('../helpers/sqp.helpers');
 const asinResetService = require('../services/asin.reset.service');
+const authService = require('../services/auth.service');
+
 /**
  * SQP Cron API Controller
  * Handles legacy cron endpoints with proper error handling and validation
@@ -34,53 +36,11 @@ class SqpCronApiController {
             Number(process.env.RATE_LIMIT_WINDOW_MS) || 60000
         );
         // MemoryMonitor uses static methods, no instance needed
-    }
-
-    /**
-     * Build authentication overrides for a seller
-     * Automatically refreshes token if expired or about to expire
-     */
-    async buildAuthOverrides(amazonSellerID) {
-        try {
-            const authOverrides = {};
-            
-            // Use the new getValidAccessToken which automatically refreshes if needed
-            const authService = require('../services/auth.service');
-            const tokenResult = await authService.getValidAccessToken(amazonSellerID);
-            
-            if (tokenResult.accessToken) {
-                authOverrides.accessToken = tokenResult.accessToken;
-                
-                logger.info({ 
-                    amazonSellerID, 
-                    wasRefreshed: tokenResult.wasRefreshed,
-                    refreshFailed: tokenResult.refreshFailed || false
-                }, tokenResult.wasRefreshed 
-                    ? 'Token refreshed successfully for seller' 
-                    : 'Using existing valid token for seller');
-                    
-                if (tokenResult.refreshFailed) {
-                    logger.warn({ 
-                        amazonSellerID,
-                        error: tokenResult.error 
-                    }, 'Token refresh failed, using existing token - may encounter authentication errors');
-                }
-            } else {
-                logger.warn({ 
-                    amazonSellerID,
-                    error: tokenResult.error 
-                }, 'No valid access token available for seller');
-            }
-            
-            return authOverrides;
-        } catch (error) {
-            logger.error({ error: error.message, amazonSellerID }, 'Error building auth overrides');
-            throw error;
-        }
-    }
+    }   
 
     /**
      * Run all cron operations (request, status check, download)
+     * Returns immediately and processes in background
      */
     async runAllCronOperations(req, res) {
         try {
@@ -93,8 +53,36 @@ class SqpCronApiController {
                 userId: validatedUserId, 
                 sellerId: validatedSellerId,
                 hasToken: !!req.authToken 
-            }, 'Run all cron operations');
+            }, 'Run all cron operations - starting background process');
 
+            // Process in background (don't wait)
+            this._processAllCronOperations(validatedUserId, validatedSellerId)
+                .catch(error => {
+                    logger.error({ error: error.message }, 'Error in background cron processing');
+                });
+
+            return SuccessHandler.sendSuccess(res, {
+                message: 'Cron operations started',
+                processing: 'Background processing initiated',
+                params: { userId: validatedUserId, sellerId: validatedSellerId }
+            }, 'Cron job started successfully');
+
+        } catch (error) {
+            logger.error({ 
+                error: error.message,
+                stack: error.stack,
+                query: req.query 
+            }, 'Error starting cron operations');
+            
+            return ErrorHandler.sendError(res, error, 'Failed to start cron operations');
+        }
+    }
+
+    /**
+     * Internal method to process all cron operations
+     */
+    async _processAllCronOperations(validatedUserId, validatedSellerId) {
+        try {
             await loadDatabase(0);
             const users = validatedUserId ? [{ ID: validatedUserId }] : await getAllAgencyUserList();
             
@@ -166,7 +154,7 @@ class SqpCronApiController {
                                 // Check rate limit before making API calls
                                 await this.rateLimiter.checkLimit(s.AmazonSellerID);
                                 
-                                const authOverrides = await this.buildAuthOverrides(s.AmazonSellerID);
+                                const authOverrides = await authService.buildAuthOverrides(s.AmazonSellerID);
                                 
                                 // Step 1: Request report with circuit breaker protection
                                 const { cronDetailIDs, cronDetailData } = await this.circuitBreaker.execute(
@@ -240,79 +228,86 @@ class SqpCronApiController {
                 circuitBreakerState: circuitBreakerState.state,
                 rateLimiterStats
             }, 'Cron operations completed - system status');
-            
-            return SuccessHandler.sendProcessingSuccess(
-                res,
-                totalProcessed,
-                totalErrors,
-                `All cron operations completed successfully`
-            );
 
         } catch (error) {
             logger.error({ 
                 error: error.message,
-                stack: error.stack,
-                query: req.query 
-            }, 'Error in run all cron operations');
-            
-            return ErrorHandler.sendError(res, error, 'Failed to run all cron operations');
+                stack: error.stack
+            }, 'Error in _processAllCronOperations');
         }
     }
 
     /**
      * Sync ASINs from mws_items into seller_ASIN_list for a single seller
-     * GET: /cron/sqp/syncSellerAsins/{userId}/{amazonSellerID}
+     * Returns immediately and processes in background
+     * GET: /cron/asin/syncSellerAsins/{userId}/{amazonSellerID}
      */
     async syncSellerAsins(req, res) {
         try {
             const { userId, amazonSellerID } = req.params;
             
+            logger.info({ userId, amazonSellerID }, 'ASIN sync started - background processing');
+
+            // Process in background
+            this._processSyncSellerAsins(userId, amazonSellerID)
+                .catch(error => {
+                    logger.error({ error: error.message }, 'Error in background ASIN sync');
+                });
+
+            return SuccessHandler.sendSuccess(res, {
+                message: 'ASIN sync started',
+                processing: 'Background processing initiated',
+                params: { userId, amazonSellerID }
+            }, 'ASIN sync started successfully');
+
+        } catch (error) {
+            logger.error({ error: error.message }, 'Error starting ASIN sync');
+            return ErrorHandler.sendError(res, error, 'Failed to start ASIN sync');
+        }
+    }
+
+    /**
+     * Internal method to process ASIN sync
+     */
+    async _processSyncSellerAsins(userId, amazonSellerID) {
+        try {
             // Validate parameters
             const validatedUserId = ValidationHelpers.sanitizeNumber(userId);
             const validatedAmazonSellerID = ValidationHelpers.validateAmazonSellerId(amazonSellerID);
 
             if (!validatedUserId || validatedUserId <= 0 || !validatedAmazonSellerID) {
-                return ErrorHandler.sendError(res, 'Invalid userId/AmazonSellerID', 400);
+                logger.error({ userId, amazonSellerID }, 'Invalid parameters for ASIN sync');
+                return;
             }            
+            
             // Load tenant database
             await loadDatabase(validatedUserId);
+            
             // Use the helper function
             const result = await this._syncSellerAsinsInternal(validatedAmazonSellerID, 0, 'AmazonSellerID');
 
             if (result.error) {
-                return ErrorHandler.sendError(res, result.error, 500);
+                logger.error({ error: result.error }, 'ASIN sync failed');
+                return;
             }
 
-            // Get seller info for response
-            // Use sellerModel directly for tenant-aware operations
+            // Get seller info
             const seller = await sellerModel.getProfileDetailsByID(validatedAmazonSellerID, 'AmazonSellerID');
-
-            const response = {
-                success: true,
-                seller: {
-                    id: seller.idSellerAccount,
-                    amazon_seller_id: seller.AmazonSellerID,
-                    name: seller.SellerName
-                },
-                inserted_asins: result.insertedCount,
-                total_seller_asins: result.totalCount,
-                message: result.insertedCount > 0 
-                    ? `Sync complete: ${result.insertedCount} new ASINs inserted, ${result.totalCount} total ASINs`
-                    : `Sync complete: No new ASINs to insert, ${result.totalCount} total ASINs`
-            };
 
             logger.info({
                 userId: validatedUserId,
-                sellerID: seller.idSellerAccount,
+                sellerID: seller?.idSellerAccount,
+                amazonSellerID: validatedAmazonSellerID,
                 insertedCount: result.insertedCount,
                 totalCount: result.totalCount
-            }, 'syncSellerAsins completed successfully');
-
-            return SuccessHandler.sendSuccess(res, response);
+            }, 'ASIN sync completed successfully');
 
         } catch (error) {
-            logger.error({ error: error.message, userId: req.params.userId, amazonSellerID: req.params.amazonSellerID }, 'syncSellerAsins failed');
-            return ErrorHandler.sendError(res, error, 'Internal server error', 500);
+            logger.error({ 
+                error: error.message, 
+                userId, 
+                amazonSellerID 
+            }, 'Error in _processSyncSellerAsins');
         }
     }
 
@@ -541,7 +536,31 @@ class SqpCronApiController {
             logger.info({ 
                 userId: validatedUserId,
                 hasToken: !!req.authToken 
-            }, 'Starting notification retry scan');
+            }, 'Starting notification retry scan - background process');
+
+            // Process in background
+            this._processRetryNotifications(validatedUserId)
+                .catch(error => {
+                    logger.error({ error: error.message }, 'Error in background retry notifications');
+                });
+
+            return SuccessHandler.sendSuccess(res, {
+                message: 'Notification retry started',
+                processing: 'Background processing initiated',
+                params: { userId: validatedUserId }
+            }, 'Notification retry started successfully');
+
+        } catch (error) {
+            logger.error({ error: error.message }, 'Error starting retry notifications');
+            return ErrorHandler.sendError(res, error, 'Failed to start retry notifications');
+        }
+    }
+
+    /**
+     * Internal method to process retry notifications
+     */
+    async _processRetryNotifications(validatedUserId) {
+        try {
 
             await loadDatabase(0);
             const users = validatedUserId ? [{ ID: validatedUserId }] : await getAllAgencyUserList();
@@ -577,7 +596,7 @@ class SqpCronApiController {
                     // Retry each stuck record's report types before deciding final status
                     const retryResults = [];
                     for (const rec of stuckRecords) {
-                        const authOverrides = await this.buildAuthOverrides(rec.AmazonSellerID);
+                        const authOverrides = await authService.buildAuthOverrides(rec.AmazonSellerID);
                         for (const type of rec.stuckReportTypes) {
                             try {                                
                                 const rr = await this.retryStuckRecord(rec, type, authOverrides);
@@ -610,34 +629,21 @@ class SqpCronApiController {
                 }
             }
             
-            if (totalRetryNotifications === 0) {
+            if (allResults.length === 0) {
                 logger.info('No stuck records found across all users');
-                return SuccessHandler.sendSuccess(res, {
-                    message: 'No stuck records found',
-                    suppressedCount: 0,
-                    records: []
-                });
+            } else {
+                logger.info({
+                    totalRetryNotifications: allResults.length,
+                    totalErrors,
+                    results: allResults
+                }, 'Notification retry completed');
             }
-            
-            logger.info({
-                totalRetryNotifications: allResults.length,
-                totalErrors,
-                results: allResults
-            }, 'Notification retry completed');
-            
-            return SuccessHandler.sendSuccess(res, {
-                message: `Retry notifications for ${totalRetryNotifications} stuck records`,
-                retryNotificationsCount: allResults.length,
-                records: allResults
-            });
             
         } catch (error) {
             logger.error({ 
                 error: error.message,
                 stack: error.stack 
-            }, 'Error in notification suppression scan');
-            
-            return ErrorHandler.sendError(res, error, 'Failed to suppress notifications');
+            }, 'Error in _processRetryNotifications');
         }
     }
 
@@ -740,17 +746,36 @@ class SqpCronApiController {
     /**
      * Retry a stuck record's pipeline for a specific report type, then finalize status.
      */
-    async retryStuckRecord(record, reportType, authOverrides) {        
+    async retryStuckRecord(record, reportType, authOverrides) {
+        
+        // Check memory usage before processing
+        const memoryStats = MemoryMonitor.getMemoryStats();
+        if (MemoryMonitor.isMemoryUsageHigh(Number(process.env.MAX_MEMORY_USAGE_MB) || 500)) {
+            logger.warn({ 
+                memoryUsage: memoryStats.heapUsed,
+                threshold: process.env.MAX_MEMORY_USAGE_MB || 500
+            }, 'High memory usage detected, skipping seller processing');            
+            return;
+        }
+
         let res = null;
         try {
-            res =await ctrl.checkReportStatuses(authOverrides, { cronDetailID: [record.ID], reportType: reportType, cronDetailData: [record] }, true );            
+            res = await this.circuitBreaker.execute(
+                () => ctrl.checkReportStatuses(authOverrides, { cronDetailID: [record.ID], reportType: reportType, cronDetailData: [record] }, true ),
+                { sellerId: s.idSellerAccount, operation: 'checkReportStatuses' }
+            );
+
         } catch (e) {
             logger.error({ id: record.ID, reportType, error: e.message }, 'Retry status check failed');
         }
         // Check if status check was successful AND not skipped (e.g., FATAL errors are skipped)
         if(res && res[0] && res[0].success && !res[0].data?.handled) {
             try {
-                await ctrl.downloadCompletedReports(authOverrides, { cronDetailID: [record.ID], reportType: reportType, cronDetailData: [record] }, true);
+                await this.circuitBreaker.execute(
+                    () => ctrl.downloadCompletedReports(authOverrides, { cronDetailID: [record.ID], reportType: reportType, cronDetailData: [record] }, true),
+                    { sellerId: s.idSellerAccount, operation: 'downloadCompletedReports' }
+                );
+
             } catch (e) {
                 logger.error({ id: record.ID, reportType, error: e.message }, 'Retry download failed');
             }
@@ -841,11 +866,21 @@ class SqpCronApiController {
      */
     async resetAsinStatus(req, res) {
         try {
-            logger.info('Automatic ASIN reset check triggered');
+            logger.info('Automatic ASIN reset check triggered - background process');
 
-            const result = await asinResetService.resetAsinStatus();
+            // Process in background
+            asinResetService.resetAsinStatus()
+                .then(result => {
+                    logger.info({ result }, 'ASIN reset completed in background');
+                })
+                .catch(error => {
+                    logger.error({ error: error.message }, 'Error in background ASIN reset');
+                });
 
-            return SuccessHandler.sendSuccess(res, result, 'Automatic ASIN reset completed');
+            return SuccessHandler.sendSuccess(res, {
+                message: 'ASIN reset started',
+                processing: 'Background processing initiated'
+            }, 'ASIN reset started successfully');
 
         } catch (error) {
             logger.error({ error: error.message }, 'Error in resetAsinStatus');

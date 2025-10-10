@@ -6,6 +6,48 @@ const logger = require('../utils/logger.utils');
 // Amazon LWA token endpoint
 const LWA_TOKEN_URL = 'https://api.amazon.com/auth/o2/token';
 
+/**
+     * Build authentication overrides for a seller
+     * Automatically refreshes token if expired or about to expire
+*/
+async function buildAuthOverrides(amazonSellerID) {
+	try {
+		const authOverrides = {};
+		
+		// Use the new getValidAccessToken which automatically refreshes if needed
+		const tokenResult = await this.getValidAccessToken(amazonSellerID);
+		
+		if (tokenResult.accessToken) {
+			authOverrides.accessToken = tokenResult.accessToken;
+			
+			logger.info({ 
+				amazonSellerID, 
+				wasRefreshed: tokenResult.wasRefreshed,
+				refreshFailed: tokenResult.refreshFailed || false
+			}, tokenResult.wasRefreshed 
+				? 'Token refreshed successfully for seller' 
+				: 'Using existing valid token for seller');
+				
+			if (tokenResult.refreshFailed) {
+				logger.warn({ 
+					amazonSellerID,
+					error: tokenResult.error 
+				}, 'Token refresh failed, using existing token - may encounter authentication errors');
+			}
+		} else {
+			logger.warn({ 
+				amazonSellerID,
+				error: tokenResult.error 
+			}, 'No valid access token available for seller');
+		}
+		
+		return authOverrides;
+	} catch (error) {
+		logger.error({ error: error.message, amazonSellerID }, 'Error building auth overrides');
+		throw error;
+	}
+}
+
 function isTokenExpired(tokenRow) {
 	if (!tokenRow || !tokenRow.expires_in) {
 		return true;
@@ -194,7 +236,8 @@ module.exports = {
 	isTokenExpired,
 	refreshAccessToken,
 	updateTokenInDatabase,
-	getValidAccessToken
+	getValidAccessToken,
+	buildAuthOverrides
 };
 
 
