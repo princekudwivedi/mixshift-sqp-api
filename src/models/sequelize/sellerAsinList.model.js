@@ -15,6 +15,8 @@ let BaseModel = getCurrentSequelize().define(table, {
     SellerID: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false },
     AmazonSellerID: { type: DataTypes.STRING(100), allowNull: false },
     ASIN: { type: DataTypes.STRING(20), allowNull: false },
+    ItemName: { type: DataTypes.STRING(500), allowNull: true },
+    SKU: { type: DataTypes.STRING(255), allowNull: true },
     IsActive: { type: DataTypes.TINYINT, allowNull: true, defaultValue: 0 },
     
     LatestRecordDateRangeWeekly: { type: DataTypes.STRING(255), allowNull: true },
@@ -60,6 +62,8 @@ function getModel() {
             SellerID: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false },
             AmazonSellerID: { type: DataTypes.STRING(100), allowNull: false },
             ASIN: { type: DataTypes.STRING(20), allowNull: false },
+            ItemName: { type: DataTypes.STRING(500), allowNull: true },
+            SKU: { type: DataTypes.STRING(255), allowNull: true },
             IsActive: { type: DataTypes.TINYINT, allowNull: true, defaultValue: 0 },
             
             LatestRecordDateRangeWeekly: { type: DataTypes.STRING(255), allowNull: true },

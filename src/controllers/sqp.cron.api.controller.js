@@ -529,12 +529,12 @@ class SqpCronApiController {
                         [require('sequelize').Op.ne]: ''
                     }
                 },
-                attributes: ['ASIN'],
+                attributes: ['ASIN','ItemName','SKU'],
                 raw: true,
                 group: ['ASIN']
             });
             logger.info({ sellerID: seller.idSellerAccount, amazonSellerID: seller.AmazonSellerID, newAsinsCount: newAsins.length }, 'Retrieved ASINs from mws_items');
-
+            
             // Filter out existing ASINs and prepare for bulk insert
             const asinsToInsert = newAsins
                 .filter(item => {
@@ -547,6 +547,8 @@ class SqpCronApiController {
                         SellerID: seller.idSellerAccount,
                         AmazonSellerID: seller.AmazonSellerID,
                         ASIN: asin,
+                        ItemName: item.ItemName,
+                        SKU: item.SKU,
                         IsActive: isActive,
                         dtCreatedOn: new Date()
                     };
