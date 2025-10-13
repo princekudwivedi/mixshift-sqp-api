@@ -42,9 +42,9 @@ async function getReportsForStatusType(row, retry = false) {
     const reportTypes = [];
     let where = {};
     if (retry) {
-        where = { CronJobID: row.ID, ReportType: row.ReportType, Status: { [Op.in]: [0, 2] } };
+        where = { CronJobID: row.ID, ReportType: row.ReportType, Status: { [Op.in]: [0, 2] }, iInitialPull: { [Op.ne]: 1 } };
     } else {
-        where = { CronJobID: row.ID, Status: { [Op.in]: [1] } };
+        where = { CronJobID: row.ID, Status: { [Op.in]: [1] }, iInitialPull: { [Op.ne]: 1 } };
     }
     const logs = await SqpCronLogs.findAll({ where });
     reportTypes.push(...logs.map(l => l.ReportType));
@@ -292,15 +292,36 @@ async function hasEligibleASINs(sellerId, reportType = null, limit = true) {
     return hasEligible;
 }
 
-async function createSQPCronDetail(amazonSellerID, asinString) {
+async function createSQPCronDetail(amazonSellerID, asinString, options = {}) {
     const SqpCronDetails = getSqpCronDetails();
-    const row = await SqpCronDetails.create({ 
+    
+    // Base data for creating cron detail
+    const createData = { 
         AmazonSellerID: amazonSellerID, 
-        ASIN_List: asinString, 
+        ASIN_List: asinString,         
         dtCreatedOn: new Date(), 
         dtCronStartDate: new Date(), 
         dtUpdatedOn: new Date() 
-    });
+    };
+    
+    // Add optional fields for initial pull
+    if (options.iInitialPull !== undefined) {
+        createData.iInitialPull = options.iInitialPull;
+    }
+    if (options.FullWeekRange) {
+        createData.FullWeekRange = options.FullWeekRange;
+    }
+    if (options.FullMonthRange) {
+        createData.FullMonthRange = options.FullMonthRange;
+    }
+    if (options.FullQuarterRange) {
+        createData.FullQuarterRange = options.FullQuarterRange;
+    }
+    if (options.SellerName) {
+        createData.SellerName = options.SellerName;
+    }
+    
+    const row = await SqpCronDetails.create(createData);
     
     // Fetch the complete record with all columns to ensure all fields are populated
     const completeRow = await SqpCronDetails.findByPk(row.ID);
@@ -323,11 +344,17 @@ async function updateSQPReportStatus(cronDetailID, reportType, status, _reportId
     await SqpCronDetails.update(data, { where: { ID: cronDetailID } });
 }
 
-async function logCronActivity({ cronJobID, reportType, action, status, message, reportID = null, reportDocumentID = null, retryCount = null, executionTime = null }) {
+async function logCronActivity({ cronJobID, reportType, action, status, message, reportID = null, reportDocumentID = null, retryCount = null, executionTime = null, Range = null, iInitialPull = 0 }) {
     const SqpCronLogs = getSqpCronLogs();
-    const where = { CronJobID: cronJobID, ReportType: reportType };
+    
+    // For initial pull with Range and Action, create unique log per range + action
+    // This prevents different actions from overwriting each other
+    // For regular pull, match by CronJobID + ReportType + Action
+    const where = (iInitialPull === 1 && Range) 
+        ? { CronJobID: cronJobID, ReportType: reportType, Range: Range, iInitialPull: iInitialPull }
+        : { CronJobID: cronJobID, ReportType: reportType};
+    
     const payload = {
-        Action: action,
         Status: status,
         Message: message,
         ReportID: reportID,
@@ -339,13 +366,22 @@ async function logCronActivity({ cronJobID, reportType, action, status, message,
     if (reportDocumentID != null) {
         payload.ReportDocumentID = reportDocumentID;
     }
+    if(Range != null) {
+        payload.Range = Range;
+    }
+    if(iInitialPull != null) {
+        payload.iInitialPull = iInitialPull;
+    }
     
     const existing = await SqpCronLogs.findOne({ where });
     if (existing) {
+        // Update existing log entry (for retries of the same action)
         await existing.update(payload);
     } else {
+        // Create new log entry
         await SqpCronLogs.create({
             ...where,
+            Action: action,  // Explicitly include Action
             ...payload,
             dtCreatedOn: new Date()
         });

@@ -12,6 +12,7 @@ async function getCompletedDownloadsWithFiles(filter = {}) {
 	// Support both cronDetailID and CronJobID for backward compatibility
 	if (filter.cronDetailID) where.CronJobID = filter.cronDetailID;
 	if (filter.ReportType) where.ReportType = filter.ReportType;
+	if (filter.ReportID) where.ReportID = filter.ReportID;
 	return SqpDownloadUrls.findAll({
 		where: {
 			...where,
@@ -77,17 +78,22 @@ async function updateDownloadUrlStatus(id, status, errorMessage = null, filePath
 	return updateDownloadStatus({ id }, { status, errorMessage, filePath, fileSize, incrementAttempts });
 }
 
-async function updateDownloadUrlStatusByCriteria(cronJobID, reportType, status, errorMessage = null, filePath = null, fileSize = null, incrementAttempts = false) {
+async function updateDownloadUrlStatusByCriteria(cronJobID, reportType, status, errorMessage = null, filePath = null, fileSize = null, incrementAttempts = false, reportID = null) {
     const SqpDownloadUrls = getSqpDownloadUrls();
-    // Find latest row for this CronJobID+ReportType
+    // Find latest row for this CronJobID+ReportType (and ReportID if provided - for initial pull)
+    const where = reportID 
+        ? { CronJobID: cronJobID, ReportType: reportType, ReportID: reportID }
+        : { CronJobID: cronJobID, ReportType: reportType };
+    
     const latest = await SqpDownloadUrls.findOne({
-        where: { CronJobID: cronJobID, ReportType: reportType },
+        where: where,
         order: [['dtUpdatedOn', 'DESC']]
     });
     if (!latest) {
-        logger.warn({ cronJobID, reportType }, 'updateDownloadUrlStatusByCriteria: No existing row found. Creating new');
+        logger.warn({ cronJobID, reportType, reportID }, 'updateDownloadUrlStatusByCriteria: No existing row found. Creating new');
         await SqpDownloadUrls.create({
             CronJobID: cronJobID,
+            ReportID: reportID || null,
             ReportType: reportType,
             Status: status || 'PENDING',
             ProcessStatus: 'PENDING',
@@ -113,7 +119,11 @@ async function updateDownloadUrlStatusByCriteria(cronJobID, reportType, status, 
 
 async function storeDownloadUrl(row) {
     const SqpDownloadUrls = getSqpDownloadUrls();
-	const where = { CronJobID: row.CronJobID, ReportType: row.ReportType };
+	// Include ReportID in the where clause to support multiple reports per type (initial pull)
+	const where = row.ReportID 
+		? { CronJobID: row.CronJobID, ReportType: row.ReportType, ReportID: row.ReportID }
+		: { CronJobID: row.CronJobID, ReportType: row.ReportType };
+	
 	const latest = await SqpDownloadUrls.findOne({
         where: where,
         order: [['dtUpdatedOn', 'DESC']]
@@ -133,7 +143,13 @@ async function storeDownloadUrl(row) {
 			dtUpdatedOn: new Date()
 		};
 		try {
-			return await SqpDownloadUrls.create({ CronJobID: row.CronJobID, ReportType: row.ReportType, ...payload, dtCreatedOn: new Date() });
+			return await SqpDownloadUrls.create({ 
+				CronJobID: row.CronJobID, 
+				ReportID: row.ReportID || null,
+				ReportType: row.ReportType, 
+				...payload, 
+				dtCreatedOn: new Date() 
+			});
 		} catch (err) {
 			logger.error({
 				error: err.message,
@@ -181,7 +197,10 @@ async function updateProcessStatusById(id, processStatus, extra = {}) {
 	if (typeof extra.totalRecords === 'number') data.TotalRecords = extra.totalRecords;
 	if (typeof extra.fullyImported === 'number') data.FullyImported = extra.fullyImported;
 	if (typeof extra.lastError === 'string') data.LastProcessError = extra.lastError;
-	await SqpDownloadUrls.update(data, { where: { ID: id } });
+	const where = extra.reportID ? { ID: id, ReportID: extra.reportID } : { ID: id };
+	console.log('where', where);
+	
+	await SqpDownloadUrls.update(data, { where: where });
 }
 
 async function getDownloadUrlStats() {

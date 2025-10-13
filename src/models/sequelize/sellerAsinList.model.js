@@ -23,6 +23,11 @@ let BaseModel = getCurrentSequelize().define(table, {
     LatestRecordDateRangeMonthly: { type: DataTypes.STRING(255), allowNull: true },
     LatestRecordDateRangeQuarterly: { type: DataTypes.STRING(255), allowNull: true },
 
+    // Overall Initial Pull Status (for all types combined)
+    InitialPullStatus: { type: DataTypes.TINYINT, allowNull: true },
+    InitialPullStartTime: { type: DataTypes.DATE, allowNull: true },
+    InitialPullEndTime: { type: DataTypes.DATE, allowNull: true },    
+
     // Weekly fields
     WeeklyLastSQPDataPullStatus: { type: DataTypes.TINYINT, allowNull: true },
     WeeklyLastSQPDataPullStartTime: { type: DataTypes.DATE, allowNull: true },
@@ -36,7 +41,7 @@ let BaseModel = getCurrentSequelize().define(table, {
     // Quarterly fields
     QuarterlyLastSQPDataPullStatus: { type: DataTypes.TINYINT, allowNull: true },
     QuarterlyLastSQPDataPullStartTime: { type: DataTypes.DATE, allowNull: true },
-    QuarterlyLastSQPDataPullEndTime: { type: DataTypes.DATE, allowNull: true },    
+    QuarterlyLastSQPDataPullEndTime: { type: DataTypes.DATE, allowNull: true },
     
     dtCreatedOn: { type: DataTypes.DATE, allowNull: false },
     dtUpdatedOn: { type: DataTypes.DATE, allowNull: true }
@@ -70,6 +75,11 @@ function getModel() {
             LatestRecordDateRangeMonthly: { type: DataTypes.STRING(255), allowNull: true },
             LatestRecordDateRangeQuarterly: { type: DataTypes.STRING(255), allowNull: true },
 
+            // Overall Initial Pull Status (for all types combined)
+            InitialPullStatus: { type: DataTypes.TINYINT, allowNull: true },
+            InitialPullStartTime: { type: DataTypes.DATE, allowNull: true },
+            InitialPullEndTime: { type: DataTypes.DATE, allowNull: true },
+
             // Weekly fields
             WeeklyLastSQPDataPullStatus: { type: DataTypes.TINYINT, allowNull: true },
             WeeklyLastSQPDataPullStartTime: { type: DataTypes.DATE, allowNull: true },
@@ -83,8 +93,7 @@ function getModel() {
             // Quarterly fields
             QuarterlyLastSQPDataPullStatus: { type: DataTypes.TINYINT, allowNull: true },
             QuarterlyLastSQPDataPullStartTime: { type: DataTypes.DATE, allowNull: true },
-            QuarterlyLastSQPDataPullEndTime: { type: DataTypes.DATE, allowNull: true },               
-            
+            QuarterlyLastSQPDataPullEndTime: { type: DataTypes.DATE, allowNull: true },
             
             dtCreatedOn: { type: DataTypes.DATE, allowNull: false },
             dtUpdatedOn: { type: DataTypes.DATE, allowNull: true }

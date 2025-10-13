@@ -33,7 +33,8 @@ class RetryHelpers {
             maxRetries = 3,
             skipIfMaxRetriesReached = true,
             model,
-            sendFailureNotification
+            sendFailureNotification,
+            extraLogFields = {}
         } = options;
 
         if (!model) {
@@ -93,7 +94,8 @@ class RetryHelpers {
                     status: 0,
                     message: `Attempt ${attempt}/${maxRetries}: Starting ${action}`,
                     reportID: (context && (context.reportId || context.reportID)) || null,
-                    retryCount: currentRetry
+                    retryCount: currentRetry,
+                    ...extraLogFields
                 });
 
                 // Execute the operation
@@ -117,7 +119,7 @@ class RetryHelpers {
                         reportDocumentID: result.reportDocumentID || null,
                         retryCount: currentRetry,
                         executionTime: (Date.now() - t0) / 1000,
-                        ...result.logData
+                        ...extraLogFields
                     });
                 }
 

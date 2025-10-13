@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const sqpCronApiController = require('../controllers/sqp.cron.api.controller');
+const initialPullController = require('../controllers/initial.pull.controller');
 const AuthMiddleware = require('../middleware/auth.middleware');
 
 // Apply shared middleware to all routes
@@ -21,6 +22,8 @@ router.get('/cron/asin/syncSellerAsins/:userId/:amazonSellerID', (req, res) => s
 // ASIN reset cron routes
 router.get('/cron/asin/reset/status', (req, res) => sqpCronApiController.resetAsinStatus(req, res));
 
+// Initial Pull cron route
+router.get('/cron/sqp/initial/pull', (req, res) => initialPullController.runInitialPull(req, res));
 
 // Shared error handling middleware for all routes
 router.use((err, req, res, next) => {

@@ -144,7 +144,9 @@ const config = {
 
     // Report Types
     TYPE_ARRAY: env('TYPE_ARRAY', ['WEEK', 'MONTH', 'QUARTER']),
-    //TYPE_ARRAY: env('TYPE_ARRAY', ['WEEK']),
+    WEEKS_TO_PULL: toInt(env('WEEKS_TO_PULL', '2'), 2),
+    MONTHS_TO_PULL: toInt(env('MONTHS_TO_PULL', '2'), 2),
+    QUARTERS_TO_PULL: toInt(env('QUARTERS_TO_PULL', '2'), 2),
 };
 
 // Validation

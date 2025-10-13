@@ -108,7 +108,7 @@ async function requestForSeller(seller, authOverrides = {}, spReportType = confi
 			const chunk = chunks[i];
 			logger.info({ chunkIndex: i, asinCount: chunk.asins.length }, 'Processing chunk');
 			
-			const cronDetailRow = await model.createSQPCronDetail(seller.AmazonSellerID, chunk.asin_string);
+			const cronDetailRow = await model.createSQPCronDetail(seller.AmazonSellerID, chunk.asin_string, { SellerName: seller.SellerName });
 			const cronDetailID = cronDetailRow.ID;
 			// Convert Sequelize instance to plain object
 			const cronDetailObject = cronDetailRow.toJSON ? cronDetailRow.toJSON() : cronDetailRow.dataValues;
@@ -120,7 +120,7 @@ async function requestForSeller(seller, authOverrides = {}, spReportType = confi
 				await model.ASINsBySellerUpdated(seller.AmazonSellerID, chunk.asins, 1, type, startTime); // 1 = InProgress
                 // ProcessRunningStatus = 1 (Request Report)
                 await model.setProcessRunningStatus(cronDetailID, type, 1);
-                await model.logCronActivity({ cronJobID: cronDetailID, reportType: type, action: 'Request Report', status: 1, message: 'Requesting report' });
+                await model.logCronActivity({ cronJobID: cronDetailID, reportType: type, action: 'Request Report', status: 1, message: 'Requesting report', Range: chunk.range });
                 await requestSingleReport(chunk, seller, cronDetailID, type, authOverrides, spReportType);
 			}
 			logger.info({ 
@@ -213,14 +213,9 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 
 			// Ensure access token is present for this seller
 			let currentAuthOverrides = { ...authOverrides };
-			if (!currentAuthOverrides.accessToken) {
-				const tokenRow = await AuthToken.getSavedToken(seller.AmazonSellerID);
-				if (tokenRow && tokenRow.access_token) {
-					currentAuthOverrides = { ...currentAuthOverrides, accessToken: tokenRow.access_token };
-					logger.info({ amazonSellerID: seller.AmazonSellerID, attempt }, 'Access token loaded for request');
-				} else {
-					logger.warn({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request');
-				}
+			if (!currentAuthOverrides.accessToken) {				
+				logger.error({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request');
+				throw new Error('No access token available for report request');
 			}
 
             let resp;
@@ -250,7 +245,9 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 				message: 'Report requested',
 				reportID: reportId,
 				retryCount: 0,
-				executionTime: 0
+				executionTime: 0,
+				Range: chunk.range,
+				iInitialPull: 0
 			});
 			
 				// Add initial delay after report creation to give Amazon time to start processing
@@ -375,12 +372,9 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 			// Ensure access token for this seller during status checks
 			let currentAuthOverrides = { ...authOverrides };
 			if (!currentAuthOverrides.accessToken) {
-				const tokenRow = await AuthToken.getSavedToken(seller.AmazonSellerID);
-				if (tokenRow && tokenRow.access_token) {
-					currentAuthOverrides = { ...currentAuthOverrides, accessToken: tokenRow.access_token };
-					logger.info({ amazonSellerID: seller.AmazonSellerID, attempt }, 'Access token loaded for status check');
-				} else {
-					logger.warn({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for status check');
+				if (!currentAuthOverrides.accessToken) {				
+					logger.error({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request');
+					throw new Error('No access token available for report request');
 				}
 			}
 			
@@ -548,12 +542,9 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 			// Ensure access token for download as well
 			let currentAuthOverrides = { ...authOverrides };
 			if (!currentAuthOverrides.accessToken) {
-				const tokenRow = await AuthToken.getSavedToken(row.AmazonSellerID);
-				if (tokenRow && tokenRow.access_token) {
-					currentAuthOverrides = { ...currentAuthOverrides, accessToken: tokenRow.access_token };
-					logger.info({ amazonSellerID: row.AmazonSellerID, attempt }, 'Access token loaded for download');
-				} else {
-					logger.warn({ amazonSellerID: row.AmazonSellerID, attempt }, 'No access token available for download');
+				if (!currentAuthOverrides.accessToken) {				
+					logger.error({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request');
+					throw new Error('No access token available for report request');
 				}
 			}
 			
@@ -609,7 +600,8 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
                     null,
                     filePath,
                     fileSize,
-                    false
+                    false,
+					reportId
                 );
 
 				

@@ -644,7 +644,7 @@ async function updateSellerAsinLatestRanges({ cronJobID, amazonSellerID, reportT
         existingRecordsCount: existingRecords.length
     });
 }
-async function __importJson(row, processed = 0, errors = 0){
+async function __importJson(row, processed = 0, errors = 0, iInitialPull = 0){
 	try {
 		await downloadUrls.updateProcessStatusById(row.ID, 'PROCESSING', { incrementAttempts: true });
 
@@ -661,8 +661,10 @@ async function __importJson(row, processed = 0, errors = 0){
 				filePath 
 			});
 			
-			// Use the unified completion handler for no-data scenario
-			await handleReportCompletion(row.CronJobID, row.ReportType, row.AmazonSellerID, null, false);
+			if(iInitialPull === 0){
+				// Use the unified completion handler for no-data scenario
+				await handleReportCompletion(row.CronJobID, row.ReportType, row.AmazonSellerID, null, false);
+			}			
 			processed++;
 			return { processed, errors };
 		}
@@ -689,8 +691,10 @@ async function __importJson(row, processed = 0, errors = 0){
 			successCount: stats.success,
 			failCount: stats.failed
 		});
-		// Use the unified completion handler for data scenario
-		await handleReportCompletion(row.CronJobID, row.ReportType, row.AmazonSellerID, json, true);
+		if(iInitialPull === 0){
+			// Use the unified completion handler for data scenario
+			await handleReportCompletion(row.CronJobID, row.ReportType, row.AmazonSellerID, json, true);
+		}
 		processed++;
 	} catch (e) {
 		console.error('Error processing saved file:', e.message);

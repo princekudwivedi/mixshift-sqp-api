@@ -665,6 +665,7 @@ class SqpCronApiController {
                         [Op.and]: [
                             { WeeklyProcessRunningStatus: { [Op.in]: [1, 2, 3, 4] } },
                             { WeeklySQPDataPullStatus: { [Op.in]: [0, 2] } },
+                            { iInitialPull: 0 },
                             {
                                 [Op.or]: [
                                     { dtUpdatedOn: { [Op.lte]: cutoffTime } },
@@ -677,6 +678,7 @@ class SqpCronApiController {
                         [Op.and]: [
                             { MonthlyProcessRunningStatus: { [Op.in]: [1, 2, 3, 4] } },
                             { MonthlySQPDataPullStatus: { [Op.in]: [0, 2] } },
+                            { iInitialPull: 0 },
                             {
                                 [Op.or]: [
                                     { dtUpdatedOn: { [Op.lte]: cutoffTime } },
@@ -689,6 +691,7 @@ class SqpCronApiController {
                         [Op.and]: [
                             { QuarterlyProcessRunningStatus: { [Op.in]: [1, 2, 3] } },
                             { QuarterlySQPDataPullStatus: { [Op.in]: [0, 2] } },
+                            { iInitialPull: 0 },
                             {
                                 [Op.or]: [
                                     { dtUpdatedOn: { [Op.lte]: cutoffTime } },

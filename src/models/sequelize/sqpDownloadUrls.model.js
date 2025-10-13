@@ -12,6 +12,7 @@ let cachedUserId = null;
 let BaseModel = getCurrentSequelize().define(table, {
     ID: { type: DataTypes.BIGINT, primaryKey: true, autoIncrement: true },
     CronJobID: { type: DataTypes.BIGINT },
+    ReportID: { type: DataTypes.STRING(100) },
     ReportType: { type: DataTypes.STRING(32) },
     Status: { type: DataTypes.STRING(32) },
     DownloadAttempts: { type: DataTypes.INTEGER, defaultValue: 0 },
@@ -51,7 +52,8 @@ function getModel() {
         const sequelize = getCurrentSequelize();
         cachedModel = sequelize.define(TBL_SQP_DOWNLOAD_URLS, {
             ID: { type: DataTypes.BIGINT, primaryKey: true, autoIncrement: true },
-            CronJobID: { type: DataTypes.BIGINT },            
+            CronJobID: { type: DataTypes.BIGINT },
+            ReportID: { type: DataTypes.STRING(100) },
             ReportType: { type: DataTypes.STRING(32) },
             Status: { type: DataTypes.STRING(32) },
             DownloadAttempts: { type: DataTypes.INTEGER, defaultValue: 0 },
