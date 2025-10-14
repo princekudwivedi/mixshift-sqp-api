@@ -42,9 +42,9 @@ async function getReportsForStatusType(row, retry = false) {
     const reportTypes = [];
     let where = {};
     if (retry) {
-        where = { CronJobID: row.ID, ReportType: row.ReportType, Status: { [Op.in]: [0, 2] }, iInitialPull: { [Op.ne]: 1 } };
+        where = { CronJobID: row.ID, ReportType: row.ReportType, Status: { [Op.in]: [0, 2] }, iInitialPull: row.iInitialPull};
     } else {
-        where = { CronJobID: row.ID, Status: { [Op.in]: [1] }, iInitialPull: { [Op.ne]: 1 } };
+        where = { CronJobID: row.ID, Status: { [Op.in]: [1] }, iInitialPull: row.iInitialPull };
     }
     const logs = await SqpCronLogs.findAll({ where });
     reportTypes.push(...logs.map(l => l.ReportType));
@@ -388,10 +388,16 @@ async function logCronActivity({ cronJobID, reportType, action, status, message,
     }
 }
 
-async function getLatestReportId(cronJobID, reportType) {
+async function getLatestReportId(cronJobID, reportType, reportID = null) {
     const SqpCronLogs = getSqpCronLogs();
+    let where = { CronJobID: cronJobID, ReportType: reportType };
+    if (reportID != null) {
+        where.ReportID = reportID;
+    } else {
+        where.ReportID = { [Op.ne]: null };
+    }
     const row = await SqpCronLogs.findOne({
-        where: { CronJobID: cronJobID, ReportType: reportType, ReportID: { [Op.ne]: null } },
+        where: where,
         order: [['dtUpdatedOn', 'DESC']],
         attributes: ['ReportID']
     });
@@ -522,20 +528,27 @@ async function handleCronError(cronDetailID, amazonSellerID, reportType, action,
  * Lightweight in-table retry counters using sqp_cron_logs.RetryCount
  * We record the latest retry count per CronJobID+ReportType by finding the most recent log row.
  */
-async function getRetryCount(cronJobID, reportType) {
+async function getRetryCount(cronJobID, reportType, reportId) {
     const SqpCronLogs = getSqpCronLogs();
+    let where = { CronJobID: cronJobID, ReportType: reportType };
+    if (reportId != null) {
+        where.ReportID = reportId;
+    }
     const row = await SqpCronLogs.findOne({
-        where: { CronJobID: cronJobID, ReportType: reportType },
+        where: where,
         order: [['dtUpdatedOn', 'DESC']],
         attributes: ['RetryCount']
     });
     return row && typeof row.RetryCount === 'number' ? row.RetryCount : 0;
 }
 
-async function incrementRetryCount(cronJobID, reportType) {
+async function incrementRetryCount(cronJobID, reportType, reportId) {
     const SqpCronLogs = getSqpCronLogs();
-    // Create or update a lightweight row to persist the increment
-    const where = { CronJobID: cronJobID, ReportType: reportType };
+    let where = { CronJobID: cronJobID, ReportType: reportType };
+    if (reportId != null) {
+        where.ReportID = reportId;
+    }
+    // Create or update a lightweight row to persist the increment    
     const existing = await SqpCronLogs.findOne({ where });
     if (existing) {
         const next = (typeof existing.RetryCount === 'number' ? existing.RetryCount : 0) + 1;

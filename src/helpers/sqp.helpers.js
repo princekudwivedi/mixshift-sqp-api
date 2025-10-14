@@ -50,8 +50,8 @@ class RetryHelpers {
         }, `Starting ${action} with retry logic`);
 
         // Check if this report type has already reached max retries
-        if (skipIfMaxRetriesReached && !iInitialPull) {
-            const currentRetryCount = await model.getRetryCount(cronDetailID, reportType);
+        if (skipIfMaxRetriesReached) {
+            const currentRetryCount = await model.getRetryCount(cronDetailID, reportType, context.reportId);
             if (currentRetryCount >= maxRetries) {
                 logger.info({
                     cronDetailID,
@@ -176,8 +176,8 @@ class RetryHelpers {
                 }
 
                 // Increment retry count for this attempt
-                await model.incrementRetryCount(cronDetailID, reportType);
-                const newRetryCount = await model.getRetryCount(cronDetailID, reportType);
+                await model.incrementRetryCount(cronDetailID, reportType, context.reportId);
+                const newRetryCount = await model.getRetryCount(cronDetailID, reportType, context.reportId);
 
                 // Check if this was the last attempt
                 if (attempt >= maxRetries) {
@@ -352,7 +352,7 @@ class RetryHelpers {
     /**
      * Retry a stuck record's pipeline for a specific report type, then finalize status.
      */
-    async retryStuckRecord(record, reportType, authOverrides) {
+    async retryStuckRecord(record, reportType, authOverrides, iInitialPull = 0) {
         
         // Check memory usage before processing
         const memoryStats = MemoryMonitor.getMemoryStats();
@@ -366,10 +366,17 @@ class RetryHelpers {
 
         let res = null;
         try {
-            res = await this.circuitBreaker.execute(
-                () => ctrl.checkReportStatuses(authOverrides, { cronDetailID: [record.ID], reportType: reportType, cronDetailData: [record] }, true ),
-                { sellerId: record.idSellerAccount, operation: 'checkReportStatuses' }
-            );
+            if (iInitialPull === 0) {
+                res = await this.circuitBreaker.execute(
+                    () => ctrl.checkReportStatuses(authOverrides, { cronDetailID: [record.ID], reportType: reportType, cronDetailData: [record] }, true ),
+                    { sellerId: record.idSellerAccount, operation: 'checkReportStatuses' }
+                );
+            } else {
+                res = await this.circuitBreaker.execute(
+                    () => ctrl.checkReportStatuses(authOverrides, { reportID: record.ReportID, cronDetailID: [record.ID], reportType: reportType, cronDetailData: [record], iInitialPull: iInitialPull }, true ),
+                    { sellerId: record.idSellerAccount, operation: 'checkReportStatuses' }
+                );
+            }           
 
         } catch (e) {
             logger.error({ id: record.ID, reportType, error: e.message }, 'Retry status check failed');
@@ -377,11 +384,17 @@ class RetryHelpers {
         // Check if status check was successful AND not skipped (e.g., FATAL errors are skipped)
         if(res && res[0] && res[0].success && !res[0].data?.handled) {
             try {
-                await this.circuitBreaker.execute(
-                    () => ctrl.downloadCompletedReports(authOverrides, { cronDetailID: [record.ID], reportType: reportType, cronDetailData: [record] }, true),
-                    { sellerId: record.idSellerAccount, operation: 'downloadCompletedReports' }
-                );
-
+                if (iInitialPull === 0) {
+                    await this.circuitBreaker.execute(
+                        () => ctrl.downloadCompletedReports(authOverrides, { cronDetailID: [record.ID], reportType: reportType, cronDetailData: [record] }, true),  
+                        { sellerId: record.idSellerAccount, operation: 'downloadCompletedReports' }
+                    );
+                } else {
+                    await this.circuitBreaker.execute(
+                        () => ctrl.downloadCompletedReports(authOverrides, { reportID: record.ReportID, cronDetailID: [record.ID], reportType: reportType, cronDetailData: [record], iInitialPull: iInitialPull }, true),  
+                        { sellerId: record.idSellerAccount, operation: 'downloadCompletedReports' }
+                    );
+                }
             } catch (e) {
                 logger.error({ id: record.ID, reportType, error: e.message }, 'Retry download failed');
             }
@@ -429,7 +442,7 @@ class RetryHelpers {
         }
 
         // Get the actual retry count for notification
-        const actualRetryCount = await model.getRetryCount(record.ID, reportType);
+        const actualRetryCount = await model.getRetryCount(record.ID, reportType, record.ReportID);
         await model.logCronActivity({ 
             cronJobID: record.ID, 
             reportType, 

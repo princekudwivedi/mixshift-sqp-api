@@ -124,18 +124,7 @@ class InitialPullController {
 
                         const sellers = validatedSellerId
                             ? [await sellerModel.getProfileDetailsByID(validatedSellerId)]
-                            : await sellerModel.getSellersProfilesForCronAdvanced({ pullAll: 0 });
-
-                        // Check if user has eligible seller which has eligible ASINs before processing
-                        const hasEligibleUser = await model.hasEligibleASINs(null, false);
-                        if (!hasEligibleUser) {
-                            logger.info({ 
-                                sellerId: 'ALL Sellers Check', 
-                                amazonSellerID: 'ALL Sellers Check',
-                                userId: user.ID
-                            }, 'Skipping Full Run - no eligible ASINs for all sellers');
-                            continue;
-                        }
+                            : await sellerModel.getSellersProfilesForCronAdvanced({ pullAll: 0 });                        
 
                         for (const seller of sellers) {
                             if (!seller) continue;
@@ -151,16 +140,6 @@ class InitialPullController {
                                 continue;
                             }
 
-                            // Check if seller has eligible ASINs before processing
-                            const hasEligible = await model.hasEligibleASINs(seller.idSellerAccount);
-                            if (!hasEligible) {
-                                logger.info({ 
-                                    sellerId: seller.idSellerAccount, 
-                                    amazonSellerID: seller.AmazonSellerID 
-                                }, 'Skipping seller - no eligible ASINs');
-                                breakUserProcessing = false;
-                                continue;
-                            }
                             breakUserProcessing = true;
 
                             logger.info({ 
@@ -307,8 +286,8 @@ class InitialPullController {
                         }
 
                         // // PHASE 2: Wait then check status for all reports
-                        // const initialDelaySeconds = Number(process.env.INITIAL_DELAY_SECONDS) || 30;
-                        // await DelayHelpers.wait(initialDelaySeconds, 'After report request');
+                        const initialDelaySeconds = Number(process.env.INITIAL_DELAY_SECONDS) || 30;
+                        await DelayHelpers.wait(initialDelaySeconds, 'After report request');
                     } catch (error) {
                         logger.error({ 
                             cronDetailID: cronDetailRow.ID,
@@ -353,10 +332,11 @@ class InitialPullController {
             amazonSellerID: seller.AmazonSellerID,
             reportType,
             action: 'Initial Pull - Request Report',
-            context: { seller, asinList, range, reportType },
+            context: { seller, asinList, range, reportType, reportId: null },
             model,
             sendFailureNotification: this._sendInitialPullFailureNotification.bind(this),
-            skipIfMaxRetriesReached: false, // Each initial pull report is independent
+            maxRetries: 3, // Strict limit of 3 retries per report
+            skipIfMaxRetriesReached: true, // Now safe to check because each range is tracked independently
             // Pass these to RetryHelpers so attempt logs have correct values
             extraLogFields: {
                 Range: range.range,
@@ -534,7 +514,8 @@ class InitialPullController {
             context: { seller, reportId, range, reportType },
             model,
             sendFailureNotification: this._sendInitialPullFailureNotification.bind(this),
-            skipIfMaxRetriesReached: false, // Each initial pull report is independent
+            maxRetries: 3, // Strict limit of 3 retries per report
+            skipIfMaxRetriesReached: true, // Now safe to check because each range is tracked independently
             extraLogFields: {
                 Range: range.range,
                 iInitialPull: 1
@@ -651,11 +632,12 @@ class InitialPullController {
             context: { seller, reportId, documentId, range, reportType },
             model,
             sendFailureNotification: this._sendInitialPullFailureNotification.bind(this),
-            skipIfMaxRetriesReached: false, // Each initial pull report is independent
+            maxRetries: 3, // Strict limit of 3 retries per report
+            skipIfMaxRetriesReached: true, // Now safe to check because each range is tracked independently
             extraLogFields: {
                 Range: range.range,
                 iInitialPull: 1
-            },
+            },            
             operation: async ({ attempt, currentRetry, context, startTime }) => {
                 const { seller, reportId, documentId, range, reportType } = context;
                 
@@ -1025,9 +1007,9 @@ class InitialPullController {
     async findFailedInitialPullRecords() {
         const SqpCronDetails = getSqpCronDetails();
         
-        // Calculate time (1 hour ago)
+        // Calculate time (10 hours ago)
         const cutoffTime = new Date();
-        cutoffTime.setHours(cutoffTime.getHours() - 1);
+        cutoffTime.setHours(cutoffTime.getHours() - 10);
         
         logger.info({ cutoffTime: cutoffTime.toISOString() }, 'Scanning for records stuck since cutoff time');
                 
@@ -1173,7 +1155,7 @@ class InitialPullController {
                     // Find failed records
                     let failedRecords = await this.findFailedInitialPullRecords();
                     logger.info({ failedRecordsCount: failedRecords.length }, 'Found failed initial pull records to retry');
-
+                    
                     // Filter by cronDetailID if specified
                     if (validatedCronDetailID) {
                         failedRecords = failedRecords.filter(r => r.ID === parseInt(validatedCronDetailID));
@@ -1201,7 +1183,6 @@ class InitialPullController {
                             failedReportTypes: r.failedReportTypes
                         }))
                     }, 'Found failed initial pull records to retry');
-                    
                     // Retry each failed record
                     for (const rec of failedRecords) {
                         const authOverrides = await authService.buildAuthOverrides(rec.AmazonSellerID);
@@ -1225,7 +1206,12 @@ class InitialPullController {
                                     action: 'Initial Pull - Retry',
                                     status: 1,
                                     message: 'Retrying failed initial pull report',
-                                    retryCount: 0
+                                    retryCount: 0,
+                                    reportID: rec.ReportID,
+                                    iInitialPull: 1,
+                                    Range: rec.Range,
+                                    reportDocumentID: rec.ReportDocumentID,
+                                    executionTime: (Date.now() - rec.dtCreatedOn) / 1000
                                 });
                                 
                                 const result = await retryHelpers.retryStuckRecord(rec, type, authOverrides);
