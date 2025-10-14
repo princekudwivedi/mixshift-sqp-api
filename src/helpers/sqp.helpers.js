@@ -2,6 +2,9 @@ const fs = require('fs').promises;
 const path = require('path');
 const logger = require('../utils/logger.utils');
 const datesUtils = require('../utils/dates.utils');
+const { getModel: getSqpCronDetails } = require('../models/sequelize/sqpCronDetails.model');
+const ctrl = require('../controllers/sqp.cron.controller');
+const model = require('../models/sqp.cron.model');
 
 /**
  * Retry execution helper for cron operations
@@ -367,15 +370,9 @@ class RetryHelpers {
         let res = null;
         try {
             if (iInitialPull === 0) {
-                res = await this.circuitBreaker.execute(
-                    () => ctrl.checkReportStatuses(authOverrides, { cronDetailID: [record.ID], reportType: reportType, cronDetailData: [record] }, true ),
-                    { sellerId: record.idSellerAccount, operation: 'checkReportStatuses' }
-                );
+                res = await ctrl.checkReportStatuses(authOverrides, { cronDetailID: [record.ID], reportType: reportType, cronDetailData: [record] }, true);
             } else {
-                res = await this.circuitBreaker.execute(
-                    () => ctrl.checkReportStatuses(authOverrides, { reportID: record.ReportID, cronDetailID: [record.ID], reportType: reportType, cronDetailData: [record], iInitialPull: iInitialPull }, true ),
-                    { sellerId: record.idSellerAccount, operation: 'checkReportStatuses' }
-                );
+                res = await ctrl.checkReportStatuses(authOverrides, { reportID: record.ReportID, cronDetailID: [record.ID], reportType: reportType, cronDetailData: [record], iInitialPull: iInitialPull }, true);
             }           
 
         } catch (e) {
@@ -385,15 +382,9 @@ class RetryHelpers {
         if(res && res[0] && res[0].success && !res[0].data?.handled) {
             try {
                 if (iInitialPull === 0) {
-                    await this.circuitBreaker.execute(
-                        () => ctrl.downloadCompletedReports(authOverrides, { cronDetailID: [record.ID], reportType: reportType, cronDetailData: [record] }, true),  
-                        { sellerId: record.idSellerAccount, operation: 'downloadCompletedReports' }
-                    );
+                    await ctrl.downloadCompletedReports(authOverrides, { cronDetailID: [record.ID], reportType: reportType, cronDetailData: [record] }, true);
                 } else {
-                    await this.circuitBreaker.execute(
-                        () => ctrl.downloadCompletedReports(authOverrides, { reportID: record.ReportID, cronDetailID: [record.ID], reportType: reportType, cronDetailData: [record], iInitialPull: iInitialPull }, true),  
-                        { sellerId: record.idSellerAccount, operation: 'downloadCompletedReports' }
-                    );
+                    await ctrl.downloadCompletedReports(authOverrides, { reportID: record.ReportID, cronDetailID: [record.ID], reportType: reportType, cronDetailData: [record], iInitialPull: iInitialPull }, true);
                 }
             } catch (e) {
                 logger.error({ id: record.ID, reportType, error: e.message }, 'Retry download failed');
@@ -442,7 +433,7 @@ class RetryHelpers {
         }
 
         // Get the actual retry count for notification
-        const actualRetryCount = await model.getRetryCount(record.ID, reportType, record.ReportID);
+        const actualRetryCount = await model.getRetryCount(record.ID, reportType);
         await model.logCronActivity({ 
             cronJobID: record.ID, 
             reportType, 
