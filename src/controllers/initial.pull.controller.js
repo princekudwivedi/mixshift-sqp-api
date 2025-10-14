@@ -358,8 +358,8 @@ class InitialPullController {
                 };
 
                 // Get access token
-                const currentAuthOverrides = { ...authOverrides };
-                if (!currentAuthOverrides.accessToken) {				
+                const currentAuthOverrides = await authService.buildAuthOverrides(seller.AmazonSellerID);
+                if (!currentAuthOverrides.accessToken) {
                     logger.error({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request');
                     throw new Error('No access token available for report request');
                 }
@@ -525,7 +525,7 @@ class InitialPullController {
                 // Set ProcessRunningStatus = 2 (Status Check)
                 await model.setProcessRunningStatus(cronDetailID, reportType, 2);
                 // Get access token
-                const currentAuthOverrides = { ...authOverrides };
+                const currentAuthOverrides = await authService.buildAuthOverrides(seller.AmazonSellerID);
                 if (!currentAuthOverrides.accessToken) {				
                     logger.error({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request');
                     throw new Error('No access token available for report request');
@@ -672,7 +672,7 @@ class InitialPullController {
                 );
                 
                 // Get access token
-                const currentAuthOverrides = { ...authOverrides };
+                const currentAuthOverrides = await authService.buildAuthOverrides(seller.AmazonSellerID);
                 if (!currentAuthOverrides.accessToken) {				
                     logger.error({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request');
                     throw new Error('No access token available for report request');

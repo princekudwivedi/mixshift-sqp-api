@@ -212,7 +212,7 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 			logger.info({ payload, attempt }, 'Payload created, calling SP-API');
 
 			// Ensure access token is present for this seller
-			let currentAuthOverrides = { ...authOverrides };
+			let currentAuthOverrides = await authService.buildAuthOverrides(seller.AmazonSellerID);
 			if (!currentAuthOverrides.accessToken) {				
 				logger.error({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request');
 				throw new Error('No access token available for report request');
@@ -370,12 +370,11 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 			const { row, reportId, seller, authOverrides, isRetry } = context;
 			
 			// Ensure access token for this seller during status checks
-			let currentAuthOverrides = { ...authOverrides };
+			
+			const currentAuthOverrides = await authService.buildAuthOverrides(seller.AmazonSellerID);
 			if (!currentAuthOverrides.accessToken) {
-				if (!currentAuthOverrides.accessToken) {				
-					logger.error({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request');
-					throw new Error('No access token available for report request');
-				}
+				logger.error({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request');
+				throw new Error('No access token available for report request');
 			}
 			
 			const res = await sp.getReportStatus(seller, reportId, currentAuthOverrides);
@@ -540,12 +539,10 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
             );
 			
 			// Ensure access token for download as well
-			let currentAuthOverrides = { ...authOverrides };
+			const currentAuthOverrides = await authService.buildAuthOverrides(seller.AmazonSellerID);
 			if (!currentAuthOverrides.accessToken) {
-				if (!currentAuthOverrides.accessToken) {				
-					logger.error({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request');
-					throw new Error('No access token available for report request');
-				}
+				logger.error({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request');
+				throw new Error('No access token available for report request');
 			}
 			
 			// First get report status to ensure we have the latest reportDocumentId
