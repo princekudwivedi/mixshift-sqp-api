@@ -19,7 +19,7 @@ const asinInitialPull = require('../models/sellerAsinList.initial.pull.model');
 const logger = require('../utils/logger.utils');
 const env = require('../config/env.config');
 const isDevEnv = ["local", "development"].includes(env.NODE_ENV);
-const allowedUsers = [8];
+const allowedUsers = [8,3];
 const { getModel: getSqpDownloadUrls } = require('../models/sequelize/sqpDownloadUrls.model');
 
 class InitialPullController {
@@ -49,8 +49,11 @@ class InitialPullController {
     async runInitialPull(req, res) {
         try {
             const { userId, sellerId, reportType } = req.query;
+            // Validate inputs
+            const validatedUserId = userId ? ValidationHelpers.validateUserId(userId) : null;
+            const validatedSellerId = sellerId ? ValidationHelpers.validateUserId(sellerId) : null;   
 
-            logger.info({ userId, sellerId, reportType}, 'Initial pull triggered via API');
+            logger.info({ validatedUserId, validatedSellerId, reportType}, 'Initial pull triggered via API');
 
             let loop = env.TYPE_ARRAY;
 
@@ -65,7 +68,7 @@ class InitialPullController {
             }
 
             // Process in background
-            this._processInitialPull(userId, 601, reportType)
+            this._processInitialPull(validatedUserId, validatedSellerId, reportType)
                 .catch(error => {
                     logger.error({ error: error.message }, 'Error in initial pull background process');
                 });
@@ -97,34 +100,94 @@ class InitialPullController {
     /**
      * Process initial pull for users and sellers
      */
-    async _processInitialPull(userId, sellerId, reportType) {
+    async _processInitialPull(validatedUserId, validatedSellerId, reportType) {
         try {
             await loadDatabase(0);
-            const users = userId ? [{ ID: parseInt(userId) }] : await getAllAgencyUserList();
-
+            const users = validatedUserId ? [{ ID: parseInt(validatedUserId) }] : await getAllAgencyUserList();
+            let breakUserProcessing = false;
             for (const user of users) {
                 try {
                     if (isDevEnv && !allowedUsers.includes(user.ID)) {
                         continue;
                     }
+                    logger.info({ userId: user.ID }, 'Process user started');
+                    console.log(`🔄 Switching to database for user ${user.ID}...`);
                     await loadDatabase(user.ID);
+                    console.log(`✅ Database switched for user ${user.ID}`);
+                    // Check cron limits for this user
+                    const cronLimits = await this.checkCronLimits(user.ID);
+                    console.log('cronLimits', cronLimits);
+                    if (cronLimits.shouldProcess) {  
 
-                    const sellers = sellerId
-                        ? [await sellerModel.getProfileDetailsByID(sellerId)]
-                        : await sellerModel.getSellersProfilesForCronAdvanced({ pullAll: 0 });
-                    for (const seller of sellers) {
-                        if (!seller) continue;
+                        const sellers = validatedSellerId
+                            ? [await sellerModel.getProfileDetailsByID(validatedSellerId)]
+                            : await sellerModel.getSellersProfilesForCronAdvanced({ pullAll: 0 });
 
-                        logger.info({ 
-                            userId: user.ID,
-                            sellerId: seller.idSellerAccount,
-                            amazonSellerID: seller.AmazonSellerID,
-                        }, 'Processing seller for initial pull');
+                        // Check if user has eligible seller which has eligible ASINs before processing
+                        const hasEligibleUser = await model.hasEligibleASINs(null, false);
+                        if (!hasEligibleUser) {
+                            logger.info({ 
+                                sellerId: 'ALL Sellers Check', 
+                                amazonSellerID: 'ALL Sellers Check',
+                                userId: user.ID
+                            }, 'Skipping Full Run - no eligible ASINs for all sellers');
+                            continue;
+                        }
 
-                        await this._startInitialPullForSeller(seller, reportType);
+                        for (const seller of sellers) {
+                            if (!seller) continue;
+
+                            // Check memory usage before processing
+                            const memoryStats = MemoryMonitor.getMemoryStats();
+                            if (MemoryMonitor.isMemoryUsageHigh(Number(process.env.MAX_MEMORY_USAGE_MB) || 500)) {
+                                logger.warn({ 
+                                    memoryUsage: memoryStats.heapUsed,
+                                    threshold: process.env.MAX_MEMORY_USAGE_MB || 500
+                                }, 'High memory usage detected, skipping seller processing');
+                                breakUserProcessing = false;
+                                continue;
+                            }
+
+                            // Check if seller has eligible ASINs before processing
+                            const hasEligible = await model.hasEligibleASINs(seller.idSellerAccount);
+                            if (!hasEligible) {
+                                logger.info({ 
+                                    sellerId: seller.idSellerAccount, 
+                                    amazonSellerID: seller.AmazonSellerID 
+                                }, 'Skipping seller - no eligible ASINs');
+                                breakUserProcessing = false;
+                                continue;
+                            }
+                            breakUserProcessing = true;
+
+                            logger.info({ 
+                                userId: validatedUserId,
+                                sellerId: seller.idSellerAccount,
+                                amazonSellerID: seller.AmazonSellerID,
+                            }, 'Processing seller for initial pull');
+
+                            // Check rate limit before making API calls
+                            await this.rateLimiter.checkLimit(seller.AmazonSellerID);
+
+                            // Get access token
+                            const authOverrides = await authService.buildAuthOverrides(seller.AmazonSellerID);
+                            if (!authOverrides.accessToken) {				
+                                logger.error({ amazonSellerID: seller.AmazonSellerID }, 'No access token available for request');
+                                throw new Error('No access token available for report request');
+                            }
+                            // Start initial pull for seller with circuit breaker protection
+                            await this.circuitBreaker.execute(
+                                () => this._startInitialPullForSeller(seller, reportType, authOverrides),
+                                { sellerId: seller.idSellerAccount, operation: 'startInitialPullForSeller' }
+                            );
+                            break; // done after one seller
+                        }
                     }
                 } catch (userError) {
-                    logger.error({ userId: user.ID, error: userError.message }, 'Error in sync processing');
+                    logger.error({ userId: validatedUserId, error: userError.message }, 'Error in initial pull processing');
+                }
+                if (breakUserProcessing) {
+                    break;
                 }
             }
         } catch (error) {
@@ -138,7 +201,7 @@ class InitialPullController {
      * Phase 2: Check status for all reports
      * Phase 3: Download and import all completed reports
      */
-    async _startInitialPullForSeller(seller, reportType = null) {
+    async _startInitialPullForSeller(seller, reportType = null, authOverrides = {}) {
         try {
             const ranges = initialPullService.calculateFullRanges();
 
@@ -205,12 +268,16 @@ class InitialPullController {
                 for (const range of rangesToProcess) {
                     try {                      
 
-                        const result = await this._requestInitialPullReport(
-                            cronDetailRow.ID,
-                            seller,
-                            asinList,
-                            range,
-                            type
+                        const result = await this.circuitBreaker.execute(
+                            () => this._requestInitialPullReport(
+                                cronDetailRow.ID,
+                                seller,
+                                asinList,
+                                range,
+                                type,
+                                authOverrides
+                            ),
+                            { sellerId: seller.idSellerAccount, operation: 'requestInitialPullReport' }
                         );                        
                         
                         // Store the reportId with the request for later status check
@@ -236,9 +303,9 @@ class InitialPullController {
                             }, 'Report request failed - no reportID returned');
                         }
 
-                        // PHASE 2: Wait then check status for all reports
-                        const initialDelaySeconds = Number(process.env.INITIAL_DELAY_SECONDS) || 30;
-                        await DelayHelpers.wait(initialDelaySeconds, 'After report request');
+                        // // PHASE 2: Wait then check status for all reports
+                        // const initialDelaySeconds = Number(process.env.INITIAL_DELAY_SECONDS) || 30;
+                        // await DelayHelpers.wait(initialDelaySeconds, 'After report request');
                     } catch (error) {
                         logger.error({ 
                             cronDetailID: cronDetailRow.ID,
@@ -258,7 +325,10 @@ class InitialPullController {
             const initialDelaySeconds = Number(process.env.INITIAL_DELAY_SECONDS) || 30;
             await DelayHelpers.wait(initialDelaySeconds, 'Before initial pull status check');
             
-            await this._checkAllInitialPullStatuses(cronDetailRow, seller, reportRequests, asinList);
+            await this.circuitBreaker.execute(
+                () => this._checkAllInitialPullStatuses(cronDetailRow, seller, reportRequests, asinList, authOverrides),
+                { sellerId: seller.idSellerAccount, operation: 'checkAllInitialPullStatuses' }
+            );
 
             // PHASE 3: Download and import (already handled in status check when DONE)
             logger.info({ 
@@ -274,7 +344,7 @@ class InitialPullController {
     /**
      * Request a single initial pull report (Step 1: Create Report)
      */
-    async _requestInitialPullReport(cronDetailID, seller, asinList, range, reportType) {
+    async _requestInitialPullReport(cronDetailID, seller, asinList, range, reportType, authOverrides = {}) {
         const result = await RetryHelpers.executeWithRetry({
             cronDetailID,
             amazonSellerID: seller.AmazonSellerID,
@@ -283,6 +353,7 @@ class InitialPullController {
             context: { seller, asinList, range, reportType },
             model,
             sendFailureNotification: this._sendInitialPullFailureNotification.bind(this),
+            skipIfMaxRetriesReached: false, // Each initial pull report is independent
             // Pass these to RetryHelpers so attempt logs have correct values
             extraLogFields: {
                 Range: range.range,
@@ -304,14 +375,14 @@ class InitialPullController {
                 };
 
                 // Get access token
-                let authOverrides = await authService.buildAuthOverrides(seller.AmazonSellerID);
-                if (!authOverrides.accessToken) {				
+                const currentAuthOverrides = { ...authOverrides };
+                if (!currentAuthOverrides.accessToken) {				
                     logger.error({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request');
                     throw new Error('No access token available for report request');
                 }
 
                 // Create report via SP-API
-                const resp = await sp.createReport(seller, payload, authOverrides);
+                const resp = await sp.createReport(seller, payload, currentAuthOverrides);
                 const reportId = resp.reportId;
                 
                 logger.info({ reportId, range: range.range, attempt }, 'Initial pull report created');
@@ -355,7 +426,7 @@ class InitialPullController {
     /**
      * Check status for all initial pull reports (Phase 2)
      */
-    async _checkAllInitialPullStatuses(cronDetailRow, seller, reportRequests, asinList = null) {
+    async _checkAllInitialPullStatuses(cronDetailRow, seller, reportRequests, asinList = null, authOverrides = {}) {
         try {
             logger.info({ 
                 cronDetailID: cronDetailRow.ID,
@@ -384,18 +455,17 @@ class InitialPullController {
                 }, 'Checking status for initial pull report');
                 
                 try {
-                    const res = await this._checkInitialPullReportStatus(
-                        cronDetailRow.ID,
-                        seller,
-                        request.reportId,
-                        request.range,
-                        request.type
+                    await this.circuitBreaker.execute(
+                        () => this._checkInitialPullReportStatus(
+                            cronDetailRow.ID,
+                            seller,
+                            request.reportId,
+                            request.range,
+                            request.type,
+                            authOverrides
+                        ),
+                        { sellerId: seller.idSellerAccount, operation: 'checkInitialPullReportStatus' }
                     );
-
-                    // if(res && res.reportDocumentID){
-                    //     await this._downloadInitialPullReport(cronDetailRow.ID, seller, request.reportId, res.reportDocumentID, request.range, request.type);
-                    // }
-
                     totalSuccess++;
                 } catch (error) {
                     logger.error({ 
@@ -452,7 +522,7 @@ class InitialPullController {
     /**
      * Check initial pull report status (Step 2: Check Status)
      */
-    async _checkInitialPullReportStatus(cronDetailID, seller, reportId, range, reportType) {
+    async _checkInitialPullReportStatus(cronDetailID, seller, reportId, range, reportType, authOverrides = {}) {
         const result = await RetryHelpers.executeWithRetry({
             cronDetailID,
             amazonSellerID: seller.AmazonSellerID,
@@ -461,6 +531,7 @@ class InitialPullController {
             context: { seller, reportId, range, reportType },
             model,
             sendFailureNotification: this._sendInitialPullFailureNotification.bind(this),
+            skipIfMaxRetriesReached: false, // Each initial pull report is independent
             extraLogFields: {
                 Range: range.range,
                 iInitialPull: 1
@@ -470,13 +541,13 @@ class InitialPullController {
                 // Set ProcessRunningStatus = 2 (Status Check)
                 await model.setProcessRunningStatus(cronDetailID, reportType, 2);
                 // Get access token
-                let authOverrides = await authService.buildAuthOverrides(seller.AmazonSellerID);
-                if (!authOverrides.accessToken) {				
+                const currentAuthOverrides = { ...authOverrides };
+                if (!currentAuthOverrides.accessToken) {				
                     logger.error({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request');
                     throw new Error('No access token available for report request');
                 }
                 // Check report status
-                const res = await sp.getReportStatus(seller, reportId, authOverrides);
+                const res = await sp.getReportStatus(seller, reportId, currentAuthOverrides);
                 const status = res.processingStatus;
                 if (status === 'DONE') {
                     const documentId = res.reportDocumentId || null;
@@ -484,7 +555,7 @@ class InitialPullController {
                     // Update status to indicate report is ready (status 1)
                     await model.updateSQPReportStatus(cronDetailID, reportType, 1, reportId, null, documentId);
                     
-                    // Store for download queue
+                    // Store for download queue                    
                     await downloadUrls.storeDownloadUrl({
                         CronJobID: cronDetailID,
                         ReportID: reportId,
@@ -509,8 +580,10 @@ class InitialPullController {
                         executionTime: (Date.now() - startTime) / 1000
                     });
                     
-                    // Automatically download after status is DONE
-                    await this._downloadInitialPullReport(cronDetailID, seller, reportId, documentId, range, reportType);
+                    await this.circuitBreaker.execute(
+                        () => this._downloadInitialPullReport(cronDetailID, seller, reportId, documentId, range, reportType, authOverrides),
+                        { sellerId: seller.idSellerAccount, operation: 'downloadInitialPullReport' }
+                    );
                     
                     return {
                         message: `Report ready. Document ID: ${documentId}. Range: ${range.range}`,
@@ -566,7 +639,7 @@ class InitialPullController {
     /**
      * Download initial pull report (Step 3: Download)
      */
-    async _downloadInitialPullReport(cronDetailID, seller, reportId, documentId, range, reportType) {
+    async _downloadInitialPullReport(cronDetailID, seller, reportId, documentId, range, reportType, authOverrides = {}) {
         const result = await RetryHelpers.executeWithRetry({
             cronDetailID,
             amazonSellerID: seller.AmazonSellerID,
@@ -575,6 +648,7 @@ class InitialPullController {
             context: { seller, reportId, documentId, range, reportType },
             model,
             sendFailureNotification: this._sendInitialPullFailureNotification.bind(this),
+            skipIfMaxRetriesReached: false, // Each initial pull report is independent
             extraLogFields: {
                 Range: range.range,
                 iInitialPull: 1
@@ -613,14 +687,14 @@ class InitialPullController {
                 );
                 
                 // Get access token
-                let authOverrides = await authService.buildAuthOverrides(seller.AmazonSellerID);
-                if (!authOverrides.accessToken) {				
+                const currentAuthOverrides = { ...authOverrides };
+                if (!currentAuthOverrides.accessToken) {				
                     logger.error({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request');
                     throw new Error('No access token available for report request');
                 }
                 
                 // Download report
-                const res = await sp.downloadReport(seller, documentId || reportId, authOverrides);
+                const res = await sp.downloadReport(seller, documentId || reportId, currentAuthOverrides);
                 
                 // Extract data
                 let data = [];
@@ -897,6 +971,47 @@ class InitialPullController {
             }
         } catch (err) {
             logger.error({ error: err.message }, 'Failed to send initial pull failure notification');
+        }
+    }
+
+    /**
+     * Check cron limits and active sellers count
+     * @param {number} userId 
+     * @param {number} totalActiveCronSellers - Total active cron sellers across all users
+     * @returns {Promise<{activeCronSellers: number, shouldProcess: boolean}>}
+     */
+    async checkCronLimits(userId) {
+        try {
+            const largeAgencyFlag = process.env.LARGE_AGENCY_FLAG === 'true';
+            // Check active cron sellers for this user
+            const activeCRONSellerAry = await model.checkCronDetailsOfSellersByDate(0, 0, true, 1);            
+            const activeCronSellers = activeCRONSellerAry.length;
+            // Check max user count for cron
+            const maxUserForCRON = largeAgencyFlag ? 100 : (process.env.MAX_USER_COUNT_FOR_CRON || 50);
+            if (activeCronSellers >= maxUserForCRON) {
+                logger.info({ 
+                    userId, 
+                    activeCronSellers,
+                    maxUserForCRON,
+                    largeAgencyFlag 
+                }, 'Cron limit reached - skipping user');
+                return { activeCronSellers, shouldProcess: false };
+            }
+            
+            logger.info({ 
+                userId, 
+                activeCronSellers,
+                maxUserForCRON,
+                largeAgencyFlag 
+            }, 'Cron limits check');
+
+            return { 
+                activeCronSellers, 
+                shouldProcess: true 
+            };
+        } catch (error) {
+            logger.error({ error: error.message, userId }, 'Error checking cron limits');
+            return { activeCronSellers: 0, shouldProcess: false };
         }
     }
 

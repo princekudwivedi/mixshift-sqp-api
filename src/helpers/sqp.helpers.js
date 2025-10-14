@@ -50,7 +50,7 @@ class RetryHelpers {
         }, `Starting ${action} with retry logic`);
 
         // Check if this report type has already reached max retries
-        if (skipIfMaxRetriesReached) {
+        if (skipIfMaxRetriesReached && !iInitialPull) {
             const currentRetryCount = await model.getRetryCount(cronDetailID, reportType);
             if (currentRetryCount >= maxRetries) {
                 logger.info({
@@ -218,7 +218,8 @@ class RetryHelpers {
                         message: `${action} failed after ${maxRetries} attempts: ${errorMsg}`,
                         reportID: (context && (context.reportId || context.reportID)) || null,
                         retryCount: newRetryCount,
-                        executionTime: 0
+                        executionTime: 0,
+                        ...extraLogFields
                     });
 
                     // Send notification for final failure if function is provided
@@ -262,7 +263,8 @@ class RetryHelpers {
                         message: `${action} attempt ${attempt} failed, will retry (${attempt + 1}/${maxRetries}): ${error ? (error.message || String(error)) : 'Unknown error'}`,
                         reportID: (context && (context.reportId || context.reportID)) || null,
                         retryCount: newRetryCount,
-                        executionTime: 0
+                        executionTime: 0,
+                        ...extraLogFields
                     });
 
                     // Wait before retry (exponential backoff)

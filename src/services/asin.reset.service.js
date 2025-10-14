@@ -4,7 +4,7 @@ const { getModel: getSellerAsinList } = require('../models/sequelize/sellerAsinL
 const logger = require('../utils/logger.utils');
 const env = require('../config/env.config');
 const isDevEnv = ["local", "development"].includes(env.NODE_ENV);
-const allowedUsers = [8];
+const allowedUsers = [8,3];
 
 class AsinResetService {
 

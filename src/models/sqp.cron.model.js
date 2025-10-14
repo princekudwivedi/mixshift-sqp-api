@@ -417,7 +417,7 @@ async function setProcessRunningStatus(cronDetailID, reportType, status) {
  * @param {boolean} iActiveRetryFlag - Filter by retry status
  * @returns {Promise<Array>} Array of cron detail records
  */
-async function checkCronDetailsOfSellersByDate(idUserAccount = 0, AmazonSellerID = '', iActiveCRON = false, date = '', iActiveRetryFlag = false) {
+async function checkCronDetailsOfSellersByDate(idUserAccount = 0, AmazonSellerID = '', iActiveCRON = false, date = '', iActiveRetryFlag = false, iInitialPull = 0) {
     const SqpCronDetails = getSqpCronDetails();
     
     // Build date filter
@@ -464,6 +464,10 @@ async function checkCronDetailsOfSellersByDate(idUserAccount = 0, AmazonSellerID
             { MonthlySQPDataPullStatus: 3 },
             { QuarterlySQPDataPullStatus: 3 }
         ];
+    }
+
+    if (iInitialPull) {
+        where.iInitialPull = iInitialPull;
     }
     
     // Filter by AmazonSellerID

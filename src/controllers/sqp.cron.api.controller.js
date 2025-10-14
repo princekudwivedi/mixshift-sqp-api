@@ -15,7 +15,7 @@ const { Op, literal } = require('sequelize');
 const logger = require('../utils/logger.utils');
 const env = require('../config/env.config');
 const isDevEnv = ["local", "development"].includes(env.NODE_ENV);
-const allowedUsers = [8];
+const allowedUsers = [8,3];
 const { DelayHelpers } = require('../helpers/sqp.helpers');
 const asinResetService = require('../services/asin.reset.service');
 const authService = require('../services/auth.service');
@@ -665,7 +665,6 @@ class SqpCronApiController {
                         [Op.and]: [
                             { WeeklyProcessRunningStatus: { [Op.in]: [1, 2, 3, 4] } },
                             { WeeklySQPDataPullStatus: { [Op.in]: [0, 2] } },
-                            { iInitialPull: 0 },
                             {
                                 [Op.or]: [
                                     { dtUpdatedOn: { [Op.lte]: cutoffTime } },
@@ -678,7 +677,6 @@ class SqpCronApiController {
                         [Op.and]: [
                             { MonthlyProcessRunningStatus: { [Op.in]: [1, 2, 3, 4] } },
                             { MonthlySQPDataPullStatus: { [Op.in]: [0, 2] } },
-                            { iInitialPull: 0 },
                             {
                                 [Op.or]: [
                                     { dtUpdatedOn: { [Op.lte]: cutoffTime } },
@@ -691,7 +689,6 @@ class SqpCronApiController {
                         [Op.and]: [
                             { QuarterlyProcessRunningStatus: { [Op.in]: [1, 2, 3] } },
                             { QuarterlySQPDataPullStatus: { [Op.in]: [0, 2] } },
-                            { iInitialPull: 0 },
                             {
                                 [Op.or]: [
                                     { dtUpdatedOn: { [Op.lte]: cutoffTime } },
