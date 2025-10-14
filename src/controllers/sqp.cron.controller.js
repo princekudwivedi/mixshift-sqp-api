@@ -8,6 +8,7 @@ const jsonSvc = require('../services/sqp.json.processing.service');
 const downloadUrls = require('../models/sqp.download.urls.model');
 const { NotificationHelpers, RetryHelpers, DelayHelpers } = require('../helpers/sqp.helpers');
 const env = require('../config/env.config');
+const authService = require('../services/auth.service');
 
 /**
  * Send failure notification when max retries are reached

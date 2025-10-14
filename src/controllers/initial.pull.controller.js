@@ -1342,18 +1342,19 @@ class InitialPullController {
                         executionTime: log.ExecutionTime
                     }))
                 };
-            } else {
-                return;
             }
         }));
         
+        // Filter out undefined records (records with no failed logs)
+        const validRecords = enrichedRecords.filter(r => r !== undefined && r !== null);
+        
         logger.info({ 
-            totalFailedRecords: enrichedRecords.length,
-            totalFailedReports: enrichedRecords.reduce((sum, r) => sum + r.failedCount, 0)
+            totalFailedRecords: validRecords.length,
+            totalFailedReports: validRecords.reduce((sum, r) => sum + r.failedCount, 0)
         }, 'Failed initial pull records scan complete');
         
         
-        return enrichedRecords;
+        return validRecords;
     }
 
     /**
