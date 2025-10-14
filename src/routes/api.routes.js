@@ -25,6 +25,9 @@ router.get('/cron/asin/reset/status', (req, res) => sqpCronApiController.resetAs
 // Initial Pull cron route
 router.get('/cron/sqp/initial/pull', (req, res) => initialPullController.runInitialPull(req, res));
 
+// Retry failed initial pull route
+router.get('/cron/sqp/initial/retry', (req, res) => initialPullController.retryFailedInitialPull(req, res));
+
 // Shared error handling middleware for all routes
 router.use((err, req, res, next) => {
     console.error('API route error:', err);

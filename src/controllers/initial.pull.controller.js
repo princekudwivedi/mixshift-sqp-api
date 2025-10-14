@@ -6,8 +6,10 @@
 const { SuccessHandler, ErrorHandler } = require('../middleware/response.handlers');
 const { loadDatabase } = require('../db/tenant.db');
 const { ValidationHelpers, CircuitBreaker, RateLimiter, MemoryMonitor, NotificationHelpers, RetryHelpers, DelayHelpers } = require('../helpers/sqp.helpers');
+const retryHelpers = new RetryHelpers();
 const { getAllAgencyUserList } = require('../models/sequelize/user.model');
 const { getModel: getSellerAsinList } = require('../models/sequelize/sellerAsinList.model');
+const { getModel: getSqpCronDetails } = require('../models/sequelize/sqpCronDetails.model');
 const sellerModel = require('../models/sequelize/seller.model');
 const model = require('../models/sqp.cron.model');
 const sp = require('../spapi/client.spapi');
@@ -21,6 +23,7 @@ const env = require('../config/env.config');
 const isDevEnv = ["local", "development"].includes(env.NODE_ENV);
 const allowedUsers = [8,3];
 const { getModel: getSqpDownloadUrls } = require('../models/sequelize/sqpDownloadUrls.model');
+const { Op, literal } = require('sequelize');
 
 class InitialPullController {
 
@@ -1015,6 +1018,289 @@ class InitialPullController {
         }
     }
 
+    /**
+     * Find failed initial pull records
+     * @returns {Promise<Array>} Failed records that need retry
+     */
+    async findFailedInitialPullRecords() {
+        const SqpCronDetails = getSqpCronDetails();
+        
+        // Calculate time (1 hour ago)
+        const cutoffTime = new Date();
+        cutoffTime.setHours(cutoffTime.getHours() - 1);
+        
+        logger.info({ cutoffTime: cutoffTime.toISOString() }, 'Scanning for records stuck since cutoff time');
+                
+        // Find initial pull records with failed status (3)
+        const failedRecords = await SqpCronDetails.findAll({
+            where: {
+                iInitialPull: 1,
+                [Op.or]: [
+                    {
+                        [Op.and]: [
+                            { WeeklyProcessRunningStatus: { [Op.in]: [1, 2, 3, 4] } },
+                            { WeeklySQPDataPullStatus: { [Op.in]: [2] } },
+                            {
+                                [Op.or]: [
+                                    { dtUpdatedOn: { [Op.lte]: cutoffTime } },
+                                    literal('dtUpdatedOn < dtCronStartDate')
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        [Op.and]: [
+                            { MonthlyProcessRunningStatus: { [Op.in]: [1, 2, 3, 4] } },
+                            { MonthlySQPDataPullStatus: { [Op.in]: [2] } },
+                            {
+                                [Op.or]: [
+                                    { dtUpdatedOn: { [Op.lte]: cutoffTime } },
+                                    literal('dtUpdatedOn < dtCronStartDate')
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        [Op.and]: [
+                            { QuarterlyProcessRunningStatus: { [Op.in]: [1, 2, 3] } },
+                            { QuarterlySQPDataPullStatus: { [Op.in]: [2] } },
+                            {
+                                [Op.or]: [
+                                    { dtUpdatedOn: { [Op.lte]: cutoffTime } },
+                                    literal('dtUpdatedOn < dtCronStartDate')
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            },
+            attributes: [
+                'ID', 'AmazonSellerID', 'ASIN_List', 'dtCreatedOn', 'dtUpdatedOn',
+                'WeeklyProcessRunningStatus', 'WeeklySQPDataPullStatus', 'WeeklySQPDataPullEndDate', 'WeeklySQPDataPullStartDate',
+                'MonthlyProcessRunningStatus', 'MonthlySQPDataPullStatus', 'MonthlySQPDataPullEndDate', 'MonthlySQPDataPullStartDate',
+                'QuarterlyProcessRunningStatus', 'QuarterlySQPDataPullStatus', 'QuarterlySQPDataPullEndDate', 'QuarterlySQPDataPullStartDate'
+            ]
+        });
+        
+        // Enrich records with failed report types
+        const enrichedRecords = failedRecords.map((record) => {
+            const failedReportTypes = [];
+            
+            // Check which report types failed
+            if (record.WeeklySQPDataPullStatus === 3) {
+                failedReportTypes.push('WEEK');
+            }
+            if (record.MonthlySQPDataPullStatus === 3) {
+                failedReportTypes.push('MONTH');
+            }
+            if (record.QuarterlySQPDataPullStatus === 3) {
+                failedReportTypes.push('QUARTER');
+            }
+            
+            return {
+                ...record.toJSON(),
+                failedReportTypes,
+                failedCount: failedReportTypes.length
+            };
+        });
+        
+        logger.info({ 
+            totalFailedRecords: enrichedRecords.length,
+            totalFailedReports: enrichedRecords.reduce((sum, r) => sum + r.failedCount, 0)
+        }, 'Failed initial pull records scan complete');
+        
+        return enrichedRecords;
+    }
+
+    /**
+     * Retry failed initial pull reports
+     * This will reset the failed status and re-run the status check and download
+     */
+    async retryFailedInitialPull(req, res) {
+        try {
+            const { userId, sellerId, cronDetailID } = req.query;
+
+            const validatedUserId = userId ? ValidationHelpers.validateUserId(userId) : null;
+            const validatedSellerId = sellerId ? ValidationHelpers.validateUserId(sellerId) : null;
+            const validatedCronDetailID = cronDetailID ? ValidationHelpers.validateCronDetailID(cronDetailID) : null;
+            
+            logger.info({ userId: validatedUserId, sellerId: validatedSellerId, cronDetailID: validatedCronDetailID }, 'Retry failed initial pull triggered via API');
+
+            SuccessHandler.sendSuccess(res, {
+                message: 'Retry failed initial pull started',
+                userId: validatedUserId,
+                sellerId: validatedSellerId,
+                cronDetailID: validatedCronDetailID
+            }, 'Retry started successfully');
+
+            // Process in background
+            this._processRetryFailedInitialPull(validatedUserId, validatedSellerId, validatedCronDetailID)
+                .then(result => {
+                    logger.info({ result }, 'Retry failed initial pull completed');
+                })
+                .catch(error => {
+                    logger.error({ error: error.message }, 'Error in retry failed initial pull');
+                });
+
+        } catch (error) {
+            logger.error({ error: error.message }, 'Failed to start retry failed initial pull');
+            return ErrorHandler.sendError(res, error, 'Failed to start retry failed initial pull');
+        }
+    }
+
+    /**
+     * Internal method to process retry for failed initial pull
+     */
+    async _processRetryFailedInitialPull(validatedUserId, validatedSellerId, validatedCronDetailID) {
+        try {
+            await loadDatabase(0);
+            const users = validatedUserId ? [{ ID: parseInt(validatedUserId) }] : await getAllAgencyUserList();
+            
+            let totalRetried = 0;
+            let totalSuccess = 0;
+            let totalFailed = 0;
+            const allResults = [];
+            
+            // Process each user
+            for (const user of users) {
+                try {
+                    if (isDevEnv && !allowedUsers.includes(user.ID)) {
+                        continue;
+                    }
+                    
+                    await loadDatabase(user.ID);
+                    
+                    // Find failed records
+                    let failedRecords = await this.findFailedInitialPullRecords();
+                    logger.info({ failedRecordsCount: failedRecords.length }, 'Found failed initial pull records to retry');
+
+                    // Filter by cronDetailID if specified
+                    if (validatedCronDetailID) {
+                        failedRecords = failedRecords.filter(r => r.ID === parseInt(validatedCronDetailID));
+                    }
+                    
+                    // Filter by sellerId if specified
+                    if (validatedSellerId) {
+                        const sellerDetails = await sellerModel.getProfileDetailsByID(validatedSellerId);
+                        if (sellerDetails) {
+                            failedRecords = failedRecords.filter(r => r.AmazonSellerID === sellerDetails.AmazonSellerID);
+                        }
+                    }
+                    
+                    if (failedRecords.length === 0) {
+                        logger.info({ userId: user.ID }, 'No failed initial pull records found for user');
+                        continue;
+                    }
+                    
+                    logger.info({ 
+                        userId: user.ID,
+                        failedRecordsCount: failedRecords.length,
+                        records: failedRecords.map(r => ({
+                            id: r.ID,
+                            amazonSellerID: r.AmazonSellerID,
+                            failedReportTypes: r.failedReportTypes
+                        }))
+                    }, 'Found failed initial pull records to retry');
+                    
+                    // Retry each failed record
+                    for (const rec of failedRecords) {
+                        const authOverrides = await authService.buildAuthOverrides(rec.AmazonSellerID);
+                        
+                        for (const type of rec.failedReportTypes) {
+                            try {
+                                logger.info({ 
+                                    cronDetailID: rec.ID, 
+                                    amazonSellerID: rec.AmazonSellerID,
+                                    reportType: type 
+                                }, 'Retrying failed initial pull report');
+                                
+                                // Reset the failed status to pending (0) to allow retry
+                                await model.updateSQPReportStatus(rec.ID, type, 0);
+                                await model.setProcessRunningStatus(rec.ID, type, 1);
+                                
+                                // Log retry attempt
+                                await model.logCronActivity({
+                                    cronJobID: rec.ID,
+                                    reportType: type,
+                                    action: 'Initial Pull - Retry',
+                                    status: 1,
+                                    message: 'Retrying failed initial pull report',
+                                    retryCount: 0
+                                });
+                                
+                                const result = await retryHelpers.retryStuckRecord(rec, type, authOverrides);
+                                
+                                if (result.success) {
+                                    totalSuccess++;
+                                    logger.info({ 
+                                        cronDetailID: rec.ID, 
+                                        reportType: type 
+                                    }, 'Initial pull retry succeeded');
+                                } else {
+                                    totalFailed++;
+                                    logger.warn({ 
+                                        cronDetailID: rec.ID, 
+                                        reportType: type 
+                                    }, 'Initial pull retry failed');
+                                }
+                                
+                                allResults.push(result);
+                                totalRetried++;
+                                
+                            } catch (e) {
+                                logger.error({ 
+                                    cronDetailID: rec.ID, 
+                                    reportType: type, 
+                                    error: e.message 
+                                }, 'Error retrying failed initial pull report');
+                                
+                                allResults.push({
+                                    cronDetailID: rec.ID,
+                                    amazonSellerID: rec.AmazonSellerID,
+                                    reportType: type,
+                                    retried: true,
+                                    success: false,
+                                    error: e.message
+                                });
+                                totalRetried++;
+                                totalFailed++;
+                            }
+                        }
+                    }
+                    
+                    logger.info({
+                        userId: user.ID,
+                        totalRetried,
+                        totalSuccess,
+                        totalFailed
+                    }, 'Failed initial pull retry completed for user');
+                    
+                } catch (error) {
+                    logger.error({ 
+                        error: error.message,
+                        userId: user.ID 
+                    }, 'Error processing user in failed initial pull retry');
+                }
+            }
+            
+            logger.info({
+                totalRetried,
+                totalSuccess,
+                totalFailed
+            }, 'Failed initial pull retry process completed');
+            
+            return {
+                totalRetried,
+                totalSuccess,
+                totalFailed,
+                results: allResults
+            };
+            
+        } catch (error) {
+            logger.error({ error: error.message }, 'Error in _processRetryFailedInitialPull');
+            throw error;
+        }
+    }
 }
 
 module.exports = new InitialPullController();
