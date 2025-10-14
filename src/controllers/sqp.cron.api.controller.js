@@ -611,7 +611,7 @@ class SqpCronApiController {
                                     }, 'High memory usage detected, skipping record processing');
                                     continue;
                                 }
-                                const rr = await retryHelpers.retryStuckRecord(rec, type, authOverrides);
+                                const rr = await this.retryStuckRecord(rec, type, authOverrides);
                                 retryResults.push(rr);
                             } catch (e) {
                                 retryResults.push({
@@ -785,6 +785,114 @@ class SqpCronApiController {
             logger.error({ error: error.message }, 'Error in resetAsinStatus');
             return ErrorHandler.sendError(res, error, 'Failed to run automatic ASIN reset');
         }
+    }
+    /**
+     * Retry a stuck record's pipeline for a specific report type, then finalize status.
+     */
+    async retryStuckRecord(record, reportType, authOverrides) {
+        // Lazy load to avoid circular dependencies
+        const { getModel: getSqpCronDetails } = require('../models/sequelize/sqpCronDetails.model');
+        const ctrl = require('../controllers/sqp.cron.controller');
+        const model = require('../models/sqp.cron.model');
+        // Check memory usage before processing
+        const memoryStats = MemoryMonitor.getMemoryStats();
+        if (MemoryMonitor.isMemoryUsageHigh(Number(process.env.MAX_MEMORY_USAGE_MB) || 500)) {
+            logger.warn({ 
+                memoryUsage: memoryStats.heapUsed,
+                threshold: process.env.MAX_MEMORY_USAGE_MB || 500
+            }, 'High memory usage detected, skipping seller processing');            
+            return;
+        }
+
+        let res = null;
+        try {
+            res = await ctrl.checkReportStatuses(authOverrides, { cronDetailID: [record.ID], reportType: reportType, cronDetailData: [record] }, true);
+        } catch (e) {
+            logger.error({ id: record.ID, reportType, error: e.message }, 'Retry status check failed');
+        }
+        // Check if status check was successful AND not skipped (e.g., FATAL errors are skipped)
+        if(res && res[0] && res[0].success && !res[0].data?.handled) {
+            try {
+                await ctrl.downloadCompletedReports(authOverrides, { cronDetailID: [record.ID], reportType: reportType, cronDetailData: [record] }, true);
+            } catch (e) {
+                logger.error({ id: record.ID, reportType, error: e.message }, 'Retry download failed');
+            }
+        } else if (res && res[0] && res[0].data?.handled) {
+            logger.info({ 
+                id: record.ID, 
+                reportType,
+                status: res[0].data?.status 
+            }, 'Status check returned handled error (FATAL/CANCELLED) - skipping download');
+        }
+        
+        // Re-fetch status and finalize
+        const SqpCronDetails = getSqpCronDetails();
+        const refreshed = await SqpCronDetails.findOne({
+            where: { ID: record.ID },
+            attributes: [
+                'WeeklySQPDataPullStatus','MonthlySQPDataPullStatus','QuarterlySQPDataPullStatus',
+                'WeeklyProcessRunningStatus','MonthlyProcessRunningStatus','QuarterlyProcessRunningStatus',
+                'dtUpdatedOn'
+            ]
+        });
+        const prefix = model.mapPrefix(reportType);
+        const statusField = `${prefix}SQPDataPullStatus`;
+        const processStatusField = `${prefix}ProcessRunningStatus`;
+        const current = refreshed ? refreshed[statusField] : null;
+        const currentProcess = refreshed ? refreshed[processStatusField] : null;
+
+        logger.info({ 
+            id: record.ID, 
+            reportType, 
+            currentStatus: current,
+            currentProcessStatus: currentProcess,
+            expectedStatus: 1,
+            expectedProcessStatus: 4
+        }, 'Checking final status after retry');
+
+        if (current === 1) {  // 1 = Completed in sqp_cron_details
+            logger.info({ 
+                id: record.ID, 
+                reportType, 
+                currentStatus: current,
+                currentProcessStatus: currentProcess
+            }, 'Retry succeeded - report completed and imported');
+            return { cronDetailID: record.ID, amazonSellerID: record.AmazonSellerID, reportType, retried: true, success: true };
+        }
+
+        // Get the actual retry count for notification
+        const actualRetryCount = await model.getRetryCount(record.ID, reportType);
+        await model.logCronActivity({ 
+            cronJobID: record.ID, 
+            reportType, 
+            action: 'Check Status', 
+            status: 2, 
+            message: `Report ${statusField} on attempt ${actualRetryCount + 1}`, 
+            reportID: current === 2 ? await model.getLatestReportId(record.ID, reportType) : null, 
+            retryCount: actualRetryCount,  // Fix: Use actual retry count instead of null
+            executionTime: (Date.now() - new Date(record.dtCreatedOn).getTime()) / 1000 
+        });        
+
+        // Mark failed if still not success
+        const latestReportId = await model.getLatestReportId(record.ID, reportType);
+        await model.updateSQPReportStatus(record.ID, reportType, 3, latestReportId, 'Retry after 1h failed');
+        await model.logCronActivity({
+            cronJobID: record.ID,
+            reportType,
+            action: 'Retry Finalize',
+            status: 2,
+            message: 'Marked as failed after retry of stuck record',
+            reportID: latestReportId,
+            retryCount: actualRetryCount  // Fix: Use actual retry count instead of null
+        });
+        
+        // Only send notification if retry count has reached maximum (3)
+        if (actualRetryCount >= 3) {
+            await ctrl.sendFailureNotification(record.ID, record.AmazonSellerID, reportType, 'Retry after 1h failed', actualRetryCount, latestReportId);
+        }
+        
+        logger.warn({ id: record.ID, reportType }, 'Retry failed - marked as failure');
+        return { cronDetailID: record.ID, amazonSellerID: record.AmazonSellerID, reportType, retried: true, success: false };
     }
 }
 

@@ -348,14 +348,21 @@ async function logCronActivity({ cronJobID, reportType, action, status, message,
     const SqpCronLogs = getSqpCronLogs();
     
     // For initial pull with Range and Action, create unique log per range + action
-    // This prevents different actions from overwriting each other
-    // For regular pull, match by CronJobID + ReportType + Action
+    // ReportID is NOT part of the key - it's just a field that gets updated as the report progresses
+    // This prevents duplicate entries for the same range as reportID changes from NULL to actual ID
+    // For regular pull, match by CronJobID + ReportType
     const where = (iInitialPull === 1 && Range) 
-        ? { CronJobID: cronJobID, ReportType: reportType, Range: Range, iInitialPull: iInitialPull }
+        ? { 
+            CronJobID: cronJobID, 
+            ReportType: reportType, 
+            Range: Range,
+            iInitialPull: iInitialPull
+        }
         : { CronJobID: cronJobID, ReportType: reportType};
     
     const payload = {
         Status: status,
+        Action: action,
         Message: message,
         ReportID: reportID,
         RetryCount: retryCount,
@@ -381,16 +388,21 @@ async function logCronActivity({ cronJobID, reportType, action, status, message,
         // Create new log entry
         await SqpCronLogs.create({
             ...where,
-            Action: action,  // Explicitly include Action
             ...payload,
             dtCreatedOn: new Date()
         });
     }
 }
 
-async function getLatestReportId(cronJobID, reportType, reportID = null) {
+async function getLatestReportId(cronJobID, reportType, reportID = null, range = null) {
     const SqpCronLogs = getSqpCronLogs();
     let where = { CronJobID: cronJobID, ReportType: reportType };
+    
+    // For initial pull, filter by Range to get the correct reportId for this specific date range
+    if (range != null) {
+        where.Range = range;
+    }
+    
     if (reportID != null) {
         where.ReportID = reportID;
     } else {
