@@ -1294,7 +1294,7 @@ class InitialPullController {
         const SqpCronLogs = getSqpCronLogs();
         
         const enrichedRecords = await Promise.all(failedRecords.map(async (record) => {
-            const stuckReportTypes = [];
+            let stuckReportTypes = [];
             
             // Check which report types failed (status 0 = pending, status 2 = error/stuck)
             if (record.WeeklySQPDataPullStatus === 0 || record.WeeklySQPDataPullStatus === 2) {
@@ -1308,35 +1308,43 @@ class InitialPullController {
             }
             
             // Get failed log entries from sqp_cron_logs for this record
+            // Exclude FATAL and CANCELLED messages
             const failedLogs = await SqpCronLogs.findAll({
                 where: {
                     CronJobID: record.ID,
                     Status: { [Op.in]: [0, 2] }, // Status 0 (pending/in-progress) or 2 (error)
-                    iInitialPull: 1
+                    iInitialPull: 1,
+                    [Op.and]: [
+                        { Message: { [Op.notLike]: '%FATAL%' } },
+                        { Message: { [Op.notLike]: '%CANCELLED%' } }
+                    ]
                 },
                 order: [['dtCreatedOn', 'DESC']],
                 limit: 50 // Get last 50 log entries
             });
-            
-            return {    
-                ...record.toJSON(),            
-                stuckReportTypes,
-                failedCount: stuckReportTypes.length,
-                failedLogs: failedLogs.map(log => ({
-                    action: log.Action,
-                    iInitialPull: log.iInitialPull,
-                    cronJobID: log.CronJobID,
-                    reportType: log.ReportType,
-                    status: log.Status,
-                    message: log.Message,
-                    range: log.Range,
-                    retryCount: log.RetryCount,
-                    reportId: log.ReportID,
-                    createdOn: log.dtCreatedOn,
-                    reportDocumentID: log.ReportDocumentID,
-                    executionTime: log.ExecutionTime
-                }))
-            };
+            if(failedLogs.length > 0) {
+                return {    
+                    ...record.toJSON(),            
+                    stuckReportTypes,
+                    failedCount: stuckReportTypes.length,
+                    failedLogs: failedLogs.map(log => ({
+                        action: log.Action,
+                        iInitialPull: log.iInitialPull,
+                        cronJobID: log.CronJobID,
+                        reportType: log.ReportType,
+                        status: log.Status,
+                        message: log.Message,
+                        range: log.Range,
+                        retryCount: log.RetryCount,
+                        reportId: log.ReportID,
+                        createdOn: log.dtCreatedOn,
+                        reportDocumentID: log.ReportDocumentID,
+                        executionTime: log.ExecutionTime
+                    }))
+                };
+            } else {
+                return;
+            }
         }));
         
         logger.info({ 
