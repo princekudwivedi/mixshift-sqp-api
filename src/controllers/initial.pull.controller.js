@@ -305,8 +305,7 @@ class InitialPullController {
                                 result 
                             }, 'Report request failed - no reportID returned');
                         }
-
-                        // Small delay between requests to avoid rate limits (1-2 seconds)
+                        
                         const requestDelaySeconds = Number(process.env.REQUEST_DELAY_SECONDS) || 30;
                         await DelayHelpers.wait(requestDelaySeconds, 'Between report requests (rate limiting)');
                     } catch (error) {
@@ -409,8 +408,10 @@ class InitialPullController {
                         retryCount: 0,
                         executionTime: (Date.now() - startTime) / 1000
                     });
-                }
+                }                
                 
+                const requestDelaySeconds = Number(process.env.REQUEST_DELAY_SECONDS) || 30;
+                await DelayHelpers.wait(requestDelaySeconds, 'Between report requests (rate limiting)');
                 
                 return {
                     message: `Report requested successfully. Report ID: ${reportId}. Range: ${range.range}`,
