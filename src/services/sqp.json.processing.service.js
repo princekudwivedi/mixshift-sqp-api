@@ -511,7 +511,6 @@ function buildMetricsRow(download, reportDate, record, filePath, reportDateOverr
 			null;
 
 		return {
-			CronJobID: download.CronJobID,
 			ReportDate: reportDateOverride || endDate || reportDate,
 			StartDate: startDate,
 			EndDate: endDate,

@@ -9,7 +9,7 @@ let cachedUserId = null;
 
 let BaseModel = getCurrentSequelize().define(table, {
     ID: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
-    CronJobID: { type: DataTypes.BIGINT },
+    ASIN: { type: DataTypes.STRING(32) },
     ReportDate: { type: DataTypes.DATEONLY },
     StartDate: { type: DataTypes.DATEONLY },
     EndDate: { type: DataTypes.DATEONLY },
@@ -47,8 +47,7 @@ let BaseModel = getCurrentSequelize().define(table, {
     AsinPurchaseRate: { type: DataTypes.DECIMAL(10,4) },
     TotalSameDayShippingPurchaseCount: { type: DataTypes.BIGINT },
     TotalOneDayShippingPurchaseCount: { type: DataTypes.BIGINT },
-    TotalTwoDayShippingPurchaseCount: { type: DataTypes.BIGINT },
-    ASIN: { type: DataTypes.STRING(32) },
+    TotalTwoDayShippingPurchaseCount: { type: DataTypes.BIGINT },    
     dtCreatedOn: { type: DataTypes.DATE },
 }, {
     tableName: table,
@@ -69,7 +68,7 @@ function getModel() {
         const sequelize = getCurrentSequelize();
         cachedModel = sequelize.define('sqp_weekly', {
             ID: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
-            CronJobID: { type: DataTypes.BIGINT },
+            ASIN: { type: DataTypes.STRING(32) },
             ReportDate: { type: DataTypes.DATEONLY },
             StartDate: { type: DataTypes.DATEONLY },
             EndDate: { type: DataTypes.DATEONLY },
@@ -108,7 +107,6 @@ function getModel() {
             TotalSameDayShippingPurchaseCount: { type: DataTypes.BIGINT },
             TotalOneDayShippingPurchaseCount: { type: DataTypes.BIGINT },
             TotalTwoDayShippingPurchaseCount: { type: DataTypes.BIGINT },
-            ASIN: { type: DataTypes.STRING(32) },
             dtCreatedOn: { type: DataTypes.DATE }
         }, {
             tableName: 'sqp_weekly',
