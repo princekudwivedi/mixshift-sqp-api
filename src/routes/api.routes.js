@@ -20,7 +20,7 @@ router.get('/cron/sqp/retry-report', (req, res) => sqpCronApiController.retryNot
 router.get('/cron/asin/syncSellerAsins/:userId/:amazonSellerID', (req, res) => sqpCronApiController.syncSellerAsins(req, res));
 
 // ASIN reset cron routes
-router.get('/cron/asin/reset/status', (req, res) => sqpCronApiController.resetAsinStatus(req, res));
+router.get('/cron/asin-reset', (req, res) => sqpCronApiController.resetAsinStatus(req, res));
 
 // Initial Pull cron route
 router.get('/cron/sqp/initial/pull', (req, res) => initialPullController.runInitialPull(req, res));
