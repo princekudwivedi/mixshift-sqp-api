@@ -608,13 +608,11 @@ class InitialPullController {
                     
                     // Check if this report failed fatally
                     const isFatal = reportLogs.some(l =>
-                        (l.Message && (l.Message.includes('FATAL') || l.Message.includes('CANCELLED'))) ||
-                        l.Status === 3 ||
-                        (l.Action && l.Action.includes('Failure Notification'))
+                        (l.Message && (l.Message.includes('FATAL') || l.Message.includes('CANCELLED')))
                     );
                     
                     // Check if still in progress (latest status is 0 or 2 and not done/fatal)
-                    const isInProgress = !isDone && !isFatal && (latestLog.Status === 0 || latestLog.Status === 2);
+                    const isInProgress = !isDone && !isFatal && (latestLog.Status === 0 || latestLog.Status === 2 || latestLog.Message.includes('Failure Notification'));
                     
                     logger.info({
                         reportId,
@@ -807,15 +805,9 @@ class InitialPullController {
                     );
                     
                     return {
-                        action: downloadResult?.action || 'Initial Pull - Download and Import Done',
-                        message: `Report ready. Document ID: ${documentId}. Range: ${range.range}`,
-                        reportID: reportId,
+                        ...downloadResult,
                         reportDocumentID: documentId,
-                        data: { status, documentId, range: range.range },
-                        logData: {
-                            Range: range.range,
-                            iInitialPull: 1
-                        }
+                        skipped: true
                     };
                     
                 } else if (status === 'IN_QUEUE' || status === 'IN_PROGRESS') {
@@ -1064,7 +1056,8 @@ class InitialPullController {
                         logData: {
                             Range: range.range,
                             iInitialPull: 1
-                        }
+                        },
+                        skipped: true
                     };
                 } else {
                     // No data returned from report (0 rows)
@@ -1130,7 +1123,8 @@ class InitialPullController {
                         logData: {
                             Range: range.range,
                             iInitialPull: 1
-                        }
+                        },
+                        skipped: true
                     };
                 }
             }
