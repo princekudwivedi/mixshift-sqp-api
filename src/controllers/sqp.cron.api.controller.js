@@ -322,7 +322,7 @@ class SqpCronApiController {
         try {
             const largeAgencyFlag = process.env.LARGE_AGENCY_FLAG === 'true';
             // Check active cron sellers for this user
-            const activeCRONSellerAry = await model.checkCronDetailsOfSellersByDate(0, 0, true);            
+            const activeCRONSellerAry = await model.checkCronDetailsOfSellersByDate(0, 0, true, '', false, 0);            
             const activeCronSellers = activeCRONSellerAry.length;
             // Check max user count for cron
             const maxUserForCRON = largeAgencyFlag ? 100 : (process.env.MAX_USER_COUNT_FOR_CRON || 50);

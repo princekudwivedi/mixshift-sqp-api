@@ -352,7 +352,7 @@ async function createSQPCronDetail(amazonSellerID, asinString, options = {}) {
     if (options.SellerName) {
         createData.SellerName = options.SellerName;
     }
-    
+    createData.cronRunningStatus = 1;
     const row = await SqpCronDetails.create(createData);
     
     // Fetch the complete record with all columns to ensure all fields are populated

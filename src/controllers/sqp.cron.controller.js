@@ -108,8 +108,13 @@ async function requestForSeller(seller, authOverrides = {}, spReportType = confi
 		for (let i = 0; i < chunks.length; i++) {
 			const chunk = chunks[i];
 			logger.info({ chunkIndex: i, asinCount: chunk.asins.length }, 'Processing chunk');
-			
-			const cronDetailRow = await model.createSQPCronDetail(seller.AmazonSellerID, chunk.asin_string, { SellerName: seller.SellerName });
+			const weekRange = dates.getDateRangeForPeriod('WEEK');
+			const monthRange = dates.getDateRangeForPeriod('MONTH');
+			const quarterRange = dates.getDateRangeForPeriod('QUARTER');
+			const FullWeekRange = `${weekRange.start} to ${weekRange.end}`;
+			const FullMonthRange = `${monthRange.start} to ${monthRange.end}`;
+			const FullQuarterRange = `${quarterRange.start} to ${quarterRange.end}`;
+			const cronDetailRow = await model.createSQPCronDetail(seller.AmazonSellerID, chunk.asin_string, { SellerName: seller.SellerName, FullWeekRange: FullWeekRange, FullMonthRange: FullMonthRange, FullQuarterRange: FullQuarterRange });
 			const cronDetailID = cronDetailRow.ID;
 			// Convert Sequelize instance to plain object
 			const cronDetailObject = cronDetailRow.toJSON ? cronDetailRow.toJSON() : cronDetailRow.dataValues;
@@ -247,11 +252,11 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 				reportID: reportId,
 				retryCount: 0,
 				executionTime: 0,
-				Range: chunk.range,
+				Range: `${range.start} to ${range.end}`,
 				iInitialPull: 0
 			});
 			
-				// Add initial delay after report creation to give Amazon time to start processing
+			// Add initial delay after report creation to give Amazon time to start processing
 			const initialDelaySeconds = await DelayHelpers.waitWithLogging({
 				cronDetailID,
 				reportType,
