@@ -218,7 +218,7 @@ async function getActiveASINsBySellerInitialPull(sellerId = null, limit = true) 
     const SellerAsinList = getSellerAsinList();
     const sellerFilter = sellerId ? { SellerID: sellerId } : {};
 
-    where = {
+    const where = {
         IsActive: 1,
         ...sellerFilter,
         InitialPullStatus: null
@@ -315,12 +315,12 @@ async function hasEligibleASINs(sellerId, reportType = null, limit = true) {
     logger.info({ sellerId, reportType, eligibleCount: asins.length, hasEligible, reportTypes }, 'Seller ASIN eligibility check');
     return hasEligible;
 }
-async function hasEligibleASINsInitialPull(sellerId, reportType = null, limit = true) {
-    const { asins, reportTypes } = await getActiveASINsBySellerInitialPull(sellerId, limit, reportType);
+async function hasEligibleASINsInitialPull(sellerId, limit = true) {
+    const { asins } = await getActiveASINsBySellerInitialPull(sellerId, limit);
     console.log('eligibleAsins', asins);
     const hasEligible = asins.length > 0;
 
-    logger.info({ sellerId, reportType, eligibleCount: asins.length, hasEligible, reportTypes }, 'Seller ASIN eligibility check');
+    logger.info({ sellerId, eligibleCount: asins.length, hasEligible }, 'Seller ASIN eligibility check');
     return hasEligible;
 }
 

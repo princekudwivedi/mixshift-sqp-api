@@ -152,11 +152,11 @@ class InitialPullController {
                             }
 
                             // Check if seller has eligible ASINs before processing
-                            const hasEligible = await model.hasEligibleASINsInitialPull(s.idSellerAccount); 
+                            const hasEligible = await model.hasEligibleASINsInitialPull(seller.idSellerAccount); 
                             if (!hasEligible) {
                                 logger.info({ 
-                                    sellerId: s.idSellerAccount, 
-                                    amazonSellerID: s.AmazonSellerID 
+                                    sellerId: seller.idSellerAccount, 
+                                    amazonSellerID: seller.AmazonSellerID 
                                 }, 'Skipping seller - no eligible ASINs');
                                 breakUserProcessing = false;
                                 continue;
@@ -212,7 +212,7 @@ class InitialPullController {
             const asins = await SellerAsinList.findAll({
                 where: { AmazonSellerID: seller.AmazonSellerID, IsActive: 1, InitialPullStatus: null },
                 attributes: ['ASIN', 'InitialPullStatus'],
-                limit: 15,
+                limit: env.MAX_ASINS_PER_REQUEST,
                 raw: true
             });
 
