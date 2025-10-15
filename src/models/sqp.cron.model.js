@@ -214,7 +214,31 @@ async function getActiveASINsBySeller(sellerId = null, limit = true, reportType 
     logger.info({ sellerId }, 'No eligible ASINs found for any scenario');
     return { reportTypes: [], asins: [] };
 }
+async function getActiveASINsBySellerInitialPull(sellerId = null, limit = true) {
+    const SellerAsinList = getSellerAsinList();
+    const sellerFilter = sellerId ? { SellerID: sellerId } : {};
 
+    where = {
+        IsActive: 1,
+        ...sellerFilter,
+        InitialPullStatus: null
+    };
+
+    const asins = await SellerAsinList.findAll({
+        where,
+        attributes: ['ASIN'],
+        ...(limit ? { limit: env.MAX_ASINS_PER_REQUEST } : {}),
+        order: [['dtCreatedOn', 'ASC']]
+    });
+
+    if (asins.length > 0) {
+        logger.info({ sellerId, count: asins.length }, `Scenario matched: Initial Pull`);
+        return { asins: asins.map(a => a.ASIN) };
+    }
+
+    logger.info({ sellerId }, 'No eligible ASINs found for Initial Pull');
+    return { asins: [] };
+}
 
 async function ASINsBySellerUpdated(amazonSellerID, asinList, status, reportType, startTime = null, endTime = null) {
     try {
@@ -285,6 +309,14 @@ async function ASINsBySellerUpdated(amazonSellerID, asinList, status, reportType
 
 async function hasEligibleASINs(sellerId, reportType = null, limit = true) {
     const { asins, reportTypes } = await getActiveASINsBySeller(sellerId, limit, reportType);
+    console.log('eligibleAsins', asins);
+    const hasEligible = asins.length > 0;
+
+    logger.info({ sellerId, reportType, eligibleCount: asins.length, hasEligible, reportTypes }, 'Seller ASIN eligibility check');
+    return hasEligible;
+}
+async function hasEligibleASINsInitialPull(sellerId, reportType = null, limit = true) {
+    const { asins, reportTypes } = await getActiveASINsBySellerInitialPull(sellerId, limit, reportType);
     console.log('eligibleAsins', asins);
     const hasEligible = asins.length > 0;
 
@@ -588,6 +620,7 @@ module.exports = {
     incrementRetryCount,
     ASINsBySellerUpdated,
     hasEligibleASINs,
+    hasEligibleASINsInitialPull,
     getReportsForStatusType
 };
 

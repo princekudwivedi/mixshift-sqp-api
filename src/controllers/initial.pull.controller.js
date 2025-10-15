@@ -120,9 +120,19 @@ class InitialPullController {
                     console.log(`✅ Database switched for user ${user.ID}`);
                     // Check cron limits for this user
                     const cronLimits = await this.checkCronLimits(user.ID);
-                    console.log('cronLimits', cronLimits);
-                    if (cronLimits.shouldProcess) {  
+                    logger.info({ cronLimits }, 'cronLimits');
+                    if (cronLimits.shouldProcess) {
 
+                        // Check if user has eligible seller which has eligible ASINs before processing
+                        const hasEligibleUser = await model.hasEligibleASINsInitialPull(null, false);
+                        if (!hasEligibleUser) {
+                            logger.info({ 
+                                sellerId: 'ALL Sellers Check', 
+                                amazonSellerID: 'ALL Sellers Check',
+                                userId: user.ID
+                            }, 'Skipping Full Run - no eligible ASINs for all sellers');
+                            continue;
+                        }
                         const sellers = validatedSellerId
                             ? [await sellerModel.getProfileDetailsByID(validatedSellerId)]
                             : await sellerModel.getSellersProfilesForCronAdvanced({ pullAll: 0 });                        
@@ -141,6 +151,16 @@ class InitialPullController {
                                 continue;
                             }
 
+                            // Check if seller has eligible ASINs before processing
+                            const hasEligible = await model.hasEligibleASINsInitialPull(s.idSellerAccount); 
+                            if (!hasEligible) {
+                                logger.info({ 
+                                    sellerId: s.idSellerAccount, 
+                                    amazonSellerID: s.AmazonSellerID 
+                                }, 'Skipping seller - no eligible ASINs');
+                                breakUserProcessing = false;
+                                continue;
+                            }
                             breakUserProcessing = true;
 
                             logger.info({ 
@@ -1194,8 +1214,8 @@ class InitialPullController {
     async checkCronLimits(userId) {
         try {
             const largeAgencyFlag = process.env.LARGE_AGENCY_FLAG === 'true';
-            // Check active cron sellers for this user
-            const activeCRONSellerAry = await model.checkCronDetailsOfSellersByDate(0, 0, true, 1);            
+            // Check active cron sellers for this user            
+            const activeCRONSellerAry = await model.checkCronDetailsOfSellersByDate(0, '', true, '', false, 1);            
             const activeCronSellers = activeCRONSellerAry.length;
             // Check max user count for cron
             const maxUserForCRON = largeAgencyFlag ? 100 : (process.env.MAX_USER_COUNT_FOR_CRON || 50);
