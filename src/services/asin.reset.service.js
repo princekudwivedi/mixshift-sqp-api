@@ -1,4 +1,4 @@
-const { loadDatabase } = require('../db/tenant.db');
+const { loadDatabase, initDatabaseContext } = require('../db/tenant.db');
 const { getAllAgencyUserList } = require('../models/sequelize/user.model');
 const { getModel: getSellerAsinList } = require('../models/sequelize/sellerAsinList.model');
 const logger = require('../utils/logger.utils');
@@ -22,59 +22,61 @@ class AsinResetService {
 
     // Generic reset function
     async resetStatus(period, userId = null) {
-        try {
-            logger.info({ period, userId }, `Starting ${period} ASIN reset`);
-            await loadDatabase(0);
-            const users = userId ? [{ ID: userId }] : await getAllAgencyUserList();
-            let totalReset = 0, processedUsers = 0;
+        return initDatabaseContext(async () => {
+            try {
+                logger.info({ period, userId }, `Starting ${period} ASIN reset`);
+                await loadDatabase(0);
+                const users = userId ? [{ ID: userId }] : await getAllAgencyUserList();
+                let totalReset = 0, processedUsers = 0;
 
-            for (const user of users) {
-                try {
-                    if(isDevEnv && !allowedUsers.includes(user.ID)) {
-                        continue;
-                    } else {
-                        await loadDatabase(user.ID);
-                        const SellerAsinList = getSellerAsinList();
-                        const fields = {};
-                        const dt = new Date();
+                for (const user of users) {
+                    try {
+                        if(isDevEnv && !allowedUsers.includes(user.ID)) {
+                            continue;
+                        } else {
+                            await loadDatabase(user.ID);
+                            const SellerAsinList = getSellerAsinList();
+                            const fields = {};
+                            const dt = new Date();
 
-                        if (period === 'WEEK') {
-                            Object.assign(fields, {
-                                WeeklyLastSQPDataPullStatus: null,
-                                WeeklyLastSQPDataPullStartTime: null,
-                                WeeklyLastSQPDataPullEndTime: null
-                            });
-                        } else if (period === 'MONTH') {
-                            Object.assign(fields, {
-                                MonthlyLastSQPDataPullStatus: null,
-                                MonthlyLastSQPDataPullStartTime: null,
-                                MonthlyLastSQPDataPullEndTime: null
-                            });
-                        } else if (period === 'QUARTER') {
-                            Object.assign(fields, {
-                                QuarterlyLastSQPDataPullStatus: null,
-                                QuarterlyLastSQPDataPullStartTime: null,
-                                QuarterlyLastSQPDataPullEndTime: null
-                            });
+                            if (period === 'WEEK') {
+                                Object.assign(fields, {
+                                    WeeklyLastSQPDataPullStatus: null,
+                                    WeeklyLastSQPDataPullStartTime: null,
+                                    WeeklyLastSQPDataPullEndTime: null
+                                });
+                            } else if (period === 'MONTH') {
+                                Object.assign(fields, {
+                                    MonthlyLastSQPDataPullStatus: null,
+                                    MonthlyLastSQPDataPullStartTime: null,
+                                    MonthlyLastSQPDataPullEndTime: null
+                                });
+                            } else if (period === 'QUARTER') {
+                                Object.assign(fields, {
+                                    QuarterlyLastSQPDataPullStatus: null,
+                                    QuarterlyLastSQPDataPullStartTime: null,
+                                    QuarterlyLastSQPDataPullEndTime: null
+                                });
+                            }
+                            fields.dtUpdatedOn = dt;
+                            const [updated] = await SellerAsinList.update(fields, { where: { IsActive: 1 } });
+                            totalReset += updated;
+                            processedUsers++;
+
+                            logger.info({ userId: user.ID, resetCount: updated }, `${period} reset done for user`);
                         }
-                        fields.dtUpdatedOn = dt;
-                        const [updated] = await SellerAsinList.update(fields, { where: { IsActive: 1 } });
-                        totalReset += updated;
-                        processedUsers++;
-
-                        logger.info({ userId: user.ID, resetCount: updated }, `${period} reset done for user`);
+                    } catch (e) {
+                        logger.error({ userId: user.ID, error: e.message }, `Error resetting ${period} for user`);
                     }
-                } catch (e) {
-                    logger.error({ userId: user.ID, error: e.message }, `Error resetting ${period} for user`);
                 }
+
+                return { success: true, totalReset, userCount: processedUsers, totalUsers: users.length, resetType: period };
+
+            } catch (error) {
+                logger.error({ error: error.message, stack: error.stack }, `Error in ${period} reset`);
+                throw error;
             }
-
-            return { success: true, totalReset, userCount: processedUsers, totalUsers: users.length, resetType: period };
-
-        } catch (error) {
-            logger.error({ error: error.message, stack: error.stack }, `Error in ${period} reset`);
-            throw error;
-        }
+        });
     }
 
     // Main reset method

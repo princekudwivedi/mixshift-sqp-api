@@ -1,7 +1,7 @@
 const { SuccessHandler, ErrorHandler } = require('../middleware/response.handlers');
 const { ValidationHelpers, CircuitBreaker, RateLimiter, MemoryMonitor, RetryHelpers, Helpers,DelayHelpers } = require('../helpers/sqp.helpers');
 const retryHelpers = new RetryHelpers();
-const { loadDatabase } = require('../db/tenant.db');
+const { initDatabaseContext, loadDatabase } = require('../db/tenant.db');
 const { getAllAgencyUserList } = require('../models/sequelize/user.model');
 const { getModel: getSellerAsinList } = require('../models/sequelize/sellerAsinList.model');
 const { getModel: getMwsItems } = require('../models/sequelize/mwsItems.model');
@@ -82,157 +82,159 @@ class SqpCronApiController {
      * Internal method to process all cron operations
      */
     async _processAllCronOperations(validatedUserId, validatedSellerId) {
-        try {
-            await loadDatabase(0);
-            const users = validatedUserId ? [{ ID: validatedUserId }] : await getAllAgencyUserList();
-            
-            // Check cron limit logic            
-            let totalProcessed = 0;
-            let totalErrors = 0;
-            let breakUserProcessing = false;
-            // Process one user → one seller per run, exit after completing that seller            
-            for (const user of users) {
-                console.log('user.ID', user.ID);                    
-                if (isDevEnv && !allowedUsers.includes(user.ID)) {
-                    logger.info({ userId: user.ID }, 'Skip user as it is not allowed');
-                    continue;
-                } else {
-                    logger.info({ userId: user.ID }, 'Process user started');
-                    await loadDatabase(user.ID);
-                    // Check cron limits for this user
-                    const cronLimits = await Helpers.checkCronLimits(user.ID);
-                    logger.info({ cronLimits }, 'cronLimits');
-                    if (cronLimits.shouldProcess) {                        
-                        const sellers = validatedSellerId
-                            ? [await sellerModel.getProfileDetailsByID(validatedSellerId)]
-                            : await sellerModel.getSellersProfilesForCronAdvanced({ pullAll: 0 });
-                        
-                        logger.info({ userId: user.ID, sellerCount: sellers.length }, 'Processing sellers for user');
+        return initDatabaseContext(async () => {
+            try {
+                await loadDatabase(0);
+                const users = validatedUserId ? [{ ID: validatedUserId }] : await getAllAgencyUserList();
+                
+                // Check cron limit logic            
+                let totalProcessed = 0;
+                let totalErrors = 0;
+                let breakUserProcessing = false;
+                // Process one user → one seller per run, exit after completing that seller            
+                for (const user of users) {
+                    console.log('user.ID', user.ID);                    
+                    if (isDevEnv && !allowedUsers.includes(user.ID)) {
+                        logger.info({ userId: user.ID }, 'Skip user as it is not allowed');
+                        continue;
+                    } else {
+                        logger.info({ userId: user.ID }, 'Process user started');
+                        await loadDatabase(user.ID);
+                        // Check cron limits for this user
+                        const cronLimits = await Helpers.checkCronLimits(user.ID);
+                        logger.info({ cronLimits }, 'cronLimits');
+                        if (cronLimits.shouldProcess) {                        
+                            const sellers = validatedSellerId
+                                ? [await sellerModel.getProfileDetailsByID(validatedSellerId)]
+                                : await sellerModel.getSellersProfilesForCronAdvanced({ pullAll: 0 });
+                            
+                            logger.info({ userId: user.ID, sellerCount: sellers.length }, 'Processing sellers for user');
 
-                        // Check if user has eligible seller which has eligible ASINs before processing
-                        const hasEligibleUser = await model.hasEligibleASINs(null, false);
-                        if (!hasEligibleUser) {
-                            logger.info({ 
-                                sellerId: 'ALL Sellers Check', 
-                                amazonSellerID: 'ALL Sellers Check',
-                                userId: user.ID
-                            }, 'Skipping Full Run - no eligible ASINs for all sellers');
-                            continue;
-                        }
-                        for (const s of sellers) {
-                            if (!s) continue;                        
-                            try {
-                                // Check memory usage before processing
-                                const memoryStats = MemoryMonitor.getMemoryStats();
-                                if (MemoryMonitor.isMemoryUsageHigh(Number(process.env.MAX_MEMORY_USAGE_MB) || 500)) {
-                                    logger.warn({ 
-                                        memoryUsage: memoryStats.heapUsed,
-                                        threshold: process.env.MAX_MEMORY_USAGE_MB || 500
-                                    }, 'High memory usage detected, skipping seller processing');
-                                    breakUserProcessing = false;
-                                    continue;
-                                }
+                            // Check if user has eligible seller which has eligible ASINs before processing
+                            const hasEligibleUser = await model.hasEligibleASINs(null, false);
+                            if (!hasEligibleUser) {
+                                logger.info({ 
+                                    sellerId: 'ALL Sellers Check', 
+                                    amazonSellerID: 'ALL Sellers Check',
+                                    userId: user.ID
+                                }, 'Skipping Full Run - no eligible ASINs for all sellers');
+                                continue;
+                            }
+                            for (const s of sellers) {
+                                if (!s) continue;                        
+                                try {
+                                    // Check memory usage before processing
+                                    const memoryStats = MemoryMonitor.getMemoryStats();
+                                    if (MemoryMonitor.isMemoryUsageHigh(Number(process.env.MAX_MEMORY_USAGE_MB) || 500)) {
+                                        logger.warn({ 
+                                            memoryUsage: memoryStats.heapUsed,
+                                            threshold: process.env.MAX_MEMORY_USAGE_MB || 500
+                                        }, 'High memory usage detected, skipping seller processing');
+                                        breakUserProcessing = false;
+                                        continue;
+                                    }
 
-                                // Check if seller has eligible ASINs before processing
-                                const hasEligible = await model.hasEligibleASINs(s.idSellerAccount);
-                                if (!hasEligible) {
+                                    // Check if seller has eligible ASINs before processing
+                                    const hasEligible = await model.hasEligibleASINs(s.idSellerAccount);
+                                    if (!hasEligible) {
+                                        logger.info({ 
+                                            sellerId: s.idSellerAccount, 
+                                            amazonSellerID: s.AmazonSellerID 
+                                        }, 'Skipping seller - no eligible ASINs');
+                                        breakUserProcessing = false;
+                                        continue;
+                                    }
+                                    breakUserProcessing = true;
                                     logger.info({ 
                                         sellerId: s.idSellerAccount, 
                                         amazonSellerID: s.AmazonSellerID 
-                                    }, 'Skipping seller - no eligible ASINs');
-                                    breakUserProcessing = false;
-                                    continue;
-                                }
-                                breakUserProcessing = true;
-                                logger.info({ 
-                                    sellerId: s.idSellerAccount, 
-                                    amazonSellerID: s.AmazonSellerID 
-                                }, 'Processing seller with eligible ASINs');
+                                    }, 'Processing seller with eligible ASINs');
 
-                                // Check rate limit before making API calls
-                                await this.rateLimiter.checkLimit(s.AmazonSellerID);
-                                
-                                const authOverrides = await authService.buildAuthOverrides(s.AmazonSellerID);
-                                
-                                // Step 1: Request report with circuit breaker protection
-                                const { cronDetailIDs, cronDetailData } = await this.circuitBreaker.execute(
-                                    () => ctrl.requestForSeller(s, authOverrides, env.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT),
-                                    { sellerId: s.idSellerAccount, operation: 'requestForSeller' }
-                                );
-                                console.log('cronDetailData', cronDetailData);
-                                totalProcessed++;
+                                    // Check rate limit before making API calls
+                                    await this.rateLimiter.checkLimit(s.AmazonSellerID);
+                                    
+                                    const authOverrides = await authService.buildAuthOverrides(s.AmazonSellerID);
+                                    
+                                    // Step 1: Request report with circuit breaker protection
+                                    const { cronDetailIDs, cronDetailData } = await this.circuitBreaker.execute(
+                                        () => ctrl.requestForSeller(s, authOverrides, env.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT),
+                                        { sellerId: s.idSellerAccount, operation: 'requestForSeller' }
+                                    );
+                                    console.log('cronDetailData', cronDetailData);
+                                    totalProcessed++;
 
-                                if (cronDetailIDs.length > 0) {
-                                    await DelayHelpers.wait(Number(process.env.INITIAL_DELAY_SECONDS) || 30, 'Before status check');
-                                    // Step 2: Check status with circuit breaker protection
-                                    try {
-                                        await this.circuitBreaker.execute(
-                                            () => ctrl.checkReportStatuses(authOverrides, { cronDetailID: cronDetailIDs, cronDetailData: cronDetailData }),
-                                            { sellerId: s.idSellerAccount, operation: 'checkReportStatuses' }
-                                        );
-                                        totalProcessed++;
-                                    } catch (error) {
-                                        logger.error({ error: error.message, cronDetailID: cronDetailIDs }, 'Error checking report statuses (scoped)');
-                                        totalErrors++;
+                                    if (cronDetailIDs.length > 0) {
+                                        await DelayHelpers.wait(Number(process.env.INITIAL_DELAY_SECONDS) || 30, 'Before status check');
+                                        // Step 2: Check status with circuit breaker protection
+                                        try {
+                                            await this.circuitBreaker.execute(
+                                                () => ctrl.checkReportStatuses(authOverrides, { cronDetailID: cronDetailIDs, cronDetailData: cronDetailData }),
+                                                { sellerId: s.idSellerAccount, operation: 'checkReportStatuses' }
+                                            );
+                                            totalProcessed++;
+                                        } catch (error) {
+                                            logger.error({ error: error.message, cronDetailID: cronDetailIDs }, 'Error checking report statuses (scoped)');
+                                            totalErrors++;
+                                        }
+
+                                        // Step 3: Download with circuit breaker protection
+                                        try {
+                                            await this.circuitBreaker.execute(
+                                                () => ctrl.downloadCompletedReports(authOverrides, { cronDetailID: cronDetailIDs, cronDetailData: cronDetailData }),
+                                                { sellerId: s.idSellerAccount, operation: 'downloadCompletedReports' }
+                                            );
+                                            totalProcessed++;
+                                        } catch (error) {
+                                            logger.error({ error: error.message, cronDetailID: cronDetailIDs }, 'Error downloading reports (scoped)');
+                                            totalErrors++;
+                                        }
                                     }
-
-                                    // Step 3: Download with circuit breaker protection
-                                    try {
-                                        await this.circuitBreaker.execute(
-                                            () => ctrl.downloadCompletedReports(authOverrides, { cronDetailID: cronDetailIDs, cronDetailData: cronDetailData }),
-                                            { sellerId: s.idSellerAccount, operation: 'downloadCompletedReports' }
-                                        );
-                                        totalProcessed++;
-                                    } catch (error) {
-                                        logger.error({ error: error.message, cronDetailID: cronDetailIDs }, 'Error downloading reports (scoped)');
-                                        totalErrors++;
-                                    }
+                                    
+                                    logger.info({ 
+                                        sellerId: s.idSellerAccount, 
+                                        amazonSellerID: s.AmazonSellerID,
+                                        cronDetailIDs,
+                                        processed: totalProcessed,
+                                        errors: totalErrors
+                                    }, 'Completed processing for seller - exiting cron run');
+                                    
+                                } catch (error) {
+                                    logger.error({ 
+                                        error: error.message, 
+                                        sellerId: s.AmazonSellerID 
+                                    }, 'Error processing seller in all operations');
+                                    totalErrors++;
+                                    // Continue to next seller on error
                                 }
-                                
-                                logger.info({ 
-                                    sellerId: s.idSellerAccount, 
-                                    amazonSellerID: s.AmazonSellerID,
-                                    cronDetailIDs,
-                                    processed: totalProcessed,
-                                    errors: totalErrors
-                                }, 'Completed processing for seller - exiting cron run');
-                                
-                            } catch (error) {
-                                logger.error({ 
-                                    error: error.message, 
-                                    sellerId: s.AmazonSellerID 
-                                }, 'Error processing seller in all operations');
-                                totalErrors++;
-                                // Continue to next seller on error
+                                break; // done after one seller
+                            }                    
+                            if (breakUserProcessing) {
+                                break;
                             }
-                            break; // done after one seller
-                        }                    
-                        if (breakUserProcessing) {
-                            break;
                         }
                     }
                 }
-            }
-            
-            // Log final system status
-            const finalMemoryStats = MemoryMonitor.getMemoryStats();
-            const circuitBreakerState = this.circuitBreaker.getState();
-            const rateLimiterStats = this.rateLimiter.getStats();
-            
-            logger.info({
-                totalProcessed,
-                totalErrors,
-                memoryUsage: finalMemoryStats.heapUsed,
-                circuitBreakerState: circuitBreakerState.state,
-                rateLimiterStats
-            }, 'Cron operations completed - system status');
+                
+                // Log final system status
+                const finalMemoryStats = MemoryMonitor.getMemoryStats();
+                const circuitBreakerState = this.circuitBreaker.getState();
+                const rateLimiterStats = this.rateLimiter.getStats();
+                
+                logger.info({
+                    totalProcessed,
+                    totalErrors,
+                    memoryUsage: finalMemoryStats.heapUsed,
+                    circuitBreakerState: circuitBreakerState.state,
+                    rateLimiterStats
+                }, 'Cron operations completed - system status');
 
-        } catch (error) {
-            logger.error({ 
-                error: error.message,
-                stack: error.stack
-            }, 'Error in _processAllCronOperations');
-        }
+            } catch (error) {
+                logger.error({ 
+                    error: error.message,
+                    stack: error.stack 
+                }, 'Error in _processAllCronOperations');
+            }
+        });
     }
 
     /**
@@ -268,6 +270,7 @@ class SqpCronApiController {
      * Internal method to process ASIN sync
      */
     async _processSyncSellerAsins(userId, amazonSellerID) {
+        return initDatabaseContext(async () => {
         try {
             // Validate parameters
             const validatedUserId = ValidationHelpers.sanitizeNumber(userId);
@@ -307,7 +310,9 @@ class SqpCronApiController {
                 amazonSellerID 
             }, 'Error in _processSyncSellerAsins');
         }
+        });
     }
+
     /**
      * Private helper function to sync ASINs for a seller from mws_items (reusable)
      * @param {number} sellerID
@@ -516,102 +521,103 @@ class SqpCronApiController {
      * Internal method to process retry notifications
      */
     async _processRetryNotifications(validatedUserId) {
-        try {
-
-            await loadDatabase(0);
-            const users = validatedUserId ? [{ ID: validatedUserId }] : await getAllAgencyUserList();
-            
-            let totalRetryNotifications = 0;
-            let totalErrors = 0;
-            const allResults = [];
-            
-            // Process each user
-            for (const user of users) {
-                try {
-                    if (isDevEnv && !allowedUsers.includes(user.ID)) {
-                        continue;
-                    }
-                    await loadDatabase(user.ID);
-                    //stuck in progress/pending status for 1 hour
-                    const stuckRecords = await this.circuitBreaker.execute(
-                        () => this.findStuckRecords(),
-                        { userId: user.ID, operation: 'findStuckRecords' }
-                    );
-                    if (stuckRecords.length === 0) {
-                        logger.info({ userId: user.ID }, 'No stuck records found for user');
-                        continue;
-                    }
-                    logger.warn({ 
-                        userId: user.ID,
-                        stuckRecordsCount: stuckRecords.length,
-                        records: stuckRecords.map(r => ({
-                            id: r.ID,
-                            amazonSellerID: r.AmazonSellerID,
-                            stuckForHours: r.stuckForHours,
-                            reportTypes: r.stuckReportTypes
-                        }))
-                    }, 'Found stuck records that need notification retry');
-                    // Retry each stuck record's report types before deciding final status
-                    const retryResults = [];
-                    for (const rec of stuckRecords) {
-                        const authOverrides = await authService.buildAuthOverrides(rec.AmazonSellerID);
-                        for (const type of rec.stuckReportTypes) {
-                            try {
-                                // Check memory usage before processing
-                                const memoryStats = MemoryMonitor.getMemoryStats();
-                                if (MemoryMonitor.isMemoryUsageHigh(Number(process.env.MAX_MEMORY_USAGE_MB) || 500)) {
-                                    logger.warn({ 
-                                        memoryUsage: memoryStats.heapUsed,
-                                        threshold: process.env.MAX_MEMORY_USAGE_MB || 500
-                                    }, 'High memory usage detected, skipping record processing');
-                                    continue;
+        return initDatabaseContext(async () => {
+            try {
+                await loadDatabase(0);
+                const users = validatedUserId ? [{ ID: validatedUserId }] : await getAllAgencyUserList();
+                
+                let totalRetryNotifications = 0;
+                let totalErrors = 0;
+                const allResults = [];
+                
+                // Process each user
+                for (const user of users) {
+                    try {
+                        if (isDevEnv && !allowedUsers.includes(user.ID)) {
+                            continue;
+                        }
+                        await loadDatabase(user.ID);
+                        //stuck in progress/pending status for 1 hour
+                        const stuckRecords = await this.circuitBreaker.execute(
+                            () => this.findStuckRecords(),
+                            { userId: user.ID, operation: 'findStuckRecords' }
+                        );
+                        if (stuckRecords.length === 0) {
+                            logger.info({ userId: user.ID }, 'No stuck records found for user');
+                            continue;
+                        }
+                        logger.warn({ 
+                            userId: user.ID,
+                            stuckRecordsCount: stuckRecords.length,
+                            records: stuckRecords.map(r => ({
+                                id: r.ID,
+                                amazonSellerID: r.AmazonSellerID,
+                                stuckForHours: r.stuckForHours,
+                                reportTypes: r.stuckReportTypes
+                            }))
+                        }, 'Found stuck records that need notification retry');
+                        // Retry each stuck record's report types before deciding final status
+                        const retryResults = [];
+                        for (const rec of stuckRecords) {
+                            const authOverrides = await authService.buildAuthOverrides(rec.AmazonSellerID);
+                            for (const type of rec.stuckReportTypes) {
+                                try {
+                                    // Check memory usage before processing
+                                    const memoryStats = MemoryMonitor.getMemoryStats();
+                                    if (MemoryMonitor.isMemoryUsageHigh(Number(process.env.MAX_MEMORY_USAGE_MB) || 500)) {
+                                        logger.warn({ 
+                                            memoryUsage: memoryStats.heapUsed,
+                                            threshold: process.env.MAX_MEMORY_USAGE_MB || 500
+                                        }, 'High memory usage detected, skipping record processing');
+                                        continue;
+                                    }
+                                    const rr = await this.retryStuckRecord(rec, type, authOverrides);
+                                    retryResults.push(rr);
+                                } catch (e) {
+                                    retryResults.push({
+                                        cronDetailID: rec.ID,
+                                        amazonSellerID: rec.AmazonSellerID,
+                                        reportType: type,
+                                        retried: true,
+                                        success: false,
+                                        error: e.message
+                                    });
                                 }
-                                const rr = await this.retryStuckRecord(rec, type, authOverrides);
-                                retryResults.push(rr);
-                            } catch (e) {
-                                retryResults.push({
-                                    cronDetailID: rec.ID,
-                                    amazonSellerID: rec.AmazonSellerID,
-                                    reportType: type,
-                                    retried: true,
-                                    success: false,
-                                    error: e.message
-                                });
                             }
                         }
+                        allResults.push(...retryResults);                    
+                        logger.info({
+                            userId: user.ID,
+                            totalStuckRecords: stuckRecords.length,
+                            retryNotificationsCount: retryResults.length
+                        }, 'Notification retry completed for user');
+                        
+                    } catch (error) {
+                        logger.error({ 
+                            error: error.message,
+                            userId: user.ID 
+                        }, 'Error processing user in notification retry');
+                        totalErrors++;
                     }
-                    allResults.push(...retryResults);                    
-                    logger.info({
-                        userId: user.ID,
-                        totalStuckRecords: stuckRecords.length,
-                        retryNotificationsCount: retryResults.length
-                    }, 'Notification retry completed for user');
-                    
-                } catch (error) {
-                    logger.error({ 
-                        error: error.message,
-                        userId: user.ID 
-                    }, 'Error processing user in notification retry');
-                    totalErrors++;
                 }
+                
+                if (allResults.length === 0) {
+                    logger.info('No stuck records found across all users');
+                } else {
+                    logger.info({
+                        totalRetryNotifications: allResults.length,
+                        totalErrors,
+                        results: allResults
+                    }, 'Notification retry completed');
+                }
+                
+            } catch (error) {
+                logger.error({ 
+                    error: error.message,
+                    stack: error.stack 
+                }, 'Error in _processRetryNotifications');
             }
-            
-            if (allResults.length === 0) {
-                logger.info('No stuck records found across all users');
-            } else {
-                logger.info({
-                    totalRetryNotifications: allResults.length,
-                    totalErrors,
-                    results: allResults
-                }, 'Notification retry completed');
-            }
-            
-        } catch (error) {
-            logger.error({ 
-                error: error.message,
-                stack: error.stack 
-            }, 'Error in _processRetryNotifications');
-        }
+        });
     }
 
     async findStuckRecords() {

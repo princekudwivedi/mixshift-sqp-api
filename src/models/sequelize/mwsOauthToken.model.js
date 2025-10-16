@@ -1,11 +1,14 @@
 const { DataTypes } = require('sequelize');
-const { getCurrentSequelize } = require('../../db/tenant.db');
+const { getCurrentSequelize, getCurrentUserId } = require('../../db/tenant.db');
 const { TBL_MWS_OAUTH_TOKEN } = require('../../config/env.config');
 const { makeReadOnly } = require('./utils');
 
 const table = TBL_MWS_OAUTH_TOKEN;
 
-const MwsOauthToken = getCurrentSequelize().define(table, {
+let cachedModel = null;
+let cachedUserId = null;
+
+const modelDefinition = {
     id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
     AmazonSellerID: { type: DataTypes.STRING(250), allowNull: false },
     auth_token: { type: DataTypes.TEXT, allowNull: false },
@@ -18,11 +21,27 @@ const MwsOauthToken = getCurrentSequelize().define(table, {
     iRunningStatus: { type: DataTypes.TINYINT, allowNull: false },
     iLostAccess: { type: DataTypes.TINYINT, allowNull: false },
     dtLostAccessOn: { type: DataTypes.DATE, allowNull: false }
-}, {
-    tableName: table,
-    timestamps: false
-});
+};
 
-module.exports = makeReadOnly(MwsOauthToken);
+function getModel() {
+    const currentUserId = getCurrentUserId();
+    
+    if (cachedUserId !== currentUserId) {
+        cachedModel = null;
+        cachedUserId = currentUserId;
+    }
+    
+    if (!cachedModel) {
+        const sequelize = getCurrentSequelize();
+        cachedModel = sequelize.define(table, modelDefinition, {
+            tableName: table,
+            timestamps: false
+        });
+    }
+    
+    return makeReadOnly(cachedModel);
+}
+
+module.exports = getModel();
 
 

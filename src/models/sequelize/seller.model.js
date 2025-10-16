@@ -1,5 +1,5 @@
 const { DataTypes, Op } = require('sequelize');
-const { getCurrentSequelize } = require('../../db/tenant.db');
+const { getCurrentSequelize, getCurrentUserId } = require('../../db/tenant.db');
 
 const { TBL_SELLER } = require('../../config/env.config');
 const { makeReadOnly } = require('./utils');
@@ -10,8 +10,12 @@ const MwsAccessKeys = require('./mwsAccessKeys.model');
 
 const table = TBL_SELLER;
 
-// Define model on the base sequelize (structure only); we'll rebind per-tenant for queries
-let Seller = getCurrentSequelize().define(table, {
+// Cache for lazy-loaded model
+let cachedModel = null;
+let cachedUserId = null;
+
+// Model definition structure (used for lazy loading)
+const modelDefinition = {
     ID: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
     AgencyName: { type: DataTypes.STRING(255) },
     MerchantAlias: { type: DataTypes.STRING(100) },
@@ -106,18 +110,37 @@ let Seller = getCurrentSequelize().define(table, {
     dtCustomUpdateStartTime: { type: DataTypes.DATE },
     dtCustomUpdateEndTime: { type: DataTypes.DATE },
     dtUpdateDspAdvertisers: { type: DataTypes.DATE }
-}, {
+};
+
+const modelOptions = {
     tableName: table,
     timestamps: false
-});
+};
 
-module.exports = makeReadOnly(Seller);
+// Lazy load model (called at runtime, not module load)
+function getModel() {
+    const currentUserId = getCurrentUserId();
+    
+    // Clear cache if database context changed
+    if (cachedUserId !== currentUserId) {
+        cachedModel = null;
+        cachedUserId = currentUserId;
+    }
+    
+    if (!cachedModel) {
+        const sequelize = getCurrentSequelize();
+        cachedModel = sequelize.define(table, modelDefinition, modelOptions);
+    }
+    
+    return makeReadOnly(cachedModel);
+}
+
+module.exports = getModel();
 
 // Attach read-only helper methods for cron needs
 function getBoundModel() {
-    // Create/return a model bound to the current tenant sequelize
-    const tenantSequelize = getCurrentSequelize();
-    return tenantSequelize.models[table] || tenantSequelize.define(table, Seller.getAttributes(), { tableName: table, timestamps: false, freezeTableName: true });
+    // Get the lazy-loaded model bound to current tenant
+    return getModel();
 }
 
 async function getProfileDetailsByID(idSellerAccount, key = 'ID') {

@@ -1,11 +1,16 @@
 const { DataTypes } = require('sequelize');
-const { getCurrentSequelize } = require('../../db/tenant.db');
+const { getCurrentSequelize, getCurrentUserId } = require('../../db/tenant.db');
 const { TBL_USERS } = require('../../config/env.config');
 const { makeReadOnly } = require('./utils');
 
 const table = TBL_USERS; // 'users'
 
-const User = getCurrentSequelize().define(table, {
+// Cache for lazy-loaded model
+let cachedModel = null;
+let cachedUserId = null;
+
+// Model definition structure
+const modelDefinition = {
     ID: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
     AgencyName: { type: DataTypes.STRING(255), allowNull: false },
     FirstName: { type: DataTypes.STRING(255), allowNull: false },
@@ -45,12 +50,29 @@ const User = getCurrentSequelize().define(table, {
     iBlankBuyerEmailStatus: { type: DataTypes.TINYINT, allowNull: false, defaultValue: 1 },
     unknownBuyerSqCount: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
     user_logo: { type: DataTypes.STRING(250), allowNull: true }
-}, {
+};
+
+const modelOptions = {
     tableName: table,
     timestamps: false
-});
+};
 
-
+// Lazy load model
+function getModel() {
+    const currentUserId = getCurrentUserId();
+    
+    if (cachedUserId !== currentUserId) {
+        cachedModel = null;
+        cachedUserId = currentUserId;
+    }
+    
+    if (!cachedModel) {
+        const sequelize = getCurrentSequelize();
+        cachedModel = sequelize.define(table, modelDefinition, modelOptions);
+    }
+    
+    return makeReadOnly(cachedModel);
+}
 
 // Export functions similar to sqp.cron.model.js pattern
 async function getAllAgencyUserList() {

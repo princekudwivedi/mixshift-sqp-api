@@ -8,19 +8,6 @@ const table = 'tbl_sp_api_authorization';
 let cachedModel = null;
 let cachedUserId = null;
 
-let BaseModel = getCurrentSequelize().define(table, {
-    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
-    AmazonSellerID: { type: DataTypes.STRING(255), allowNull: false },
-    access_token: { type: DataTypes.TEXT, allowNull: true },
-    refresh_token: { type: DataTypes.TEXT, allowNull: true },
-    expires_in: { type: DataTypes.DATE, allowNull: true },
-    iLostAccess: { type: DataTypes.TINYINT, allowNull: true },
-    dtLostAccessOn: { type: DataTypes.DATE, allowNull: true }
-}, {
-    tableName: table,
-    timestamps: false
-});
-
 function getModel() {
     
     const currentUserId = getCurrentUserId();

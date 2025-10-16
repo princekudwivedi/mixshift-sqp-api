@@ -9,7 +9,7 @@ const table = TBL_SQP_DOWNLOAD_URLS;
 let cachedModel = null;
 let cachedUserId = null;
 
-let BaseModel = getCurrentSequelize().define(table, {
+const modelDefinition = {
     ID: { type: DataTypes.BIGINT, primaryKey: true, autoIncrement: true },
     CronJobID: { type: DataTypes.BIGINT },
     ReportID: { type: DataTypes.STRING(100) },
@@ -33,16 +33,16 @@ let BaseModel = getCurrentSequelize().define(table, {
     LastProcessError: { type: DataTypes.TEXT },
     dtCreatedOn: { type: DataTypes.DATE },
     dtUpdatedOn: { type: DataTypes.DATE }
-}, {
+};
+
+const modelOptions = {
     tableName: table,
     timestamps: false
-});
+};
 
 function getModel() {
-    
     const currentUserId = getCurrentUserId();
     
-    // Clear cache if database has changed
     if (cachedModel && cachedUserId !== currentUserId) {
         cachedModel = null;
         cachedUserId = null;
@@ -50,34 +50,7 @@ function getModel() {
     
     if (!cachedModel) {
         const sequelize = getCurrentSequelize();
-        cachedModel = sequelize.define(TBL_SQP_DOWNLOAD_URLS, {
-            ID: { type: DataTypes.BIGINT, primaryKey: true, autoIncrement: true },
-            CronJobID: { type: DataTypes.BIGINT },
-            ReportID: { type: DataTypes.STRING(100) },
-            ReportType: { type: DataTypes.STRING(32) },
-            Status: { type: DataTypes.STRING(32) },
-            DownloadAttempts: { type: DataTypes.INTEGER, defaultValue: 0 },
-            MaxDownloadAttempts: { type: DataTypes.INTEGER, defaultValue: 3 },
-            ErrorMessage: { type: DataTypes.TEXT },
-            FilePath: { type: DataTypes.STRING(500) },
-            FileSize: { type: DataTypes.BIGINT, defaultValue: 0 },
-            DownloadStartTime: { type: DataTypes.DATE },
-            DownloadEndTime: { type: DataTypes.DATE },
-            ProcessStatus: { type: DataTypes.STRING(32) },
-            ProcessAttempts: { type: DataTypes.INTEGER, defaultValue: 0 },
-            MaxProcessAttempts: { type: DataTypes.INTEGER, defaultValue: 3 },
-            SuccessCount: { type: DataTypes.INTEGER, defaultValue: 0 },
-            FailCount: { type: DataTypes.INTEGER, defaultValue: 0 },
-            TotalRecords: { type: DataTypes.INTEGER, defaultValue: 0 },
-            FullyImported: { type: DataTypes.TINYINT, defaultValue: 0 },
-            LastProcessAt: { type: DataTypes.DATE },
-            LastProcessError: { type: DataTypes.TEXT },
-            dtCreatedOn: { type: DataTypes.DATE },
-            dtUpdatedOn: { type: DataTypes.DATE }
-        }, {
-            tableName: TBL_SQP_DOWNLOAD_URLS,
-            timestamps: false
-        });
+        cachedModel = sequelize.define(table, modelDefinition, modelOptions);
         cachedUserId = currentUserId;
     }
     return cachedModel;

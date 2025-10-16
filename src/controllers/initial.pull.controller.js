@@ -4,7 +4,7 @@
  */
 
 const { SuccessHandler, ErrorHandler } = require('../middleware/response.handlers');
-const { loadDatabase } = require('../db/tenant.db');
+const { initDatabaseContext, loadDatabase } = require('../db/tenant.db');
 const { ValidationHelpers, CircuitBreaker, RateLimiter, MemoryMonitor, NotificationHelpers, RetryHelpers, DelayHelpers, Helpers } = require('../helpers/sqp.helpers');
 const retryHelpers = new RetryHelpers();
 const { getAllAgencyUserList } = require('../models/sequelize/user.model');
@@ -105,94 +105,96 @@ class InitialPullController {
      * Process initial pull for users and sellers
      */
     async _processInitialPull(validatedUserId, validatedSellerId, reportType) {
-        try {
-            await loadDatabase(0);
-            const users = validatedUserId ? [{ ID: parseInt(validatedUserId) }] : await getAllAgencyUserList();
-            let breakUserProcessing = false;
-            for (const user of users) {
-                try {
-                    if (isDevEnv && !allowedUsers.includes(user.ID)) {
-                        continue;
-                    }
-                    logger.info({ userId: user.ID }, 'Process user started');
-                    await loadDatabase(user.ID);
-                    // Check cron limits for this user
-                    const cronLimits = await Helpers.checkCronLimits(user.ID, 1);
-                    logger.info({ cronLimits }, 'cronLimits');
-                    if (cronLimits.shouldProcess) {
-                        // Check if user has eligible seller which has eligible ASINs before processing
-                        const hasEligibleUser = await model.hasEligibleASINsInitialPull(null, false);
-                        if (!hasEligibleUser) {
-                            logger.info({ 
-                                sellerId: 'ALL Sellers Check', 
-                                amazonSellerID: 'ALL Sellers Check',
-                                userId: user.ID
-                            }, 'Skipping Full Run - no eligible ASINs for all sellers');
+        return initDatabaseContext(async () => {
+            try {
+                await loadDatabase(0);
+                const users = validatedUserId ? [{ ID: parseInt(validatedUserId) }] : await getAllAgencyUserList();
+                let breakUserProcessing = false;
+                for (const user of users) {
+                    try {
+                        if (isDevEnv && !allowedUsers.includes(user.ID)) {
                             continue;
                         }
-                        const sellers = validatedSellerId
-                            ? [await sellerModel.getProfileDetailsByID(validatedSellerId)]
-                            : await sellerModel.getSellersProfilesForCronAdvanced({ pullAll: 0 });                        
-
-                        for (const seller of sellers) {
-                            if (!seller) continue;
-
-                            // Check memory usage before processing
-                            const memoryStats = MemoryMonitor.getMemoryStats();
-                            if (MemoryMonitor.isMemoryUsageHigh(Number(process.env.MAX_MEMORY_USAGE_MB) || 500)) {
-                                logger.warn({ 
-                                    memoryUsage: memoryStats.heapUsed,
-                                    threshold: process.env.MAX_MEMORY_USAGE_MB || 500
-                                }, 'High memory usage detected, skipping seller processing');
-                                breakUserProcessing = false;
-                                continue;
-                            }
-
-                            // Check if seller has eligible ASINs before processing
-                            const hasEligible = await model.hasEligibleASINsInitialPull(seller.idSellerAccount); 
-                            if (!hasEligible) {
+                        logger.info({ userId: user.ID }, 'Process user started');
+                        await loadDatabase(user.ID);
+                        // Check cron limits for this user
+                        const cronLimits = await Helpers.checkCronLimits(user.ID, 1);
+                        logger.info({ cronLimits }, 'cronLimits');
+                        if (cronLimits.shouldProcess) {
+                            // Check if user has eligible seller which has eligible ASINs before processing
+                            const hasEligibleUser = await model.hasEligibleASINsInitialPull(null, false);
+                            if (!hasEligibleUser) {
                                 logger.info({ 
-                                    sellerId: seller.idSellerAccount, 
-                                    amazonSellerID: seller.AmazonSellerID 
-                                }, 'Skipping seller - no eligible ASINs');
-                                breakUserProcessing = false;
+                                    sellerId: 'ALL Sellers Check', 
+                                    amazonSellerID: 'ALL Sellers Check',
+                                    userId: user.ID
+                                }, 'Skipping Full Run - no eligible ASINs for all sellers');
                                 continue;
                             }
-                            breakUserProcessing = true;
+                            const sellers = validatedSellerId
+                                ? [await sellerModel.getProfileDetailsByID(validatedSellerId)]
+                                : await sellerModel.getSellersProfilesForCronAdvanced({ pullAll: 0 });                        
 
-                            logger.info({ 
-                                userId: validatedUserId,
-                                sellerId: seller.idSellerAccount,
-                                amazonSellerID: seller.AmazonSellerID,
-                            }, 'Processing seller for initial pull');
+                            for (const seller of sellers) {
+                                if (!seller) continue;
 
-                            // Check rate limit before making API calls
-                            await this.rateLimiter.checkLimit(seller.AmazonSellerID);
+                                // Check memory usage before processing
+                                const memoryStats = MemoryMonitor.getMemoryStats();
+                                if (MemoryMonitor.isMemoryUsageHigh(Number(process.env.MAX_MEMORY_USAGE_MB) || 500)) {
+                                    logger.warn({ 
+                                        memoryUsage: memoryStats.heapUsed,
+                                        threshold: process.env.MAX_MEMORY_USAGE_MB || 500
+                                    }, 'High memory usage detected, skipping seller processing');
+                                    breakUserProcessing = false;
+                                    continue;
+                                }
 
-                            // Get access token
-                            const authOverrides = await authService.buildAuthOverrides(seller.AmazonSellerID);
-                            if (!authOverrides.accessToken) {				
-                                logger.error({ amazonSellerID: seller.AmazonSellerID }, 'No access token available for request');
-                                throw new Error('No access token available for report request');
+                                // Check if seller has eligible ASINs before processing
+                                const hasEligible = await model.hasEligibleASINsInitialPull(seller.idSellerAccount); 
+                                if (!hasEligible) {
+                                    logger.info({ 
+                                        sellerId: seller.idSellerAccount, 
+                                        amazonSellerID: seller.AmazonSellerID 
+                                    }, 'Skipping seller - no eligible ASINs');
+                                    breakUserProcessing = false;
+                                    continue;
+                                }
+                                breakUserProcessing = true;
+
+                                logger.info({ 
+                                    userId: validatedUserId,
+                                    sellerId: seller.idSellerAccount,
+                                    amazonSellerID: seller.AmazonSellerID,
+                                }, 'Processing seller for initial pull');
+
+                                // Check rate limit before making API calls
+                                await this.rateLimiter.checkLimit(seller.AmazonSellerID);
+
+                                // Get access token
+                                const authOverrides = await authService.buildAuthOverrides(seller.AmazonSellerID);
+                                if (!authOverrides.accessToken) {				
+                                    logger.error({ amazonSellerID: seller.AmazonSellerID }, 'No access token available for request');
+                                    throw new Error('No access token available for report request');
+                                }
+                                // Start initial pull for seller with circuit breaker protection
+                                await this.circuitBreaker.execute(
+                                    () => this._startInitialPullForSeller(seller, reportType, authOverrides),
+                                    { sellerId: seller.idSellerAccount, operation: 'startInitialPullForSeller' }
+                                );
+                                break; // done after one seller
                             }
-                            // Start initial pull for seller with circuit breaker protection
-                            await this.circuitBreaker.execute(
-                                () => this._startInitialPullForSeller(seller, reportType, authOverrides),
-                                { sellerId: seller.idSellerAccount, operation: 'startInitialPullForSeller' }
-                            );
-                            break; // done after one seller
                         }
+                    } catch (userError) {
+                        logger.error({ userId: validatedUserId, error: userError.message }, 'Error in initial pull processing');
                     }
-                } catch (userError) {
-                    logger.error({ userId: validatedUserId, error: userError.message }, 'Error in initial pull processing');
+                    if (breakUserProcessing) {
+                        break;
+                    }
                 }
-                if (breakUserProcessing) {
-                    break;
-                }
+            } catch (error) {
+                logger.error({ error: error.message }, 'Error in _processInitialPull');
             }
-        } catch (error) {
-            logger.error({ error: error.message }, 'Error in _processInitialPull');
-        }
+        });
     }
 
     /**
@@ -1375,189 +1377,191 @@ class InitialPullController {
      * Internal method to process retry for failed initial pull
      */
     async _processRetryFailedInitialPull(validatedUserId, validatedSellerId, validatedCronDetailID) {
-        try {
-            await loadDatabase(0);
-            const users = validatedUserId ? [{ ID: parseInt(validatedUserId) }] : await getAllAgencyUserList();
-            
-            let totalRetried = 0;
-            let totalSuccess = 0;
-            let totalFailed = 0;
-            const allResults = [];
-            
-            // Process each user
-            for (const user of users) {
-                try {
-                    if (isDevEnv && !allowedUsers.includes(user.ID)) {
-                        continue;
-                    }
-                    
-                    await loadDatabase(user.ID);
-                    
-                    // Find failed records
-                    let failedRecords = await this.findFailedInitialPullRecords();
-                    logger.info({ failedRecordsCount: failedRecords.length }, 'Found failed initial pull records to retry');
-                    
-                    // Filter by cronDetailID if specified
-                    if (validatedCronDetailID) {
-                        failedRecords = failedRecords.filter(r => r.ID === parseInt(validatedCronDetailID));
-                    }
-                    
-                    // Filter by sellerId if specified
-                    if (validatedSellerId) {
-                        const sellerDetails = await sellerModel.getProfileDetailsByID(validatedSellerId);
-                        if (sellerDetails) {
-                            failedRecords = failedRecords.filter(r => r.AmazonSellerID === sellerDetails.AmazonSellerID);
+        return initDatabaseContext(async () => {
+            try {
+                await loadDatabase(0);
+                const users = validatedUserId ? [{ ID: parseInt(validatedUserId) }] : await getAllAgencyUserList();
+                
+                let totalRetried = 0;
+                let totalSuccess = 0;
+                let totalFailed = 0;
+                const allResults = [];
+                
+                // Process each user
+                for (const user of users) {
+                    try {
+                        if (isDevEnv && !allowedUsers.includes(user.ID)) {
+                            continue;
                         }
-                    }
-                    
-                    if (failedRecords.length === 0) {
-                        logger.info({ userId: user.ID }, 'No failed initial pull records found for user');
-                        continue;
-                    }
-                    
-                    logger.info({ 
-                        userId: user.ID,
-                        failedRecordsCount: failedRecords.length,
-                        records: failedRecords.map(r => ({
-                            id: r.ID,
-                            amazonSellerID: r.AmazonSellerID,
-                            stuckReportTypes: r.stuckReportTypes
-                        }))
-                    }, 'Found failed initial pull records to retry');
-                    // Retry each failed record
-                    for (const rec of failedRecords) {
-                        const authOverrides = await authService.buildAuthOverrides(rec.AmazonSellerID);
                         
-                        // Process each failed log entry individually
-                        for (const log of rec.failedLogs) {
-                            try {
-                                logger.info({ 
-                                    cronDetailID: log.cronJobID, 
-                                    amazonSellerID: rec.AmazonSellerID,
-                                    reportType: log.reportType,
-                                    range: log.range,
-                                    action: log.action
-                                }, 'Retrying failed initial pull report');
-                                
-                                // Reset the failed status to pending (0) to allow retry
-                                await model.updateSQPReportStatus(log.cronJobID, log.reportType, 0, null, null, 4, true);
-                                await model.setProcessRunningStatus(log.cronJobID, log.reportType, 1);
-                                
-                                // Log retry attempt
-                                await model.logCronActivity({
-                                    cronJobID: log.cronJobID,
-                                    reportType: log.reportType,
-                                    action: 'Initial Pull - Retry Started',
-                                    status: 1,
-                                    message: `Retrying ${log.action} for ${log.range}`,
-                                    retryCount: 0,
-                                    reportID: log.reportId,
-                                    iInitialPull: 1,
-                                    Range: log.range,
-                                    reportDocumentID: log.reportDocumentID,
-                                    executionTime: 0
-                                });
-                                
-                                const result = await this.retryStuckRecord(rec, log.reportType, authOverrides, log);
-                                
-                                if (result.success) {
-                                    totalSuccess++;
+                        await loadDatabase(user.ID);
+                        
+                        // Find failed records
+                        let failedRecords = await this.findFailedInitialPullRecords();
+                        logger.info({ failedRecordsCount: failedRecords.length }, 'Found failed initial pull records to retry');
+                        
+                        // Filter by cronDetailID if specified
+                        if (validatedCronDetailID) {
+                            failedRecords = failedRecords.filter(r => r.ID === parseInt(validatedCronDetailID));
+                        }
+                        
+                        // Filter by sellerId if specified
+                        if (validatedSellerId) {
+                            const sellerDetails = await sellerModel.getProfileDetailsByID(validatedSellerId);
+                            if (sellerDetails) {
+                                failedRecords = failedRecords.filter(r => r.AmazonSellerID === sellerDetails.AmazonSellerID);
+                            }
+                        }
+                        
+                        if (failedRecords.length === 0) {
+                            logger.info({ userId: user.ID }, 'No failed initial pull records found for user');
+                            continue;
+                        }
+                        
+                        logger.info({ 
+                            userId: user.ID,
+                            failedRecordsCount: failedRecords.length,
+                            records: failedRecords.map(r => ({
+                                id: r.ID,
+                                amazonSellerID: r.AmazonSellerID,
+                                stuckReportTypes: r.stuckReportTypes
+                            }))
+                        }, 'Found failed initial pull records to retry');
+                        // Retry each failed record
+                        for (const rec of failedRecords) {
+                            const authOverrides = await authService.buildAuthOverrides(rec.AmazonSellerID);
+                            
+                            // Process each failed log entry individually
+                            for (const log of rec.failedLogs) {
+                                try {
                                     logger.info({ 
                                         cronDetailID: log.cronJobID, 
+                                        amazonSellerID: rec.AmazonSellerID,
                                         reportType: log.reportType,
-                                        range: log.range
-                                    }, 'Initial pull retry succeeded');
-                                } else {
-                                    totalFailed++;
-                                    logger.warn({ 
+                                        range: log.range,
+                                        action: log.action
+                                    }, 'Retrying failed initial pull report');
+                                    
+                                    // Reset the failed status to pending (0) to allow retry
+                                    await model.updateSQPReportStatus(log.cronJobID, log.reportType, 0, null, null, 4, true);
+                                    await model.setProcessRunningStatus(log.cronJobID, log.reportType, 1);
+                                    
+                                    // Log retry attempt
+                                    await model.logCronActivity({
+                                        cronJobID: log.cronJobID,
+                                        reportType: log.reportType,
+                                        action: 'Initial Pull - Retry Started',
+                                        status: 1,
+                                        message: `Retrying ${log.action} for ${log.range}`,
+                                        retryCount: 0,
+                                        reportID: log.reportId,
+                                        iInitialPull: 1,
+                                        Range: log.range,
+                                        reportDocumentID: log.reportDocumentID,
+                                        executionTime: 0
+                                    });
+                                    
+                                    const result = await this.retryStuckRecord(rec, log.reportType, authOverrides, log);
+                                    
+                                    if (result.success) {
+                                        totalSuccess++;
+                                        logger.info({ 
+                                            cronDetailID: log.cronJobID, 
+                                            reportType: log.reportType,
+                                            range: log.range
+                                        }, 'Initial pull retry succeeded');
+                                    } else {
+                                        totalFailed++;
+                                        logger.warn({ 
+                                            cronDetailID: log.cronJobID, 
+                                            reportType: log.reportType,
+                                            range: log.range
+                                        }, 'Initial pull retry failed');
+                                    }
+                                    
+                                    allResults.push(result);
+                                    totalRetried++;
+                                    
+                                } catch (e) {
+                                    logger.error({ 
                                         cronDetailID: log.cronJobID, 
+                                        reportType: log.reportType, 
+                                        range: log.range,
+                                        error: e.message 
+                                    }, 'Error retrying failed initial pull report');
+                                    
+                                    allResults.push({
+                                        cronDetailID: log.cronJobID,
+                                        amazonSellerID: rec.AmazonSellerID,
                                         reportType: log.reportType,
-                                        range: log.range
-                                    }, 'Initial pull retry failed');
+                                        range: log.range,
+                                        retried: true,
+                                        success: false,
+                                        error: e.message
+                                    });
+                                    totalRetried++;
+                                    totalFailed++;
                                 }
-                                
-                                allResults.push(result);
-                                totalRetried++;
-                                
-                            } catch (e) {
-                                logger.error({ 
-                                    cronDetailID: log.cronJobID, 
-                                    reportType: log.reportType, 
-                                    range: log.range,
-                                    error: e.message 
-                                }, 'Error retrying failed initial pull report');
-                                
-                                allResults.push({
-                                    cronDetailID: log.cronJobID,
-                                    amazonSellerID: rec.AmazonSellerID,
-                                    reportType: log.reportType,
-                                    range: log.range,
-                                    retried: true,
-                                    success: false,
-                                    error: e.message
-                                });
-                                totalRetried++;
-                                totalFailed++;
                             }
                         }
-                    }
-                    
-                    // After all retries, update final status for each unique cronDetailID
-                    const processedCronDetails = new Set();
-                    for (const rec of failedRecords) {
-                        if (!processedCronDetails.has(rec.ID)) {
-                            processedCronDetails.add(rec.ID);
-                            
-                            try {
-                                // Single function call - it fetches all needed data itself
-                                await this._updateInitialPullFinalStatus(rec.ID, rec.AmazonSellerID, null);
+                        
+                        // After all retries, update final status for each unique cronDetailID
+                        const processedCronDetails = new Set();
+                        for (const rec of failedRecords) {
+                            if (!processedCronDetails.has(rec.ID)) {
+                                processedCronDetails.add(rec.ID);
                                 
-                                logger.info({
-                                    cronDetailID: rec.ID,
-                                    amazonSellerID: rec.AmazonSellerID
-                                }, 'Updated final status after retry');
-                                
-                            } catch (updateError) {
-                                logger.error({
-                                    error: updateError.message,
-                                    cronDetailID: rec.ID
-                                }, 'Error updating final status after retry');
+                                try {
+                                    // Single function call - it fetches all needed data itself
+                                    await this._updateInitialPullFinalStatus(rec.ID, rec.AmazonSellerID, null);
+                                    
+                                    logger.info({
+                                        cronDetailID: rec.ID,
+                                        amazonSellerID: rec.AmazonSellerID
+                                    }, 'Updated final status after retry');
+                                    
+                                } catch (updateError) {
+                                    logger.error({
+                                        error: updateError.message,
+                                        cronDetailID: rec.ID
+                                    }, 'Error updating final status after retry');
+                                }
                             }
                         }
+                        
+                        logger.info({
+                            userId: user.ID,
+                            totalRetried,
+                            totalSuccess,
+                            totalFailed
+                        }, 'Failed initial pull retry completed for user');
+                        
+                    } catch (error) {
+                        logger.error({ 
+                            error: error.message,
+                            userId: user.ID 
+                        }, 'Error processing user in failed initial pull retry');
                     }
-                    
-                    logger.info({
-                        userId: user.ID,
-                        totalRetried,
-                        totalSuccess,
-                        totalFailed
-                    }, 'Failed initial pull retry completed for user');
-                    
-                } catch (error) {
-                    logger.error({ 
-                        error: error.message,
-                        userId: user.ID 
-                    }, 'Error processing user in failed initial pull retry');
                 }
+                
+                logger.info({
+                    totalRetried,
+                    totalSuccess,
+                    totalFailed
+                }, 'Failed initial pull retry process completed');
+                
+                return {
+                    totalRetried,
+                    totalSuccess,
+                    totalFailed,
+                    results: allResults
+                };
+                
+            } catch (error) {
+                logger.error({ error: error.message }, 'Error in _processRetryFailedInitialPull');
+                throw error;
             }
-            
-            logger.info({
-                totalRetried,
-                totalSuccess,
-                totalFailed
-            }, 'Failed initial pull retry process completed');
-            
-            return {
-                totalRetried,
-                totalSuccess,
-                totalFailed,
-                results: allResults
-            };
-            
-        } catch (error) {
-            logger.error({ error: error.message }, 'Error in _processRetryFailedInitialPull');
-            throw error;
-        }
+        });
     }
 
     /**

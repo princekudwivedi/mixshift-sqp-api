@@ -9,7 +9,7 @@ const table = TBL_SQP_CRON_LOGS;
 let cachedModel = null;
 let cachedUserId = null;
 
-let BaseModel = getCurrentSequelize().define(table, {
+const modelDefinition = {
     ID: { type: DataTypes.BIGINT, primaryKey: true, autoIncrement: true },
     CronJobID: { type: DataTypes.BIGINT },    
     ReportType: { type: DataTypes.STRING(32) },
@@ -23,17 +23,17 @@ let BaseModel = getCurrentSequelize().define(table, {
     ExecutionTime: { type: DataTypes.INTEGER },
     dtCreatedOn: { type: DataTypes.DATE },
     dtUpdatedOn: { type: DataTypes.DATE },
-    ReportDocumentID: { type: DataTypes.STRING(128) },
-}, {
+    ReportDocumentID: { type: DataTypes.STRING(128) }
+};
+
+const modelOptions = {
     tableName: table,
     timestamps: false
-});
+};
 
 function getModel() {
-    
     const currentUserId = getCurrentUserId();
     
-    // Clear cache if database has changed
     if (cachedModel && cachedUserId !== currentUserId) {
         cachedModel = null;
         cachedUserId = null;
@@ -41,25 +41,7 @@ function getModel() {
     
     if (!cachedModel) {
         const sequelize = getCurrentSequelize();
-        cachedModel = sequelize.define(TBL_SQP_CRON_LOGS, {
-            ID: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
-            CronJobID: { type: DataTypes.BIGINT },            
-            ReportType: { type: DataTypes.STRING(32) },
-            Range: { type: DataTypes.STRING(255) },
-            iInitialPull: { type: DataTypes.TINYINT, defaultValue: 0 },
-            Action: { type: DataTypes.STRING(64) },
-            Status: { type: DataTypes.TINYINT },
-            Message: { type: DataTypes.TEXT },
-            ReportID: { type: DataTypes.STRING(128) },
-            RetryCount: { type: DataTypes.INTEGER },
-            ExecutionTime: { type: DataTypes.INTEGER },
-            dtCreatedOn: { type: DataTypes.DATE },
-            dtUpdatedOn: { type: DataTypes.DATE },
-            ReportDocumentID: { type: DataTypes.STRING(128) },
-        }, {
-            tableName: TBL_SQP_CRON_LOGS,
-            timestamps: false
-        });
+        cachedModel = sequelize.define(table, modelDefinition, modelOptions);
     }
     return cachedModel;
 }
