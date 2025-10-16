@@ -402,7 +402,10 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 				});
                 // Log report ID and document ID in cron logs
                 await model.logCronActivity({ cronJobID: row.ID, reportType, action: 'Check Status', status: 1, message: 'Report ready', reportID: reportId, reportDocumentID: documentId });
-								
+				
+				const requestDelaySeconds = Number(process.env.REQUEST_DELAY_SECONDS) || 30;
+				await DelayHelpers.wait(requestDelaySeconds, 'Between report status checks and downloads (rate limiting)');
+
 				return {
 					message: `Report ready on attempt ${attempt}. Report ID: ${reportId}${documentId ? ' | Document ID: ' + documentId : ''}`,
 					reportID: reportId,
@@ -434,6 +437,10 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
             } else if (status === 'FATAL' || status === 'CANCELLED') {                
 				// Fatal or cancelled status - treat as error
 				const res = await handleFatalOrUnknownStatus(row, reportType, status);
+
+				const requestDelaySeconds = Number(process.env.REQUEST_DELAY_SECONDS) || 30;
+				await DelayHelpers.wait(requestDelaySeconds, 'Between report status checks and fatal/cancelled (rate limiting)');
+
 				return res;
 			} else {
 				// Unknown status - treat as error
@@ -441,6 +448,8 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 					status = 'UNKNOWN';
 				}
 				const res = await handleFatalOrUnknownStatus(row, reportType, status);
+				const requestDelaySeconds = Number(process.env.REQUEST_DELAY_SECONDS) || 30;
+				await DelayHelpers.wait(requestDelaySeconds, 'Between report status checks and unknown status (rate limiting)');
 				return res;
 			}
 		}
@@ -551,6 +560,9 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 				throw new Error('No access token available for report request');
 			}
 			
+			const requestDelaySeconds = Number(process.env.REQUEST_DELAY_SECONDS) || 30;
+        	await DelayHelpers.wait(requestDelaySeconds, 'Between report download and status check (rate limiting)');
+
 			// First get report status to ensure we have the latest reportDocumentId
 			const statusRes = await sp.getReportStatus(seller, reportId, currentAuthOverrides);
 			

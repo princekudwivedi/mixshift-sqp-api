@@ -458,6 +458,10 @@ class InitialPullController {
                         ),
                         { sellerId: seller.idSellerAccount, operation: 'checkInitialPullReportStatus' }
                     );
+
+                    const requestDelaySeconds = Number(process.env.REQUEST_DELAY_SECONDS) || 30;
+                    await DelayHelpers.wait(requestDelaySeconds, 'Between report status checks (rate limiting)');
+
                     totalSuccess++;
                 } catch (error) {
                     logger.error({ 
@@ -792,11 +796,14 @@ class InitialPullController {
                         executionTime: (Date.now() - startTime) / 1000
                     });
                     
+                    const requestDelaySeconds = Number(process.env.REQUEST_DELAY_SECONDS) || 30;
+                    await DelayHelpers.wait(requestDelaySeconds, 'Between report status checks and downloads (rate limiting)');
+
                     const downloadResult = await this.circuitBreaker.execute(
                         () => this._downloadInitialPullReport(cronDetailID, seller, reportId, documentId, range, reportType, authOverrides, retry),
                         { sellerId: seller.idSellerAccount, operation: 'downloadInitialPullReport' }
                     );
-                    
+
                     return {
                         ...downloadResult,
                         reportDocumentID: documentId,
@@ -835,6 +842,10 @@ class InitialPullController {
                         iInitialPull: 1,
                         executionTime: (Date.now() - startTime) / 1000
                     });
+                    
+                    const requestDelaySeconds = Number(process.env.REQUEST_DELAY_SECONDS) || 30;
+                    await DelayHelpers.wait(requestDelaySeconds, 'Between report status checks and fatal/cancelled (rate limiting)');
+
                     throw new Error(`Report status: ${status}`);
                 }
             }
@@ -1596,6 +1607,9 @@ class InitialPullController {
                 ),
                 { sellerId: seller.idSellerAccount, operation: 'recheckInitialPullReportStatus' }
             );
+
+            const requestDelaySeconds = Number(process.env.REQUEST_DELAY_SECONDS) || 30;
+            await DelayHelpers.wait(requestDelaySeconds, 'Between report status checks and downloads (rate limiting)');
             
             // Verify final status from database
             const SqpCronDetails = getSqpCronDetails();
