@@ -642,6 +642,7 @@ module.exports = {
     splitASINsIntoChunks,
     mapPrefix,
     getActiveASINsBySeller,
+    getActiveASINsBySellerInitialPull,
     createSQPCronDetail,
     getLatestReportId,
     updateSQPReportStatus,
