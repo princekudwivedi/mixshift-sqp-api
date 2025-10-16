@@ -656,8 +656,7 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 						fileSize: fileSize,
 						recordsProcessed: Array.isArray(data) ? data.length : 0
 					},
-					data: { documentId, filePath, fileSize, recordCount: data.length },
-					skipped: true
+					data: { documentId, filePath, fileSize, recordCount: data.length }
 				};
 			} else {
 				// No data received - log this and update status
@@ -687,8 +686,7 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 						downloadCompleted: true,
 						recordsProcessed: 0
 					},
-					data: { documentId, recordCount: 0 },
-					skipped: true
+					data: { documentId, recordCount: 0 }
 				};
 			}
 		}
