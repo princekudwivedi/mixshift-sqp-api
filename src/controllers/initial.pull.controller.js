@@ -209,19 +209,6 @@ class InitialPullController {
             if (asins.length === 0) return;
 
             const asinList = asins.map(a => a.ASIN);            
-            // const cronDetailRow = await model.createSQPCronDetail(
-            //     seller.AmazonSellerID,
-            //     asinList.join(' '),
-            //     {
-            //         iInitialPull: 1,
-            //         cronRunningStatus: 1,
-            //         dtCronStartDate: new Date(),
-            //         FullWeekRange: ranges.fullWeekRange,
-            //         FullMonthRange: ranges.fullMonthRange,
-            //         FullQuarterRange: ranges.fullQuarterRange,
-            //         SellerName: seller.SellerName || seller.MerchantAlias || `Seller_${seller.AmazonSellerID}`
-            //     }
-            // );
             const options =   {
                 iInitialPull: 1,
                 FullWeekRange: ranges.fullWeekRange,
@@ -394,7 +381,7 @@ class InitialPullController {
                 const startDate = range.startDate;
                 
                 if(range.range !== '' && range.range !== null && range.range !== undefined){
-                    await model.updateSQPReportStatus(cronDetailID, reportType, 0, reportId, null, null, null, new Date());
+                    await model.updateSQPReportStatus(cronDetailID, reportType, 0, new Date());
                     // Log report creation
                     await model.logCronActivity({
                         cronJobID: cronDetailID,
@@ -779,7 +766,7 @@ class InitialPullController {
                     const documentId = res.reportDocumentId || null;
                     
                     // Update status to indicate report is ready (status 1)
-                    await model.updateSQPReportStatus(cronDetailID, reportType, 1, reportId, null, documentId);
+                    await model.updateSQPReportStatus(cronDetailID, reportType, 1);
                     
                     // Store for download queue                    
                     await downloadUrls.storeDownloadUrl({
@@ -1009,7 +996,7 @@ class InitialPullController {
                             }, retry ? 'Initial pull import completed successfully (retry)' : 'Initial pull import completed successfully', 'Initial pull import completed successfully');
                             
                             // Update status to success (1) after successful import
-                            await model.updateSQPReportStatus(cronDetailID, reportType, 1, reportId, null, documentId, 1, null, new Date());
+                            await model.updateSQPReportStatus(cronDetailID, reportType, 1, null, new Date());
                             
                             // Log import success
                             await model.logCronActivity({
@@ -1036,7 +1023,7 @@ class InitialPullController {
                             }, retry ? 'Error during initial pull import - file saved but import failed (retry)' : 'Error during initial pull import - file saved but import failed', 'Error during initial pull import - file saved but import failed');
                             
                             // Update status to failed (3) after import failure
-                            await model.updateSQPReportStatus(cronDetailID, reportType, 3, reportId, importError.message, documentId, 1, null, new Date());
+                            await model.updateSQPReportStatus(cronDetailID, reportType, 3, null, new Date());
                             
                             // Log import failure
                             await model.logCronActivity({
@@ -1106,7 +1093,7 @@ class InitialPullController {
                     await model.setProcessRunningStatus(cronDetailID, reportType, 4);
                     
                     // Update cron detail status to success (1) with end date
-                    await model.updateSQPReportStatus(cronDetailID, reportType, 1, reportId, null, documentId, 1, null, new Date());
+                    await model.updateSQPReportStatus(cronDetailID, reportType, 1, null, new Date());
                     
                     // Log import done (nothing to import but process complete)
                     await model.logCronActivity({
@@ -1443,7 +1430,7 @@ class InitialPullController {
                                 }, 'Retrying failed initial pull report');
                                 
                                 // Reset the failed status to pending (0) to allow retry
-                                await model.updateSQPReportStatus(log.cronJobID, log.reportType, 0, null, null, null, null, null, null, 4, true);
+                                await model.updateSQPReportStatus(log.cronJobID, log.reportType, 0, null, null, 4, true);
                                 await model.setProcessRunningStatus(log.cronJobID, log.reportType, 1);
                                 
                                 // Log retry attempt
@@ -1647,7 +1634,7 @@ class InitialPullController {
             // If not success, mark as failed
             logger.warn({ cronDetailID, reportType, range, currentStatus: current }, 'Retry completed but status not success');
             
-            await model.updateSQPReportStatus(cronDetailID, reportType, 3, reportId, `Status: ${current}`);
+            await model.updateSQPReportStatus(cronDetailID, reportType, 3);
             
             return { 
                 success: false, 
@@ -1662,7 +1649,7 @@ class InitialPullController {
             logger.error({ id: record.ID, reportType, range, error: e.message }, 'Retry failed with exception');
             
             // Mark as failed
-            await model.updateSQPReportStatus(cronDetailID, reportType, 3, reportId, e.message).catch(() => {});
+            await model.updateSQPReportStatus(cronDetailID, reportType, 3);
             
             return { 
                 success: false, 

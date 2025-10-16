@@ -758,7 +758,7 @@ class SqpCronApiController {
             }, 'High memory usage detected, skipping seller processing');            
             return;
         }
-        await model.updateSQPReportStatus(record.ID, reportType, 2, null, null, null, null, null, null, 4, true); // 4 is retry mark running status
+        await model.updateSQPReportStatus(record.ID, reportType, 2, null, null, 4, true); // 4 is retry mark running status
         let res = null;
         try {
             res = await ctrl.checkReportStatuses(authOverrides, { cronDetailID: [record.ID], reportType: reportType, cronDetailData: [record] }, true);
@@ -830,7 +830,7 @@ class SqpCronApiController {
 
         // Mark failed if still not success
         const latestReportId = await model.getLatestReportId(record.ID, reportType);
-        await model.updateSQPReportStatus(record.ID, reportType, 2, latestReportId, null, null, null, null, null, 3);
+        await model.updateSQPReportStatus(record.ID, reportType, 2, null, null, 3);
         await model.logCronActivity({
             cronJobID: record.ID,
             reportType,

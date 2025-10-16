@@ -75,7 +75,7 @@ async function handleReportCompletion(cronJobID, reportType, amazonSellerID = nu
 		
 		// Update cron detail status
 		await model.setProcessRunningStatus(cronJobID, reportType, 4);
-		await model.updateSQPReportStatus(cronJobID, reportType, 1, null, null, null, null, undefined, new Date(), 2);		
+		await model.updateSQPReportStatus(cronJobID, reportType, 1, undefined, new Date(), 2);		
 		
 		// Handle date range updates and ASIN completion
 		if (finalAmazonSellerID && cronAsins.length > 0) {
@@ -271,7 +271,7 @@ async function processSingleJsonFile(download) {
 
         // Mark cron detail import success (1) and set end date now
         if (download.CronJobID && download.ReportType) {
-            await model.updateSQPReportStatus(download.CronJobID, download.ReportType, 1, download.ReportID, null, null, null, null, new Date());
+            await model.updateSQPReportStatus(download.CronJobID, download.ReportType, 1, null, new Date());
         }
         // Update latest date range on seller_ASIN_list by ASIN list from sqp_cron_details (ASIN_List)
         try {
@@ -304,7 +304,7 @@ async function processSingleJsonFile(download) {
         // Mark cron detail import failed (2) or retry failed (3) if attempts already happened
         if (download.CronJobID && download.ReportType) {
             const status = (download.ProcessAttempts && Number(download.ProcessAttempts) > 0) ? 3 : 2;
-            await model.updateSQPReportStatus(download.CronJobID, download.ReportType, status, download.ReportID, error.message, null, null, null, new Date());
+            await model.updateSQPReportStatus(download.CronJobID, download.ReportType, status, null, new Date());
         }
 	}
 }
@@ -449,7 +449,7 @@ async function importJsonWithRetry(download, jsonContent, filePath, reportDateOv
             const isFinal = attempt === maxAttempts;
             if (download.CronJobID && download.ReportType) {
                 const status = isFinal ? 2 : 3; // 3 while retrying, 2 on final fail
-                await model.updateSQPReportStatus(download.CronJobID, download.ReportType, status, download.ReportID, e.message, null, null, null, new Date());
+                await model.updateSQPReportStatus(download.CronJobID, download.ReportType, status, null, new Date());
             }
             if (isFinal) throw e;
         }
@@ -672,7 +672,7 @@ async function __importJson(row, processed = 0, errors = 0, iInitialPull = 0){
 		// Mark cron detail import failed (2) or retry failed (3) if attempts already happened
 		if (row.CronJobID && row.ReportType) {
 			const status = (row.ProcessAttempts && Number(row.ProcessAttempts) > 0) ? 3 : 2;
-			await model.updateSQPReportStatus(row.CronJobID, row.ReportType, status, row.ReportID, e.message, null, null, null, new Date());
+			await model.updateSQPReportStatus(row.CronJobID, row.ReportType, status, null, new Date());
 		}
 		errors++;
     }

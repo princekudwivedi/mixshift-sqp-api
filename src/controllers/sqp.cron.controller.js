@@ -172,7 +172,7 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 			// Set start date when beginning the report request
 			const startDate = new Date();
 			logger.info({ cronDetailID, reportType, startDate, attempt }, 'Setting start date for report request');
-			await model.updateSQPReportStatus(cronDetailID, reportType, 0, null, null, null, null, startDate);
+			await model.updateSQPReportStatus(cronDetailID, reportType, 0, startDate);
 
 			const period = reportType;
 			const range = dates.getDateRangeForPeriod(period);
@@ -241,7 +241,7 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 			logger.info({ reportId, attempt }, 'Report created successfully');
 			
 			// Update with reportId but preserve the start date
-			await model.updateSQPReportStatus(cronDetailID, reportType, 0, reportId, null, null, null, startDate);
+			await model.updateSQPReportStatus(cronDetailID, reportType, 0, startDate);
 			// Log report creation so status checker can fetch ReportID from logs
 			await model.logCronActivity({
 				cronJobID: cronDetailID,
@@ -617,7 +617,8 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 					const plainRow = newRow[0].toJSON ? newRow[0].toJSON() : newRow[0];
 					const enrichedRow = { ...plainRow, AmazonSellerID: row.AmazonSellerID, ReportID: reportId };					
 					const importResult = await jsonSvc.__importJson(enrichedRow, 0, 0);
-						logger.info({ 
+					logger.info({ 
+							action: 'Download Completed - Import Done',
 							cronDetailID: row.ID, 
 							reportType, 
 							importResult 
@@ -633,6 +634,7 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 					}
 				}
 				return {
+					action: 'Download Completed - Import Done',
 					message: `Report downloaded successfully on attempt ${attempt} and import process completed`,
 					reportID: reportId,
 					reportDocumentID: documentId,
@@ -642,7 +644,8 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 						fileSize: fileSize,
 						recordsProcessed: Array.isArray(data) ? data.length : 0
 					},
-					data: { documentId, filePath, fileSize, recordCount: data.length }
+					data: { documentId, filePath, fileSize, recordCount: data.length },
+					skipped: true
 				};
 			} else {
 				// No data received - log this and update status
@@ -657,12 +660,14 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
                     null,
                     null,
                     false
+
                 );
 
 				// Use the unified completion handler for no-data scenario
 				await jsonSvc.handleReportCompletion(row.ID, reportType, row.AmazonSellerID, null, false);
 				
 				return {
+					action: 'Download Completed - Import Done',
 					message: `Report downloaded on attempt ${attempt} but contains no data`,
 					reportID: reportId,
 					reportDocumentID: documentId,
@@ -670,7 +675,8 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 						downloadCompleted: true,
 						recordsProcessed: 0
 					},
-					data: { documentId, recordCount: 0 }
+					data: { documentId, recordCount: 0 },
+					skipped: true
 				};
 			}
 		}
@@ -692,7 +698,7 @@ async function handleFatalOrUnknownStatus(row, reportType, status) {
     const statusToSet = 3; // Failed status
     const endDate = new Date();
     
-    await model.updateSQPReportStatus(row.ID, reportType, statusToSet, reportId, status, null, null, null, endDate);
+    await model.updateSQPReportStatus(row.ID, reportType, statusToSet, null, endDate);
     
     logger.fatal({ 
         cronDetailID: row.ID, 

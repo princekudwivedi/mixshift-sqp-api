@@ -241,10 +241,6 @@ class RetryHelpers {
                             cronDetailID,
                             reportType,
                             2, // error
-                            existingReportId,
-                            error ? (error.message || String(error)) : 'Unknown error',
-                            null, // reportDocumentId unchanged
-                            null, // isCompleted unchanged
                             null, // startDate unchanged
                             new Date(), // endDate set on failure,
                             3 // cronRunningStatus set to 3 retry mark

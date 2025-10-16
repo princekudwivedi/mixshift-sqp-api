@@ -360,7 +360,7 @@ async function createSQPCronDetail(amazonSellerID, asinString, options = {}) {
     return completeRow;
 }
 
-async function updateSQPReportStatus(cronDetailID, reportType, status, _reportId = null, _lastError = null, _documentId = null, _downloadCompleted = null, startDate = undefined, endDate = undefined, cronRunningStatus = null, cronStartDate = false) {
+async function updateSQPReportStatus(cronDetailID, reportType, status, startDate = undefined, endDate = undefined, cronRunningStatus = null, cronStartDate = false) {
     const prefix = mapPrefix(reportType);
     const data = {
         dtUpdatedOn: new Date()
@@ -579,7 +579,7 @@ async function handleCronError(cronDetailID, amazonSellerID, reportType, action,
     
     try {
         // Update status to error (2)
-        await updateSQPReportStatus(cronDetailID, reportType, 2, reportId, error.message, null, null, null, new Date());
+        await updateSQPReportStatus(cronDetailID, reportType, 2, null, new Date());
 
         // Log to cron logs
         await logCronActivity({
