@@ -207,8 +207,7 @@ class InitialPullController {
             
             const { asins } = await model.getActiveASINsBySellerInitialPull(seller.idSellerAccount, true);            
             if (asins.length === 0) return;
-
-            const asinList = asins.map(a => a.ASIN);            
+            const asinList = asins;
             const options =   {
                 iInitialPull: 1,
                 FullWeekRange: ranges.fullWeekRange,
