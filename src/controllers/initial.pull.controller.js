@@ -5,7 +5,7 @@
 
 const { SuccessHandler, ErrorHandler } = require('../middleware/response.handlers');
 const { loadDatabase } = require('../db/tenant.db');
-const { ValidationHelpers, CircuitBreaker, RateLimiter, MemoryMonitor, NotificationHelpers, RetryHelpers, DelayHelpers } = require('../helpers/sqp.helpers');
+const { ValidationHelpers, CircuitBreaker, RateLimiter, MemoryMonitor, NotificationHelpers, RetryHelpers, DelayHelpers, Helpers } = require('../helpers/sqp.helpers');
 const retryHelpers = new RetryHelpers();
 const { getAllAgencyUserList } = require('../models/sequelize/user.model');
 const { getModel: getSellerAsinList } = require('../models/sequelize/sellerAsinList.model');
@@ -115,14 +115,11 @@ class InitialPullController {
                         continue;
                     }
                     logger.info({ userId: user.ID }, 'Process user started');
-                    console.log(`🔄 Switching to database for user ${user.ID}...`);
                     await loadDatabase(user.ID);
-                    console.log(`✅ Database switched for user ${user.ID}`);
                     // Check cron limits for this user
-                    const cronLimits = await this.checkCronLimits(user.ID);
+                    const cronLimits = await Helpers.checkCronLimits(user.ID, 1);
                     logger.info({ cronLimits }, 'cronLimits');
                     if (cronLimits.shouldProcess) {
-
                         // Check if user has eligible seller which has eligible ASINs before processing
                         const hasEligibleUser = await model.hasEligibleASINsInitialPull(null, false);
                         if (!hasEligibleUser) {
@@ -207,29 +204,32 @@ class InitialPullController {
     async _startInitialPullForSeller(seller, reportType = null, authOverrides = {}) {
         try {
             const ranges = initialPullService.calculateFullRanges();
-
-            const SellerAsinList = getSellerAsinList();
-            const asins = await SellerAsinList.findAll({
-                where: { AmazonSellerID: seller.AmazonSellerID, IsActive: 1, InitialPullStatus: null },
-                attributes: ['ASIN', 'InitialPullStatus'],
-                limit: env.MAX_ASINS_PER_REQUEST,
-                raw: true
-            });
-
+            
+            const { asins } = await model.getActiveASINsBySellerInitialPull(seller.idSellerAccount, true);            
             if (asins.length === 0) return;
 
             const asinList = asins.map(a => a.ASIN);            
-            const cronDetailRow = await model.createSQPCronDetail(
-                seller.AmazonSellerID,
-                asinList.join(' '),
-                {
-                    iInitialPull: 1,
-                    FullWeekRange: ranges.fullWeekRange,
-                    FullMonthRange: ranges.fullMonthRange,
-                    FullQuarterRange: ranges.fullQuarterRange,
-                    SellerName: seller.SellerName || seller.MerchantAlias || `Seller_${seller.AmazonSellerID}`
-                }
-            );
+            // const cronDetailRow = await model.createSQPCronDetail(
+            //     seller.AmazonSellerID,
+            //     asinList.join(' '),
+            //     {
+            //         iInitialPull: 1,
+            //         cronRunningStatus: 1,
+            //         dtCronStartDate: new Date(),
+            //         FullWeekRange: ranges.fullWeekRange,
+            //         FullMonthRange: ranges.fullMonthRange,
+            //         FullQuarterRange: ranges.fullQuarterRange,
+            //         SellerName: seller.SellerName || seller.MerchantAlias || `Seller_${seller.AmazonSellerID}`
+            //     }
+            // );
+            const options =   {
+                iInitialPull: 1,
+                FullWeekRange: ranges.fullWeekRange,
+                FullMonthRange: ranges.fullMonthRange,
+                FullQuarterRange: ranges.fullQuarterRange,
+                SellerName: seller.SellerName || seller.MerchantAlias || `Seller_${seller.AmazonSellerID}`
+            }
+			const cronDetailRow = await model.createSQPCronDetail(seller.AmazonSellerID, asinList.join(' '), options);
             const typesToPull = reportType ? [reportType] : env.TYPE_ARRAY;            
             logger.info({
                 weekRangesCount: ranges.weekRanges.length,
@@ -645,11 +645,13 @@ class InitialPullController {
                 // Determine status for this report type
                 let dataPullStatus;
                 let processRunningStatus;
+                let cronRunningStatus;
                 
                 if (doneCount === totalReports) {
                     // All reports done
                     dataPullStatus = 1; // Completed
                     processRunningStatus = 4; // Import done
+                    cronRunningStatus = 2; // Cron running status completed
                     logger.info({ reportType }, 'All reports completed successfully');
                     
                 } else if (fatalCount > 0 && inProgressCount === 0) {
@@ -657,6 +659,7 @@ class InitialPullController {
                     dataPullStatus = 3; // Failed
                     processRunningStatus = 2; // Last was status check
                     overallAsinStatus = 3; // Mark ASIN as failed
+                    cronRunningStatus = 2; // Cron running status completed
                     logger.warn({ reportType, fatalCount, totalReports }, 'Some reports failed fatally');
                     
                 } else if (inProgressCount > 0 && fatalCount === 0) {
@@ -664,6 +667,7 @@ class InitialPullController {
                     dataPullStatus = 2; // Error/Stuck
                     processRunningStatus = 2; // Status check
                     overallAsinStatus = 3; // Mark ASIN as failed (stuck)
+                    cronRunningStatus = 3; // Cron running retry mark
                     logger.warn({ reportType, inProgressCount, totalReports }, 'Some reports still in progress');
                     
                 } else if (fatalCount > 0 && inProgressCount > 0) {
@@ -671,6 +675,7 @@ class InitialPullController {
                     dataPullStatus = 2; // Error/Stuck
                     processRunningStatus = 2; // Status check
                     overallAsinStatus = 3; // Mark ASIN as failed
+                    cronRunningStatus = 3; // Cron running retry mark
                     logger.warn({ reportType, fatalCount, inProgressCount, totalReports }, 'Mixed status: some fatal, some in progress');
                     
                     // Update sqp_cron_logs: FATAL entries get Status = 4
@@ -704,13 +709,15 @@ class InitialPullController {
                     dataPullStatus = 2;
                     processRunningStatus = 2;
                     overallAsinStatus = 3;
+                    cronRunningStatus = 2;
                 }
                 
                 // Update the report type status in sqp_cron_details
                 await SqpCronDetails.update(
                     {
                         [`${prefix}SQPDataPullStatus`]: dataPullStatus,
-                        [`${prefix}ProcessRunningStatus`]: processRunningStatus
+                        [`${prefix}ProcessRunningStatus`]: processRunningStatus,
+                        cronRunningStatus: cronRunningStatus
                     },
                     { where: { ID: cronDetailID } }
                 );
@@ -1198,48 +1205,7 @@ class InitialPullController {
         } catch (err) {
             logger.error({ error: err.message }, 'Failed to send initial pull failure notification');
         }
-    }
-
-    /**
-     * Check cron limits and active sellers count
-     * @param {number} userId 
-     * @param {number} totalActiveCronSellers - Total active cron sellers across all users
-     * @returns {Promise<{activeCronSellers: number, shouldProcess: boolean}>}
-     */
-    async checkCronLimits(userId) {
-        try {
-            const largeAgencyFlag = process.env.LARGE_AGENCY_FLAG === 'true';
-            // Check active cron sellers for this user            
-            const activeCRONSellerAry = await model.checkCronDetailsOfSellersByDate(0, '', true, '', false, 1);            
-            const activeCronSellers = activeCRONSellerAry.length;
-            // Check max user count for cron
-            const maxUserForCRON = largeAgencyFlag ? 100 : (process.env.MAX_USER_COUNT_FOR_CRON || 50);
-            if (activeCronSellers >= maxUserForCRON) {
-                logger.info({ 
-                    userId, 
-                    activeCronSellers,
-                    maxUserForCRON,
-                    largeAgencyFlag 
-                }, 'Cron limit reached - skipping user');
-                return { activeCronSellers, shouldProcess: false };
-            }
-            
-            logger.info({ 
-                userId, 
-                activeCronSellers,
-                maxUserForCRON,
-                largeAgencyFlag 
-            }, 'Cron limits check');
-
-            return { 
-                activeCronSellers, 
-                shouldProcess: true 
-            };
-        } catch (error) {
-            logger.error({ error: error.message, userId }, 'Error checking cron limits');
-            return { activeCronSellers: 0, shouldProcess: false };
-        }
-    }
+    }   
 
     /**
      * Find failed initial pull records
@@ -1285,7 +1251,7 @@ class InitialPullController {
                     },
                     {
                         [Op.and]: [
-                            { QuarterlyProcessRunningStatus: { [Op.in]: [1, 2, 3] } },
+                            { QuarterlyProcessRunningStatus: { [Op.in]: [1, 2, 3, 4] } },
                             { QuarterlySQPDataPullStatus: { [Op.in]: [0,2] } },
                             {
                                 [Op.or]: [
@@ -1477,7 +1443,7 @@ class InitialPullController {
                                 }, 'Retrying failed initial pull report');
                                 
                                 // Reset the failed status to pending (0) to allow retry
-                                await model.updateSQPReportStatus(log.cronJobID, log.reportType, 0);
+                                await model.updateSQPReportStatus(log.cronJobID, log.reportType, 0, null, null, null, null, null, null, 4, true);
                                 await model.setProcessRunningStatus(log.cronJobID, log.reportType, 1);
                                 
                                 // Log retry attempt

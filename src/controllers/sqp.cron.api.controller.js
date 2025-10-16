@@ -1,5 +1,5 @@
 const { SuccessHandler, ErrorHandler } = require('../middleware/response.handlers');
-const { ValidationHelpers, CircuitBreaker, RateLimiter, MemoryMonitor, RetryHelpers } = require('../helpers/sqp.helpers');
+const { ValidationHelpers, CircuitBreaker, RateLimiter, MemoryMonitor, RetryHelpers, Helpers,DelayHelpers } = require('../helpers/sqp.helpers');
 const retryHelpers = new RetryHelpers();
 const { loadDatabase } = require('../db/tenant.db');
 const { getAllAgencyUserList } = require('../models/sequelize/user.model');
@@ -17,10 +17,8 @@ const logger = require('../utils/logger.utils');
 const env = require('../config/env.config');
 const isDevEnv = ["local", "development"].includes(env.NODE_ENV);
 const allowedUsers = [8,3];
-const { DelayHelpers } = require('../helpers/sqp.helpers');
 const asinResetService = require('../services/asin.reset.service');
 const authService = require('../services/auth.service');
-
 /**
  * SQP Cron API Controller
  * Handles legacy cron endpoints with proper error handling and validation
@@ -36,6 +34,7 @@ class SqpCronApiController {
             Number(process.env.API_RATE_LIMIT_PER_MINUTE) || 100,
             Number(process.env.RATE_LIMIT_WINDOW_MS) || 60000
         );
+        
         // MemoryMonitor uses static methods, no instance needed
     }   
 
@@ -99,12 +98,10 @@ class SqpCronApiController {
                     continue;
                 } else {
                     logger.info({ userId: user.ID }, 'Process user started');
-                    console.log(`🔄 Switching to database for user ${user.ID}...`);
                     await loadDatabase(user.ID);
-                    console.log(`✅ Database switched for user ${user.ID}`);
                     // Check cron limits for this user
-                    const cronLimits = await this.checkCronLimits(user.ID);
-                    console.log('cronLimits', cronLimits);
+                    const cronLimits = await Helpers.checkCronLimits(user.ID);
+                    logger.info({ cronLimits }, 'cronLimits');
                     if (cronLimits.shouldProcess) {                        
                         const sellers = validatedSellerId
                             ? [await sellerModel.getProfileDetailsByID(validatedSellerId)]
@@ -311,48 +308,6 @@ class SqpCronApiController {
             }, 'Error in _processSyncSellerAsins');
         }
     }
-
-    /**
-     * Check cron limits and active sellers count
-     * @param {number} userId 
-     * @param {number} totalActiveCronSellers - Total active cron sellers across all users
-     * @returns {Promise<{activeCronSellers: number, shouldProcess: boolean}>}
-     */
-    async checkCronLimits(userId) {
-        try {
-            const largeAgencyFlag = process.env.LARGE_AGENCY_FLAG === 'true';
-            // Check active cron sellers for this user
-            const activeCRONSellerAry = await model.checkCronDetailsOfSellersByDate(0, 0, true, '', false, 0);            
-            const activeCronSellers = activeCRONSellerAry.length;
-            // Check max user count for cron
-            const maxUserForCRON = largeAgencyFlag ? 100 : (process.env.MAX_USER_COUNT_FOR_CRON || 50);
-            if (activeCronSellers >= maxUserForCRON) {
-                logger.info({ 
-                    userId, 
-                    activeCronSellers,
-                    maxUserForCRON,
-                    largeAgencyFlag 
-                }, 'Cron limit reached - skipping user');
-                return { activeCronSellers, shouldProcess: false };
-            }
-            
-            logger.info({ 
-                userId, 
-                activeCronSellers,
-                maxUserForCRON,
-                largeAgencyFlag 
-            }, 'Cron limits check');
-
-            return { 
-                activeCronSellers, 
-                shouldProcess: true 
-            };
-        } catch (error) {
-            logger.error({ error: error.message, userId }, 'Error checking cron limits');
-            return { activeCronSellers: 0, shouldProcess: false };
-        }
-    }
-
     /**
      * Private helper function to sync ASINs for a seller from mws_items (reusable)
      * @param {number} sellerID
@@ -700,7 +655,7 @@ class SqpCronApiController {
                     },
                     {
                         [Op.and]: [
-                            { QuarterlyProcessRunningStatus: { [Op.in]: [1, 2, 3] } },
+                            { QuarterlyProcessRunningStatus: { [Op.in]: [1, 2, 3, 4] } },
                             { QuarterlySQPDataPullStatus: { [Op.in]: [0, 2] } },
                             {
                                 [Op.or]: [
@@ -803,7 +758,7 @@ class SqpCronApiController {
             }, 'High memory usage detected, skipping seller processing');            
             return;
         }
-
+        await model.updateSQPReportStatus(record.ID, reportType, 2, null, null, null, null, null, null, 4, true); // 4 is retry mark running status
         let res = null;
         try {
             res = await ctrl.checkReportStatuses(authOverrides, { cronDetailID: [record.ID], reportType: reportType, cronDetailData: [record] }, true);
@@ -875,7 +830,7 @@ class SqpCronApiController {
 
         // Mark failed if still not success
         const latestReportId = await model.getLatestReportId(record.ID, reportType);
-        await model.updateSQPReportStatus(record.ID, reportType, 3, latestReportId, 'Retry after 1h failed');
+        await model.updateSQPReportStatus(record.ID, reportType, 2, latestReportId, null, null, null, null, null, 3);
         await model.logCronActivity({
             cronJobID: record.ID,
             reportType,

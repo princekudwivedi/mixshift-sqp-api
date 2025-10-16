@@ -75,7 +75,7 @@ async function handleReportCompletion(cronJobID, reportType, amazonSellerID = nu
 		
 		// Update cron detail status
 		await model.setProcessRunningStatus(cronJobID, reportType, 4);
-		await model.updateSQPReportStatus(cronJobID, reportType, 1, null, null, null, null, undefined, new Date());
+		await model.updateSQPReportStatus(cronJobID, reportType, 1, null, null, null, null, undefined, new Date(), 2);		
 		
 		// Handle date range updates and ASIN completion
 		if (finalAmazonSellerID && cronAsins.length > 0) {
@@ -151,36 +151,7 @@ async function handleReportCompletion(cronJobID, reportType, amazonSellerID = nu
 					status: statusForThisReport,
 					hasData,
 					endTime: endTime.toISOString()
-				});
-
-				// OPTIONAL: Check if ALL report types are finished for logging/notification
-				const SqpCronDetails = getSqpCronDetails();
-				const cronDetail = await SqpCronDetails.findOne({ 
-					where: { ID: cronJobID }, 
-					attributes: ['WeeklySQPDataPullStatus', 'MonthlySQPDataPullStatus', 'QuarterlySQPDataPullStatus'] 
-				});
-
-				if (cronDetail) {
-					const weeklyStatus = cronDetail.WeeklySQPDataPullStatus;
-					const monthlyStatus = cronDetail.MonthlySQPDataPullStatus;
-					const quarterlyStatus = cronDetail.QuarterlySQPDataPullStatus;
-					
-					// Check if all are finished (1=completed, 3=failed, or null=not started)
-					const allFinished = [weeklyStatus, monthlyStatus, quarterlyStatus].every(
-						s => s === null || s === 1 || s === 3
-					);
-					
-					if (allFinished) {
-						console.log(`🎯 ALL REPORTS FINISHED for CronJobID ${cronJobID}`, {
-							cronJobID,
-							amazonSellerID: finalAmazonSellerID,
-							asinCount: cronAsins.length,
-							weeklyStatus,
-							monthlyStatus,
-							quarterlyStatus
-						});
-					}
-				}			
+				});	
 				
 				console.log(`Successfully updated seller_ASIN_list date ranges for ${reportType}`, {
 					cronJobID,

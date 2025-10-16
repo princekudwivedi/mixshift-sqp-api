@@ -3,6 +3,51 @@ const path = require('path');
 const logger = require('../utils/logger.utils');
 const datesUtils = require('../utils/dates.utils');
 
+
+class Helpers {
+    /**
+     * Check cron limits and active sellers count
+     * @param {number} userId 
+     * @param {number} totalActiveCronSellers - Total active cron sellers across all users
+     * @returns {Promise<{activeCronSellers: number, shouldProcess: boolean}>}
+     */
+    static async checkCronLimits(userId, iInitialPull = 0) {
+        try {
+            const model = require('../models/sqp.cron.model');
+            const largeAgencyFlag = process.env.LARGE_AGENCY_FLAG === 'true';
+            // Check active cron sellers for this user
+            const activeCRONSellerAry = await model.checkCronDetailsOfSellersByDate(0, '', true, '', false, iInitialPull);            
+            console.log('activeCRONSellerAry', activeCRONSellerAry);
+            const activeCronSellers = activeCRONSellerAry.length;
+            // Check max user count for cron
+            const maxUserForCRON = largeAgencyFlag ? 100 : (process.env.MAX_USER_COUNT_FOR_CRON || 50);
+            if (activeCronSellers >= maxUserForCRON) {
+                logger.info({ 
+                    userId, 
+                    activeCronSellers,
+                    maxUserForCRON,
+                    largeAgencyFlag 
+                }, 'Cron limit reached - skipping user');
+                return { activeCronSellers, shouldProcess: false };
+            }
+            
+            logger.info({ 
+                userId, 
+                activeCronSellers,
+                maxUserForCRON,
+                largeAgencyFlag 
+            }, 'Cron limits check');
+
+            return { 
+                activeCronSellers, 
+                shouldProcess: true 
+            };
+        } catch (error) {
+            logger.error({ error: error.message, userId }, 'Error checking cron limits');
+            return { activeCronSellers: 0, shouldProcess: false };
+        }
+    }
+}
 /**
  * Retry execution helper for cron operations
  */
@@ -201,7 +246,8 @@ class RetryHelpers {
                             null, // reportDocumentId unchanged
                             null, // isCompleted unchanged
                             null, // startDate unchanged
-                            new Date() // endDate set on failure
+                            new Date(), // endDate set on failure,
+                            3 // cronRunningStatus set to 3 retry mark
                         );                       
                     } catch (updateErr) {
                         logger.error({ error: updateErr.message, cronDetailID, reportType }, 'Failed to set EndDate on failure');
@@ -1225,7 +1271,8 @@ module.exports = {
     DelayHelpers,
     CircuitBreaker,
     RateLimiter,
-    MemoryMonitor
+    MemoryMonitor,
+    Helpers
 };
 
 

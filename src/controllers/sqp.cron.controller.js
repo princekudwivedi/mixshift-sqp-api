@@ -6,7 +6,7 @@ const AuthToken = require('../models/authToken.model');
 const sp = require('../spapi/client.spapi');
 const jsonSvc = require('../services/sqp.json.processing.service');
 const downloadUrls = require('../models/sqp.download.urls.model');
-const { NotificationHelpers, RetryHelpers, DelayHelpers } = require('../helpers/sqp.helpers');
+const { NotificationHelpers, RetryHelpers, DelayHelpers, Helpers } = require('../helpers/sqp.helpers');
 const env = require('../config/env.config');
 const authService = require('../services/auth.service');
 
@@ -298,7 +298,7 @@ async function checkReportStatuses(authOverrides = {}, filter = {}, retry = fals
     for (const row of rows) {
         logger.info({ rowId: row.ID }, 'Processing report row');		
 		let loop = [];
-		if (retry && filter.reportType) {
+		if (retry && filter.reportType) {			
 			loop = [filter.reportType];
 		} else {
 			loop = await model.getReportsForStatusType(row, retry);
@@ -615,8 +615,7 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 				try {
 					// Convert Sequelize instance to plain object
 					const plainRow = newRow[0].toJSON ? newRow[0].toJSON() : newRow[0];
-					const enrichedRow = { ...plainRow, AmazonSellerID: row.AmazonSellerID, ReportID: reportId };
-					console.log('enrichedRow', enrichedRow);
+					const enrichedRow = { ...plainRow, AmazonSellerID: row.AmazonSellerID, ReportID: reportId };					
 					const importResult = await jsonSvc.__importJson(enrichedRow, 0, 0);
 						logger.info({ 
 							cronDetailID: row.ID, 

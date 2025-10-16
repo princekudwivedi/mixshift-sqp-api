@@ -360,17 +360,25 @@ async function createSQPCronDetail(amazonSellerID, asinString, options = {}) {
     return completeRow;
 }
 
-async function updateSQPReportStatus(cronDetailID, reportType, status, _reportId = null, _lastError = null, _documentId = null, _downloadCompleted = null, startDate = undefined, endDate = undefined) {
+async function updateSQPReportStatus(cronDetailID, reportType, status, _reportId = null, _lastError = null, _documentId = null, _downloadCompleted = null, startDate = undefined, endDate = undefined, cronRunningStatus = null, cronStartDate = false) {
     const prefix = mapPrefix(reportType);
     const data = {
-        [`${prefix}SQPDataPullStatus`]: status,
         dtUpdatedOn: new Date()
     };
+    if(cronStartDate){
+        data.dtCronStartDate = new Date();
+    }
+    if(status){
+        data[`${prefix}SQPDataPullStatus`] =  status;
+    }
     if (startDate) {
         data[`${prefix}SQPDataPullStartDate`] = new Date(startDate);
     }
     if (endDate) {
         data[`${prefix}SQPDataPullEndDate`] = new Date(endDate);
+    }
+    if(cronRunningStatus != null){
+        data.cronRunningStatus = Number(cronRunningStatus);
     }
     const SqpCronDetails = getSqpCronDetails();
     await SqpCronDetails.update(data, { where: { ID: cronDetailID } });
@@ -467,9 +475,20 @@ async function setProcessRunningStatus(cronDetailID, reportType, status) {
  * @param {boolean} iActiveRetryFlag - Filter by retry status
  * @returns {Promise<Array>} Array of cron detail records
  */
-async function checkCronDetailsOfSellersByDate(idUserAccount = 0, AmazonSellerID = '', iActiveCRON = false, date = '', iActiveRetryFlag = false, iInitialPull = 0) {
+async function checkCronDetailsOfSellersByDate(
+    idUserAccount = 0,
+    AmazonSellerID = '',
+    iActiveCRON = false,
+    date = '',
+    iActiveRetryFlag = false,
+    iInitialPull = 0
+) {
     const SqpCronDetails = getSqpCronDetails();
-    
+    let HoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    if(iInitialPull === 1){
+        HoursAgo = new Date(Date.now() - 10 * 60 * 60 * 1000);
+    }
+
     // Build date filter
     let dateFilter = {};
     if (date !== '') {
@@ -495,48 +514,62 @@ async function checkCronDetailsOfSellersByDate(idUserAccount = 0, AmazonSellerID
             ]
         };
     }
-    
+
     const where = { ...dateFilter };
-    
-    // Filter by active cron status
+
+    // ✅ Active Cron Filter (status in [1,2,3], not older than 2h, and SQPDataPullStatus != 3)
     if (iActiveCRON) {
-        where[Op.or] = [
-            { WeeklyProcessRunningStatus: { [Op.in]: [1, 2, 3] } },
-            { MonthlyProcessRunningStatus: { [Op.in]: [1, 2, 3] } },
-            { QuarterlyProcessRunningStatus: { [Op.in]: [1, 2, 3] } }
+        where[Op.and] = [
+            {
+                [Op.or]: [
+                    { WeeklyProcessRunningStatus: { [Op.in]: [1, 2, 3] } },
+                    { MonthlyProcessRunningStatus: { [Op.in]: [1, 2, 3] } },
+                    { QuarterlyProcessRunningStatus: { [Op.in]: [1, 2, 3] } },
+                ]
+            },
+            {
+                [Op.or]: [
+                    { WeeklySQPDataPullStatus: { [Op.ne]: 3 } },
+                    { MonthlySQPDataPullStatus: { [Op.ne]: 3 } },
+                    { QuarterlySQPDataPullStatus: { [Op.ne]: 3 } },
+                ]
+            },
+            {
+                dtUpdatedOn: { [Op.gt]: HoursAgo }
+            }
         ];
     }
-    
-    // Filter by retry status
+
+    // Retry flag filter (unchanged)
     if (iActiveRetryFlag) {
         where[Op.or] = [
-            { WeeklySQPDataPullStatus: 3 },
-            { MonthlySQPDataPullStatus: 3 },
-            { QuarterlySQPDataPullStatus: 3 }
+            { WeeklySQPDataPullStatus: 2 },
+            { MonthlySQPDataPullStatus: 2 },
+            { QuarterlySQPDataPullStatus: 2 }
         ];
     }
 
     if (iInitialPull) {
         where.iInitialPull = iInitialPull;
     }
-    
-    // Filter by AmazonSellerID
+
     if (AmazonSellerID) {
         where.AmazonSellerID = AmazonSellerID;
-    }    
-    
+    }
+
     const results = await SqpCronDetails.findAll({
         where,
         order: [['ID', 'DESC']]
     });
-    
-    // Return single object if sellerId specified, otherwise array
+
+    // Return single record if AmazonSellerID given
     if (AmazonSellerID != '') {
         return results.length > 0 ? results[0] : null;
     } else {
         return results;
     }
 }
+
 
 /**
  * Comprehensive error handling that updates both cron details and logs
