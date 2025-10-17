@@ -374,7 +374,6 @@ class SqpCronApiController {
                 group: ['ASIN']
             });
             logger.info({ sellerID: seller.idSellerAccount, amazonSellerID: seller.AmazonSellerID, newAsinsCount: newAsins.length }, 'Retrieved ASINs from mws_items');
-            
             // Filter out existing ASINs and prepare for bulk insert
             const asinsToInsert = newAsins
                 .filter(item => {
@@ -385,6 +384,8 @@ class SqpCronApiController {
                     const asin = item.ASIN.trim().toUpperCase();
                     return {
                         SellerID: seller.idSellerAccount,
+                        SellerName: seller.SellerName,
+                        MarketPlaceName: seller.MarketPlaceName,
                         AmazonSellerID: seller.AmazonSellerID,
                         ASIN: asin,
                         ItemName: item.ItemName,

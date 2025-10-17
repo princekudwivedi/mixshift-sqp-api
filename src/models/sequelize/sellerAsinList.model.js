@@ -14,6 +14,9 @@ const modelDefinition = {
     ID: { type: DataTypes.INTEGER.UNSIGNED, primaryKey: true, autoIncrement: true },
     SellerID: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false },
     AmazonSellerID: { type: DataTypes.STRING(100), allowNull: false },
+
+    SellerName: { type: DataTypes.STRING(255), allowNull: true },
+    MarketPlaceName: { type: DataTypes.STRING(255), allowNull: true },
     ASIN: { type: DataTypes.STRING(20), allowNull: false },
     ItemName: { type: DataTypes.STRING(500), allowNull: true },
     SKU: { type: DataTypes.STRING(255), allowNull: true },
