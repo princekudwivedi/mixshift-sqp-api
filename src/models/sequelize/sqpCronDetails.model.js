@@ -22,6 +22,7 @@ function getModel() {
         cachedModel = sequelize.define(table, {
             ID: { type: DataTypes.BIGINT, primaryKey: true, autoIncrement: true },
             AmazonSellerID: { type: DataTypes.STRING(100) },
+            SellerID: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false },
             ASIN_List: { type: DataTypes.TEXT },
             SellerName: { type: DataTypes.STRING(255) },
             iInitialPull: { type: DataTypes.TINYINT, defaultValue: 0 },

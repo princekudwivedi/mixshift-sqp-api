@@ -324,12 +324,13 @@ async function hasEligibleASINsInitialPull(sellerId, limit = true) {
     return hasEligible;
 }
 
-async function createSQPCronDetail(amazonSellerID, asinString, options = {}) {
+async function createSQPCronDetail(amazonSellerID, asinString, sellerID, options = {}) {
     const SqpCronDetails = getSqpCronDetails();
     
     // Base data for creating cron detail
     const createData = { 
         AmazonSellerID: amazonSellerID, 
+        SellerID: sellerID,
         ASIN_List: asinString,         
         dtCreatedOn: new Date(), 
         dtCronStartDate: new Date(), 
@@ -351,7 +352,7 @@ async function createSQPCronDetail(amazonSellerID, asinString, options = {}) {
     }
     if (options.SellerName) {
         createData.SellerName = options.SellerName;
-    }
+    }    
     createData.cronRunningStatus = 1;
     const row = await SqpCronDetails.create(createData);
     

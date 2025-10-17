@@ -114,7 +114,7 @@ async function requestForSeller(seller, authOverrides = {}, spReportType = confi
 			const FullWeekRange = `${weekRange.start} to ${weekRange.end}`;
 			const FullMonthRange = `${monthRange.start} to ${monthRange.end}`;
 			const FullQuarterRange = `${quarterRange.start} to ${quarterRange.end}`;
-			const cronDetailRow = await model.createSQPCronDetail(seller.AmazonSellerID, chunk.asin_string, { SellerName: seller.SellerName, FullWeekRange: FullWeekRange, FullMonthRange: FullMonthRange, FullQuarterRange: FullQuarterRange });
+			const cronDetailRow = await model.createSQPCronDetail(seller.AmazonSellerID, chunk.asin_string, seller.idSellerAccount, { SellerName: seller.SellerName, FullWeekRange: FullWeekRange, FullMonthRange: FullMonthRange, FullQuarterRange: FullQuarterRange });
 			const cronDetailID = cronDetailRow.ID;
 			// Convert Sequelize instance to plain object
 			const cronDetailObject = cronDetailRow.toJSON ? cronDetailRow.toJSON() : cronDetailRow.dataValues;
@@ -627,7 +627,7 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 				try {
 					// Convert Sequelize instance to plain object
 					const plainRow = newRow[0].toJSON ? newRow[0].toJSON() : newRow[0];
-					const enrichedRow = { ...plainRow, AmazonSellerID: row.AmazonSellerID, ReportID: reportId };					
+					const enrichedRow = { ...plainRow, AmazonSellerID: row.AmazonSellerID, ReportID: reportId, SellerID: row.SellerID };					
 					const importResult = await jsonSvc.__importJson(enrichedRow, 0, 0);
 					logger.info({ 
 							action: 'Download Completed - Import Done',

@@ -217,7 +217,7 @@ class InitialPullController {
                 FullQuarterRange: ranges.fullQuarterRange,
                 SellerName: seller.SellerName || seller.MerchantAlias || `Seller_${seller.AmazonSellerID}`
             }
-			const cronDetailRow = await model.createSQPCronDetail(seller.AmazonSellerID, asinList.join(' '), options);
+			const cronDetailRow = await model.createSQPCronDetail(seller.AmazonSellerID, asinList.join(' '), seller.idSellerAccount, options);
             const typesToPull = reportType ? [reportType] : env.TYPE_ARRAY;            
             logger.info({
                 weekRangesCount: ranges.weekRanges.length,
@@ -988,7 +988,7 @@ class InitialPullController {
                             
                             // Convert to plain object and enrich with required fields
                             const plainRow = newRow[0].toJSON ? newRow[0].toJSON() : newRow[0];
-                            const enrichedRow = { ...plainRow, AmazonSellerID: seller.AmazonSellerID, ReportID: reportId };
+                            const enrichedRow = { ...plainRow, AmazonSellerID: seller.AmazonSellerID, ReportID: reportId, SellerID: seller.idSellerAccount };
                             
                             logger.info({ 
                                 cronDetailID,

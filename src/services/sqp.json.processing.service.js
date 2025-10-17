@@ -13,6 +13,7 @@ const downloadUrls = require('../models/sqp.download.urls.model');
 const { getModel: getSqpDownloadUrls } = require('../models/sequelize/sqpDownloadUrls.model');
 const dates = require('../utils/dates.utils');
 const { DateHelpers } = require('../helpers/sqp.helpers');
+const logger = require('../utils/logger.utils');
 
 /**
  * Handle report completion - unified function for both data and no-data scenarios
@@ -191,125 +192,6 @@ async function handleReportCompletion(cronJobID, reportType, amazonSellerID = nu
 }
 
 /**
- * Process pending JSON files from download URLs
- */
-async function processPendingJsonFiles() {
-	try {
-		// Process saved files that were already downloaded (COMPLETED) and not yet processed
-		const pendingDownloads = await downloadUrls.getCompletedDownloadsWithFiles(10);
-		if (!pendingDownloads || pendingDownloads.length === 0) {
-			console.log('No saved JSON files to process');
-			return;
-		}
-
-		console.log(`Processing ${pendingDownloads.length} saved JSON files`);
-
-		for (const download of pendingDownloads) {
-			await processSingleJsonFile(download);
-		}
-
-	} catch (error) {
-		console.error('Error processing pending JSON files:', error);
-		throw error;
-	}
-}
-
-/**
- * Process a single JSON file download
- */
-async function processSingleJsonFile(download) {
-	console.log(`Processing JSON file for report ${download.ReportID}`);
-
-	try {		
-		// Mark processing start and increment ProcessAttempts
-		await downloadUrls.updateProcessStatusById(download.ID, 'PROCESSING', { incrementAttempts: true });
-
-		// Obtain JSON content from FilePath (S3 https URL or local path)
-		const filePath = download.FilePath;
-		if (!filePath) {
-			throw new Error('Missing FilePath for JSON download record');
-		}
-
-		let jsonContent = null;
-		if (typeof filePath === 'string' && /^https?:\/\//i.test(filePath)) {
-			// Remote (e.g., S3 pre-signed URL)
-			jsonContent = await downloadJsonFromUrl(filePath);
-		} else {
-			// Local file path
-			const content = await fs.readFile(filePath, 'utf-8');
-			jsonContent = JSON.parse(content);
-		}
-
-		if (!jsonContent) {
-			throw new Error('Failed to load JSON content from FilePath');
-		}
-
-		// Set ReportDate to the time the report was requested
-		const reportDateOverride = await getRequestStartDate(download.CronJobID, download.ReportType);
-
-        // ProcessRunningStatus = 4 (Process Import) and mark cron detail as import in-progress (4)
-        if (download.CronJobID && download.ReportType) {
-            await model.setProcessRunningStatus(download.CronJobID, download.ReportType, 4);            
-        }
-
-        // Parse and store data in database with retry up to 3 attempts
-        const { total, success, failed, maxRange, minRange } = await importJsonWithRetry(download, jsonContent, filePath, reportDateOverride);
-
-		// Update status to COMPLETED
-		const fileStats = (!/^https?:\/\//i.test(filePath) && filePath)
-			? await fs.stat(filePath)
-			: { size: Buffer.byteLength(JSON.stringify(jsonContent)) };
-		await downloadUrls.updateDownloadUrlStatus(
-			download.ID,
-			'COMPLETED',
-			null,
-			filePath,
-			fileStats.size
-		);
-		// Mark processing success with counts
-		await downloadUrls.updateProcessStatusById(download.ID, 'SUCCESS', { fullyImported: 1, totalRecords: total, successCount: success, failCount: failed });
-
-        // Mark cron detail import success (1) and set end date now
-        if (download.CronJobID && download.ReportType) {
-            await model.updateSQPReportStatus(download.CronJobID, download.ReportType, 1, null, new Date());
-        }
-        // Update latest date range on seller_ASIN_list by ASIN list from sqp_cron_details (ASIN_List)
-        try {
-            console.log(`Updating seller_ASIN_list date ranges for ${download.ReportType} report`, {
-                cronJobID: download.CronJobID,
-                amazonSellerID: download.AmazonSellerID,
-                minRange,
-                maxRange,
-                jsonAsinsCount: Array.isArray(jsonContent) ? jsonContent.length : 0
-            });
-            await updateSellerAsinLatestRanges({
-                cronJobID: download.CronJobID,
-                amazonSellerID: download.AmazonSellerID,
-                reportType: download.ReportType,
-                minRange,
-                maxRange,
-                jsonAsins: Array.isArray(jsonContent) ? jsonContent.map(r => (r.asin || r.ASIN || '')).filter(Boolean) : []
-            });
-            console.log(`Successfully updated seller_ASIN_list date ranges for ${download.ReportType} report`);
-        } catch (error) {
-            console.error(`Failed to update seller_ASIN_list date ranges for ${download.ReportType} report:`, error.message);
-        }
-
-		console.log(`Successfully processed JSON file for report ${download.ReportID}`);
-
-	} catch (error) {
-		console.error(`Error processing JSON file for report ${download.ReportID}:`, error.message);		
-		// Mark processing failed
-		await downloadUrls.updateProcessStatusById(download.ID, 'FAILED', { lastError: error.message });
-        // Mark cron detail import failed (2) or retry failed (3) if attempts already happened
-        if (download.CronJobID && download.ReportType) {
-            const status = (download.ProcessAttempts && Number(download.ProcessAttempts) > 0) ? 3 : 2;
-            await model.updateSQPReportStatus(download.CronJobID, download.ReportType, status, null, new Date());
-        }
-	}
-}
-
-/**
  * Download JSON content from URL
  */
 async function downloadJsonFromUrl(url) {
@@ -413,15 +295,31 @@ async function parseAndStoreJsonData(download, jsonContent, filePath, reportDate
 			recordsSample: records.slice(0, 2).map(r => ({ startDate: r.startDate, endDate: r.endDate }))
 		});
 
+		logger.info(`parseAndStoreJsonData:before bulkCreate`, {			
+			rows: rows.length,
+			download: download
+		});
 		if (rows.length > 0) {
             const type = (download.ReportType || '').toUpperCase();
             if (type === 'WEEK') {
+				logger.info(`parseAndStoreJsonData:before bulkCreate WEEK`, {			
+					rows: rows.length,
+					download: download
+				});
                 const SqpWeekly = getSqpWeekly();
                 await SqpWeekly.bulkCreate(rows, { validate: false, ignoreDuplicates: false });
             } else if (type === 'MONTH') {
+				logger.info(`parseAndStoreJsonData:before bulkCreate MONTH`, {			
+					rows: rows.length,
+					download: download
+				});
                 const SqpMonthly = getSqpMonthly();
                 await SqpMonthly.bulkCreate(rows, { validate: false, ignoreDuplicates: false });
             } else if (type === 'QUARTER') {
+				logger.info(`parseAndStoreJsonData:before bulkCreate QUARTER`, {			
+					rows: rows.length,
+					download: download
+				});
                 const SqpQuarterly = getSqpQuarterly();
                 await SqpQuarterly.bulkCreate(rows, { validate: false, ignoreDuplicates: false });
             } 
@@ -442,6 +340,12 @@ async function importJsonWithRetry(download, jsonContent, filePath, reportDateOv
     let lastError = null;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
+			logger.info(`__importJson:before attempt ${attempt}`, {			
+				AmazonSellerID: download.AmazonSellerID || '',
+				SellerID: download.SellerID || 0,
+				ReportType: download.ReportType,
+				CronJobID: download.CronJobID
+			});
             const stats = await parseAndStoreJsonData(download, jsonContent, filePath, reportDateOverride);
             return stats;
         } catch (e) {
@@ -467,6 +371,8 @@ function buildMetricsRow(download, reportDate, record, filePath, reportDateOverr
 		const startDate = record.startDate || null;
 		const endDate = record.endDate || null;
 		const asin = record.asin || record.ASIN || '';
+		const amazonSellerID = download.AmazonSellerID || null;
+		const sellerID = download.SellerID || 0;		
 
 		const sq = record.searchQueryData || {};
 		const impressions = record.impressionData || {};
@@ -482,6 +388,8 @@ function buildMetricsRow(download, reportDate, record, filePath, reportDateOverr
 			null;
 
 		return {
+			AmazonSellerID: amazonSellerID,
+			SellerID: sellerID,
 			ReportDate: reportDateOverride || endDate || reportDate,
 			StartDate: startDate,
 			EndDate: endDate,
@@ -648,9 +556,28 @@ async function __importJson(row, processed = 0, errors = 0, iInitialPull = 0){
 			await model.setProcessRunningStatus(row.CronJobID, row.ReportType, 4);			
 		}
 
+		let cronSellerID = 0;
+		let cronAmazonSellerID = '';
+		if(!row.SellerID){
+			const SqpCronDetails = getSqpCronDetails();
+			const cronRow = await SqpCronDetails.findOne({ where: { ID: row.CronJobID }, attributes: ['ID', 'SellerID', 'AmazonSellerID'] });
+			if (cronRow && cronRow.SellerID) {
+				cronSellerID = cronRow.SellerID;
+				cronAmazonSellerID = cronRow.AmazonSellerID || '';
+			}
+		}
+		logger.info(`__importJson:before importJsonWithRetry`, {			
+			AmazonSellerID: row.AmazonSellerID || cronAmazonSellerID || '',
+			SellerID: row.SellerID || cronSellerID || 0,
+			ReportType: row.ReportType,
+			CronJobID: row.CronJobID,
+			cronAmazonSellerID,
+			cronSellerID,
+		});
 		const stats = await importJsonWithRetry({
 			ReportID: row.ReportID,
-			AmazonSellerID: row.AmazonSellerID,
+			AmazonSellerID: row.AmazonSellerID || cronAmazonSellerID || '',
+			SellerID: row.SellerID || cronSellerID || 0,
 			ReportType: row.ReportType,
 			CronJobID: row.CronJobID,
 		}, json, filePath, reportDateOverride);
@@ -678,22 +605,6 @@ async function __importJson(row, processed = 0, errors = 0, iInitialPull = 0){
     }
     return { processed, errors };
 }
-async function processSavedJsonFiles(filter = {}) {
-	const rows = await downloadUrls.getCompletedDownloadsWithFiles(filter);
-	if (!rows || rows.length === 0) {
-		console.log('No saved JSON files to process');
-		return { processed: 0, errors: 0 };
-	}
-
-	let processed = 0;
-	let errors = 0;
-
-    for (const row of rows) {
-        ({ processed, errors } = await __importJson(row, processed, errors));
-    }
-
-	return { processed, errors };
-}
 
 async function getRequestStartDate(cronJobID, reportType) {
 	try {
@@ -710,9 +621,6 @@ async function getRequestStartDate(cronJobID, reportType) {
 }
 
 module.exports = {
-    processPendingJsonFiles,
-    processSingleJsonFile,
-    processSavedJsonFiles,
     downloadJsonFromUrl,
     saveReportJsonFile,
     parseAndStoreJsonData,

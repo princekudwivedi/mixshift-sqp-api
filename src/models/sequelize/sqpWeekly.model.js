@@ -9,6 +9,8 @@ let cachedUserId = null;
 
 const modelDefinition = {
     ID: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    AmazonSellerID: { type: DataTypes.STRING(100) , defaultValue: '' },
+    SellerID: { type: DataTypes.INTEGER.UNSIGNED, defaultValue: 0 },
     ASIN: { type: DataTypes.STRING(32) },
     ReportDate: { type: DataTypes.DATEONLY },
     StartDate: { type: DataTypes.DATEONLY },
