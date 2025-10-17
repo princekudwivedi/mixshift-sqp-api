@@ -347,10 +347,10 @@ class SqpCronApiController {
             // Get ASINs from mws_items that don't exist in seller_ASIN_list
             const existingAsins = await SellerAsinList.findAll({
                 where: { SellerID: seller.idSellerAccount },
-                attributes: ['ASIN']
+                attributes: ['ASIN', 'SellerID']
             });
 
-            const existingAsinSet = new Set(existingAsins.map(item => item.ASIN.toUpperCase()));
+            const existingAsinSet = new Set(existingAsins.map(item => `${item.ASIN.toUpperCase()}_${item.SellerID}`));
             
             logger.info({ 
                 sellerID: seller.idSellerAccount, 
@@ -369,31 +369,35 @@ class SqpCronApiController {
                         [require('sequelize').Op.ne]: ''
                     }
                 },
-                attributes: ['ASIN','ItemName','SKU'],
+                attributes: ['SellerID','ASIN','ItemName','SKU','SellerName','MarketPlaceName','AmazonSellerID'],
                 raw: true,
-                group: ['ASIN']
+                group: ['ASIN', 'SellerID']
             });
             logger.info({ sellerID: seller.idSellerAccount, amazonSellerID: seller.AmazonSellerID, newAsinsCount: newAsins.length }, 'Retrieved ASINs from mws_items');
             // Filter out existing ASINs and prepare for bulk insert
             const asinsToInsert = newAsins
-                .filter(item => {
-                    const asin = item.ASIN ? item.ASIN.trim().toUpperCase() : '';
-                    return asin && asin.length > 0 && asin.length <= 20 && !existingAsinSet.has(asin);
-                })
-                .map(item => {
-                    const asin = item.ASIN.trim().toUpperCase();
-                    return {
-                        SellerID: seller.idSellerAccount,
-                        SellerName: seller.SellerName,
-                        MarketPlaceName: seller.MarketPlaceName,
-                        AmazonSellerID: seller.AmazonSellerID,
-                        ASIN: asin,
-                        ItemName: item.ItemName,
-                        SKU: item.SKU,
-                        IsActive: isActive,
-                        dtCreatedOn: new Date()
-                    };
-                });
+                        .filter(item => {
+                            const asin = item.ASIN ? item.ASIN.trim().toUpperCase() : '';
+                            const key = `${asin}_${item.SellerID}`;
+                            // If this ASIN is already in your existing set (maybe by ASIN only, or by combo)
+                            return (
+                                asin &&
+                                asin.length > 0 &&
+                                asin.length <= 20 &&
+                                !existingAsinSet.has(key) // <-- if existingAsinSet is per (ASIN + SellerID)
+                            );
+                        })
+                        .map(item => ({
+                            SellerID: item.SellerID,
+                            SellerName: item.SellerName,
+                            MarketPlaceName: item.MarketPlaceName,
+                            AmazonSellerID: item.AmazonSellerID,
+                            ASIN: item.ASIN.trim().toUpperCase(),
+                            ItemName: item.ItemName,
+                            SKU: item.SKU,
+                            IsActive: isActive,
+                            dtCreatedOn: new Date()
+                        }));
 
             logger.info({ 
                 sellerID: seller.idSellerAccount, 
@@ -401,7 +405,6 @@ class SqpCronApiController {
                 existingAsins: existingAsinSet.size,
                 asinsToInsert: asinsToInsert.length 
             }, 'Data preparation completed');
-
             // Bulk insert new ASINs with chunks
             let insertedCount = 0;
             if (asinsToInsert.length > 0) {
