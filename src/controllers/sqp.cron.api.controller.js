@@ -321,10 +321,9 @@ class SqpCronApiController {
      */
     async _syncSellerAsinsInternal(sellerIdentifier, isActive = 0, key = 'ID') {
         try {
-            // Get models
-            // Use sellerModel directly for tenant-aware operations
             const SellerAsinList = getSellerAsinList();
             const MwsItems = getMwsItems();
+    
             // Get seller info for validation
             logger.info({ sellerIdentifier, key }, 'Getting seller profile details');
             const seller = await sellerModel.getProfileDetailsByID(sellerIdentifier, key);
@@ -332,35 +331,13 @@ class SqpCronApiController {
                 logger.error({ sellerIdentifier }, 'Seller not found');
                 return { insertedCount: 0, totalCount: 0, error: 'Seller not found or inactive' };
             }
-
+    
             if (!seller.AmazonSellerID) {
-                logger.error({ sellerID, seller }, 'Seller AmazonSellerID is missing');
+                logger.error({ sellerID: seller.idSellerAccount, seller }, 'Seller AmazonSellerID is missing');
                 return { insertedCount: 0, totalCount: 0, error: 'Seller AmazonSellerID is missing' };
             }
-
-            logger.info({ sellerID: seller.idSellerAccount, amazonSellerID: seller.AmazonSellerID }, 'Seller validation passed');
-
-            // Count existing ASINs before sync
-            const beforeCount = await SellerAsinList.count({
-                where: { SellerID: seller.idSellerAccount }
-            });
-            // Get ASINs from mws_items that don't exist in seller_ASIN_list
-            const existingAsins = await SellerAsinList.findAll({
-                where: { SellerID: seller.idSellerAccount },
-                attributes: ['ASIN', 'SellerID']
-            });
-
-            const existingAsinSet = new Set(existingAsins.map(item => `${item.ASIN.toUpperCase()}_${item.SellerID}`));
-            
-            logger.info({ 
-                sellerID: seller.idSellerAccount, 
-                beforeCount, 
-                existingAsinsCount: existingAsins.length,
-                existingAsinsSample: existingAsins.slice(0, 5).map(item => item.ASIN)
-            }, 'Existing ASINs check completed');
-
-            // Get new ASINs from mws_items
-            logger.info({ sellerID: seller.idSellerAccount, amazonSellerID: seller.AmazonSellerID }, 'Fetching ASINs from mws_items');
+        
+            // Get new ASINs from mws_items (group by ASIN only)
             const newAsins = await MwsItems.findAll({
                 where: {
                     AmazonSellerID: seller.AmazonSellerID,
@@ -371,97 +348,66 @@ class SqpCronApiController {
                 },
                 attributes: ['SellerID','ASIN','ItemName','SKU','SellerName','MarketPlaceName','AmazonSellerID'],
                 raw: true,
-                group: ['ASIN', 'SellerID']
+                group: ['ASIN']
             });
-            logger.info({ sellerID: seller.idSellerAccount, amazonSellerID: seller.AmazonSellerID, newAsinsCount: newAsins.length }, 'Retrieved ASINs from mws_items');
-            // Filter out existing ASINs and prepare for bulk insert
-            const asinsToInsert = newAsins
-                        .filter(item => {
-                            const asin = item.ASIN ? item.ASIN.trim().toUpperCase() : '';
-                            const key = `${asin}_${item.SellerID}`;
-                            // If this ASIN is already in your existing set (maybe by ASIN only, or by combo)
-                            return (
-                                asin &&
-                                asin.length > 0 &&
-                                asin.length <= 20 &&
-                                !existingAsinSet.has(key) // <-- if existingAsinSet is per (ASIN + SellerID)
-                            );
-                        })
-                        .map(item => ({
-                            SellerID: item.SellerID,
-                            SellerName: item.SellerName,
-                            MarketPlaceName: item.MarketPlaceName,
-                            AmazonSellerID: item.AmazonSellerID,
-                            ASIN: item.ASIN.trim().toUpperCase(),
-                            ItemName: item.ItemName,
-                            SKU: item.SKU,
-                            IsActive: isActive,
-                            dtCreatedOn: new Date()
-                        }));
 
-            logger.info({ 
-                sellerID: seller.idSellerAccount, 
-                totalNewAsins: newAsins.length, 
-                existingAsins: existingAsinSet.size,
-                asinsToInsert: asinsToInsert.length 
-            }, 'Data preparation completed');
-            // Bulk insert new ASINs with chunks
+            // Fetch existing ASINs for this seller
+            const existingAsinsInDB = await SellerAsinList.findAll({
+                where: { 
+                    SellerID: { [require('sequelize').Op.in]: newAsins.map(i => i.SellerID) },
+                    ASIN: { [require('sequelize').Op.in]: newAsins.map(i => i.ASIN) }
+                },
+                attributes: ['ASIN', 'SellerID'],
+                raw: true
+            });
+
+            // Create a set of existing combinations: ASIN + SellerID
+            const existingSet = new Set(existingAsinsInDB.map(item => `${item.ASIN}_${item.SellerID}`));
+
+            // Filter new ASINs: insert only if combination does not exist
+            const asinsToInsert = newAsins
+                .filter(item => {
+                    const key = `${item.ASIN}_${item.SellerID}`;
+                    return !existingSet.has(key);
+                })
+                .map(item => ({
+                    SellerID: parseInt(item.SellerID) || 0,
+                    SellerName: item.SellerName || '',
+                    MarketPlaceName: item.MarketPlaceName || '',
+                    AmazonSellerID: item.AmazonSellerID || '',
+                    ASIN: (item.ASIN || '').trim().toUpperCase(),
+                    ItemName: item.ItemName || '',
+                    SKU: item.SKU || '',
+                    IsActive: isActive || 0,
+                    dtCreatedOn: new Date()
+                }));
+
             let insertedCount = 0;
             if (asinsToInsert.length > 0) {
-                const chunkSize = 50; // Process 50 records at a time
-                const chunks = [];
-                
-                // Split into chunks
+                const chunkSize = 50;
                 for (let i = 0; i < asinsToInsert.length; i += chunkSize) {
-                    chunks.push(asinsToInsert.slice(i, i + chunkSize));
-                }
-                
-                logger.info({ 
-                    sellerID: seller.idSellerAccount, 
-                    totalRecords: asinsToInsert.length, 
-                    chunkSize, 
-                    totalChunks: chunks.length 
-                }, 'Starting chunked bulk insert');
-                
-                // Process each chunk
-                for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
-                    const chunk = chunks[chunkIndex];
-                    
+                    const chunk = asinsToInsert.slice(i, i + chunkSize);
                     try {
-                        // Try bulk insert for this chunk
                         await SellerAsinList.bulkCreate(chunk, {
-                            ignoreDuplicates: true, // Ignore duplicate key errors
+                            ignoreDuplicates: true,
                             validate: true
                         });
                         insertedCount += chunk.length;
-                        logger.info({ 
-                            sellerID: seller.idSellerAccount, 
-                            chunkIndex: chunkIndex + 1, 
-                            chunkSize: chunk.length,
-                            totalInserted: insertedCount 
-                        }, 'Chunk inserted successfully');
-                        
                     } catch (chunkError) {
                         logger.error({
                             error: chunkError.message,
                             sellerID: seller.idSellerAccount,
-                            chunkIndex: chunkIndex + 1,
-                            chunkSize: chunk.length,
                             chunkSample: chunk.slice(0, 2)
-                        }, 'Chunk insert failed, trying individual inserts for this chunk');
-                        
-                        // If chunk fails, try individual inserts for this chunk
-                        for (let i = 0; i < chunk.length; i++) {
+                        }, 'Chunk insert failed, trying individual inserts');
+    
+                        for (const record of chunk) {
                             try {
-                                await SellerAsinList.create(chunk[i], {
-                                    ignoreDuplicates: true
-                                });
+                                await SellerAsinList.create(record, { ignoreDuplicates: true });
                                 insertedCount++;
                             } catch (individualError) {
-                                // Log but continue - likely duplicate key error
                                 logger.warn({
                                     error: individualError.message,
-                                    record: chunk[i],
+                                    record,
                                     sellerID: seller.idSellerAccount
                                 }, 'Individual insert skipped (likely duplicate)');
                             }
@@ -469,24 +415,24 @@ class SqpCronApiController {
                     }
                 }
             }
-
-            // Count total ASINs after sync
+    
             const afterCount = await SellerAsinList.count({
                 where: { SellerID: seller.idSellerAccount }
             });
-
+    
             return { insertedCount, totalCount: afterCount, error: null };
-
+    
         } catch (error) {
             logger.error({
                 error: error.message,
                 stack: error.stack,
                 sellerIdentifier,
-                isActive: isActive
+                isActive
             }, 'syncSellerAsinsInternal failed');
             return { insertedCount: 0, totalCount: 0, error: `Database error: ${error.message}` };
         }
     }
+    
 
     /**
      * retry notifications for stuck records

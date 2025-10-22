@@ -50,9 +50,15 @@ const modelDefinition = {
     dtUpdatedOn: { type: DataTypes.DATE, allowNull: true }
 };
 
-const modelOptions = {
+const modelOptions = {    
     tableName: table,
-    timestamps: false
+    timestamps: false,
+    indexes: [
+        {
+            unique: true,
+            fields: ['ASIN', 'SellerID']
+        }
+    ]
 };
 
 function getModel() {
