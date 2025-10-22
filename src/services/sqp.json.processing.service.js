@@ -14,6 +14,7 @@ const { getModel: getSqpDownloadUrls } = require('../models/sequelize/sqpDownloa
 const dates = require('../utils/dates.utils');
 const { DateHelpers } = require('../helpers/sqp.helpers');
 const logger = require('../utils/logger.utils');
+const { Op, literal } = require('sequelize');
 
 /**
  * Handle report completion - unified function for both data and no-data scenarios
@@ -31,14 +32,13 @@ async function handleReportCompletion(cronJobID, reportType, amazonSellerID = nu
 		// Get AmazonSellerID and ASINs from cron details if not provided
 		let finalAmazonSellerID = amazonSellerID;
 		let cronAsins = [];
-		
+		const SqpCronDetails = getSqpCronDetails();
+		const cronDetail = await SqpCronDetails.findOne({ 
+			where: { ID: cronJobID }, 
+			attributes: ['AmazonSellerID', 'SellerID', 'ASIN_List', 'WeeklySQPDataPullStatus', 'MonthlySQPDataPullStatus', 'QuarterlySQPDataPullStatus'] 
+		});
+
 		if (!finalAmazonSellerID || cronAsins.length === 0) {
-			const SqpCronDetails = getSqpCronDetails();
-			const cronDetail = await SqpCronDetails.findOne({ 
-				where: { ID: cronJobID }, 
-				attributes: ['AmazonSellerID', 'ASIN_List', 'WeeklySQPDataPullStatus', 'MonthlySQPDataPullStatus', 'QuarterlySQPDataPullStatus'] 
-			});
-			
 			if (cronDetail) {
 				finalAmazonSellerID = cronDetail.AmazonSellerID;
 				if (cronDetail.ASIN_List) {
@@ -81,56 +81,76 @@ async function handleReportCompletion(cronJobID, reportType, amazonSellerID = nu
 		// Handle date range updates and ASIN completion
 		if (finalAmazonSellerID && cronAsins.length > 0) {
 			try {
-				// Calculate date ranges from JSON data if available, or use current date for no-data scenarios
-				let minRange = null;
-				let maxRange = null;
-				let jsonAsins = [];
+				const { getModel: getSqpWeekly } = require('../models/sequelize/sqpWeekly.model');
+				const { getModel: getSqpMonthly } = require('../models/sequelize/sqpMonthly.model');
+				const { getModel: getSqpQuarterly } = require('../models/sequelize/sqpQuarterly.model');
 				
-				if (hasData && Array.isArray(jsonData) && jsonData.length > 0) {
-					// Use actual data from JSON
-					jsonAsins = jsonData.map(r => (r.asin || r.ASIN || '')).filter(Boolean);
-					if (jsonAsins.length > 0 && jsonData[0]?.startDate) {
-						minRange = jsonData.reduce((m, r) => m && m < r.startDate ? m : r.startDate, jsonData[0].startDate);
-					}
-					if (jsonAsins.length > 0 && jsonData[0]?.endDate) {
-						maxRange = jsonData.reduce((m, r) => m && m > r.endDate ? m : r.endDate, jsonData[0].endDate);
-					}
-				} else {
-					// For no-data scenarios, use the existing function to get appropriate date ranges
-					const reportDate = dates.getDateRangeForPeriod(reportType);
-					minRange = reportDate.start;
-					maxRange = reportDate.end;
-					jsonAsins = []; // No JSON ASINs for no-data scenarios
-					
-					console.log(`No data scenario - using calculated date ranges for ${reportType}`, {
-						cronJobID,
-						reportType,
-						minRange,
-						maxRange,
-						scenario: 'no-data'
-					});
+				const sellerId = parseInt(cronDetail.SellerID) || 0;
+				
+				// Get the appropriate SQP model based on report type
+				const SqpModel = reportType === 'WEEK' ? getSqpWeekly() 
+					: reportType === 'MONTH' ? getSqpMonthly() 
+					: reportType === 'QUARTER' ? getSqpQuarterly() 
+					: null;
+				
+				if (!SqpModel) {
+					console.log(`Invalid report type: ${reportType}`);
+					return;
 				}
 				
-				console.log(`Updating seller_ASIN_list date ranges for ${reportType}`, {
+				if(hasData) {
+					// Query each ASIN to get its latest date range from the SQP table
+					for (const asin of cronAsins) {
+						try {
+							// Get MAX(StartDate) and MAX(EndDate) for this ASIN and SellerID
+							const dateRanges = await SqpModel.findOne({
+								where: {
+									ASIN: asin,
+									SellerID: sellerId
+								},
+								attributes: [
+									[literal('MAX(StartDate)'), 'minStartDate'],
+									[literal('MAX(EndDate)'), 'maxEndDate']
+								],
+								raw: true
+							});
+							
+							if (dateRanges && dateRanges.minStartDate && dateRanges.maxEndDate) {
+								const minRange = dateRanges.minStartDate;
+								const maxRange = dateRanges.maxEndDate;
+								const rangeStr = `${minRange} - ${maxRange}`;
+								
+								console.log(`Updating date range for ASIN ${asin}:`, {
+									reportType,
+									minRange,
+									maxRange,
+									rangeStr
+								});
+								
+								// Update this ASIN's date range in seller_ASIN_list
+								await updateSellerAsinLatestRanges({
+									cronJobID,
+									amazonSellerID: finalAmazonSellerID,
+									reportType,
+									minRange,
+									maxRange,
+									jsonAsins: [asin]
+								});
+							} else {
+								console.log(`No data found in ${SqpModel.tableName} for ASIN ${asin}, SellerID ${sellerId} - skipping update`);
+							}
+							
+						} catch (asinError) {
+							console.error(`Error updating date range for ASIN ${asin}:`, asinError.message);
+						}
+					}
+				}
+				console.log(`✅ Completed updating date ranges from actual SQP tables for ${reportType}`, {
 					cronJobID,
 					amazonSellerID: finalAmazonSellerID,
 					reportType,
-					minRange,
-					maxRange,
-					jsonAsinsCount: jsonAsins.length,
-					hasData,
-					scenario: hasData ? 'with-data' : 'no-data'
-				});
-				
-				// Update date ranges in seller_ASIN_list
-				await updateSellerAsinLatestRanges({
-					cronJobID,
-					amazonSellerID: finalAmazonSellerID,
-					reportType,
-					minRange,
-					maxRange,
-					jsonAsins
-				});
+					asinCount: cronAsins.length
+				});			
 				
 				const statusForThisReport = hasData ? 2 : 2; // Both are "completed" (can differentiate if needed)
 				const endTime = new Date();
