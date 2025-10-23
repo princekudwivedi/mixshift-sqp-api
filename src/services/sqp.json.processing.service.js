@@ -689,5 +689,6 @@ module.exports = {
     importJsonWithRetry,
     handleReportCompletion,
     getDownloadUrlStats,
-	__importJson
+	__importJson,
+	updateSellerAsinLatestRanges
 };

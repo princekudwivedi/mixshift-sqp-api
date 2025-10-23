@@ -5,6 +5,8 @@
 
 const { getModel: getSellerAsinList } = require('./sequelize/sellerAsinList.model');
 const logger = require('../utils/logger.utils');
+const { Op, literal } = require('sequelize');
+const { updateSellerAsinLatestRanges } = require('../services/sqp.json.processing.service');
 
 /**
  * Status values:
@@ -44,9 +46,22 @@ async function updateInitialPullStatus(cronDetailID, SellerID, amazonSellerID, a
         const where = { AmazonSellerID: amazonSellerID };
         if (asinList && asinList.length > 0) {
             where.ASIN = asinList;
+            logger.info({
+                cronDetailID,
+                SellerID,
+                amazonSellerID,
+                asinList,
+                status,
+                startTime,
+                endTime
+            }, 'Updating initial pull status for ASINs in seller_ASIN_list');
             if(cronDetailID != ''){
                 for (const asin of asinList) {
                     for (const reportType of ['WEEK', 'MONTH', 'QUARTER']) {                    
+                        logger.info({
+                            asin,
+                            reportType
+                        }, 'Processing ASIN for report type');
                         try {
                             const { getModel: getSqpWeekly } = require('../models/sequelize/sqpWeekly.model');
                             const { getModel: getSqpMonthly } = require('../models/sequelize/sqpMonthly.model');
@@ -80,12 +95,13 @@ async function updateInitialPullStatus(cronDetailID, SellerID, amazonSellerID, a
                                 isDataAvailable = 1;
                             }
     
-                            console.log(`🔹 Processing ASIN ${asin}`, {
+                            logger.info({
+                                asin,
                                 reportType,
                                 minRange,
                                 maxRange,
                                 isDataAvailable
-                            });
+                            }, 'Processing ASIN for report type');
     
                             await updateSellerAsinLatestRanges({
                                 cronDetailID,
