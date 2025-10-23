@@ -104,7 +104,7 @@ async function updateInitialPullStatus(cronDetailID, SellerID, amazonSellerID, a
                             }, 'Processing ASIN for report type');
     
                             await updateSellerAsinLatestRanges({
-                                cronDetailID,
+                                cronJobID: cronDetailID,
                                 amazonSellerID: amazonSellerID,
                                 reportType,
                                 minRange: minRange || '',
