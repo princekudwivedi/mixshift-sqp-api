@@ -26,6 +26,10 @@ const modelDefinition = {
     LatestRecordDateRangeMonthly: { type: DataTypes.STRING(255), allowNull: true },
     LatestRecordDateRangeQuarterly: { type: DataTypes.STRING(255), allowNull: true },
 
+    IsWeekDataAvailable: { type: DataTypes.TINYINT, allowNull: true, defaultValue: 0 },
+    IsMonthDataAvailable: { type: DataTypes.TINYINT, allowNull: true, defaultValue: 0 },
+    IsQuarterDataAvailable: { type: DataTypes.TINYINT, allowNull: true, defaultValue: 0 },
+    
     // Overall Initial Pull Status (for all types combined)
     InitialPullStatus: { type: DataTypes.TINYINT, allowNull: true },
     InitialPullStartTime: { type: DataTypes.DATE, allowNull: true },
