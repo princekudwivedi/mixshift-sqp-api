@@ -378,7 +378,7 @@ async function getActiveASINsBySellerInitialPull(sellerId = null, limit = true) 
     return { asins: [] };
 }
 
-async function ASINsBySellerUpdated(amazonSellerID, asinList, status, reportType, startTime = null, endTime = null) {
+async function ASINsBySellerUpdated(SellerID, amazonSellerID, asinList, status, reportType, startTime = null, endTime = null) {
     try {
         const SellerAsinList = getSellerAsinList();
         const prefix = mapPrefix(reportType); // 'Weekly', 'Monthly', or 'Quarterly'
@@ -394,8 +394,16 @@ async function ASINsBySellerUpdated(amazonSellerID, asinList, status, reportType
         if (endTime) {
             data[`${prefix}LastSQPDataPullEndTime`] = new Date(endTime);
         }
+        let where = {
+            AmazonSellerID: amazonSellerID, 
+            ASIN: { [Op.in]: asinList } 
+        }
+        if(SellerID){
+            where.SellerID = SellerID;
+        }
         
         logger.info({ 
+            SellerID,
             amazonSellerID,
             reportType,
             prefix,
@@ -407,10 +415,7 @@ async function ASINsBySellerUpdated(amazonSellerID, asinList, status, reportType
         
         // Perform the update and get the number of affected rows
         const [affectedRows] = await SellerAsinList.update(data, { 
-            where: { 
-                AmazonSellerID: amazonSellerID, 
-                ASIN: { [Op.in]: asinList } 
-            } 
+            where: where
         });
         
         if (affectedRows === 0) {

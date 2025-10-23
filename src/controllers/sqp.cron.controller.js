@@ -123,7 +123,7 @@ async function requestForSeller(seller, authOverrides = {}, spReportType = confi
 			cronDetailData.push(cronDetailObject);
 			for (const type of reportTypes) {
 				logger.info({ type }, 'Requesting report for type');
-				await model.ASINsBySellerUpdated(seller.AmazonSellerID, chunk.asins, 1, type, startTime); // 1 = InProgress
+				await model.ASINsBySellerUpdated(seller.idSellerAccount, seller.AmazonSellerID, chunk.asins, 1, type, startTime); // 1 = InProgress
                 // ProcessRunningStatus = 1 (Request Report)
                 await model.setProcessRunningStatus(cronDetailID, type, 1);
                 await model.logCronActivity({ cronJobID: cronDetailID, reportType: type, action: 'Request Report', status: 1, message: 'Requesting report', Range: chunk.range });
@@ -620,76 +620,76 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
                 );
 
 				
-			const newRow = await downloadUrls.getCompletedDownloadsWithFiles(filter = { cronDetailID: row.ID, ReportType: reportType });
-			
-			if (newRow.length > 0) {					
-				// Process saved JSON files immediately after download
-				try {
-					// Convert Sequelize instance to plain object
-					const plainRow = newRow[0].toJSON ? newRow[0].toJSON() : newRow[0];
-					const enrichedRow = { ...plainRow, AmazonSellerID: row.AmazonSellerID, ReportID: reportId, SellerID: row.SellerID };					
-					const importResult = await jsonSvc.__importJson(enrichedRow, 0, 0);
-					logger.info({ 
-							action: 'Download Completed - Import Done',
-							cronDetailID: row.ID, 
-							reportType, 
-							importResult 
-						}, 'Import process completed after download');
-					} catch (importError) {
-						logger.error({ 
-							error: importError ? (importError.message || String(importError)) : 'Unknown error', 
-							stack: importError?.stack,
-							cronDetailID: row.ID, 
-							reportType 
-						}, 'Error during import process - file saved but import failed');
-						// Don't throw - file is saved, import can be retried later
+				const newRow = await downloadUrls.getCompletedDownloadsWithFiles(filter = { cronDetailID: row.ID, ReportType: reportType });
+				
+				if (newRow.length > 0) {					
+					// Process saved JSON files immediately after download
+					try {
+						// Convert Sequelize instance to plain object
+						const plainRow = newRow[0].toJSON ? newRow[0].toJSON() : newRow[0];
+						const enrichedRow = { ...plainRow, AmazonSellerID: row.AmazonSellerID, ReportID: reportId, SellerID: row.SellerID };					
+						const importResult = await jsonSvc.__importJson(enrichedRow, 0, 0);
+						logger.info({ 
+								action: 'Download Completed - Import Done',
+								cronDetailID: row.ID, 
+								reportType, 
+								importResult 
+							}, 'Import process completed after download');
+						} catch (importError) {
+							logger.error({ 
+								error: importError ? (importError.message || String(importError)) : 'Unknown error', 
+								stack: importError?.stack,
+								cronDetailID: row.ID, 
+								reportType 
+							}, 'Error during import process - file saved but import failed');
+							// Don't throw - file is saved, import can be retried later
+						}
 					}
+					return {
+						action: 'Download Completed - Import Done',
+						message: `Report downloaded successfully on attempt ${attempt} and import process completed`,
+						reportID: reportId,
+						reportDocumentID: documentId,
+						logData: {
+							downloadCompleted: true,
+							filePath: filePath,
+							fileSize: fileSize,
+							recordsProcessed: Array.isArray(data) ? data.length : 0
+						},
+						data: { documentId, filePath, fileSize, recordCount: data.length }
+					};
+				} else {
+					// No data received - log this and update status
+					logger.warn({ reportId: documentId, reportType, attempt }, 'No data received from report download');
+					
+					// Update download status to COMPLETED even with no data
+					await downloadUrls.updateDownloadUrlStatusByCriteria(
+						row.ID,
+						reportType,
+						'COMPLETED',
+						'No data in report',
+						null,
+						null,
+						false
+
+					);
+
+					// Use the unified completion handler for no-data scenario
+					await jsonSvc.handleReportCompletion(row.ID, reportType, row.AmazonSellerID, null, false);
+					
+					return {
+						action: 'Download Completed - No Data to import',
+						message: `Report downloaded on attempt ${attempt} but contains no data`,
+						reportID: reportId,
+						reportDocumentID: documentId,
+						logData: {
+							downloadCompleted: true,
+							recordsProcessed: 0
+						},
+						data: { documentId, recordCount: 0 }
+					};
 				}
-				return {
-					action: 'Download Completed - Import Done',
-					message: `Report downloaded successfully on attempt ${attempt} and import process completed`,
-					reportID: reportId,
-					reportDocumentID: documentId,
-					logData: {
-						downloadCompleted: true,
-						filePath: filePath,
-						fileSize: fileSize,
-						recordsProcessed: Array.isArray(data) ? data.length : 0
-					},
-					data: { documentId, filePath, fileSize, recordCount: data.length }
-				};
-			} else {
-				// No data received - log this and update status
-				logger.warn({ reportId: documentId, reportType, attempt }, 'No data received from report download');
-				
-				// Update download status to COMPLETED even with no data
-                await downloadUrls.updateDownloadUrlStatusByCriteria(
-                    row.ID,
-                    reportType,
-                    'COMPLETED',
-                    'No data in report',
-                    null,
-                    null,
-                    false
-
-                );
-
-				// Use the unified completion handler for no-data scenario
-				await jsonSvc.handleReportCompletion(row.ID, reportType, row.AmazonSellerID, null, false);
-				
-				return {
-					action: 'Download Completed - Import Done',
-					message: `Report downloaded on attempt ${attempt} but contains no data`,
-					reportID: reportId,
-					reportDocumentID: documentId,
-					logData: {
-						downloadCompleted: true,
-						recordsProcessed: 0
-					},
-					data: { documentId, recordCount: 0 }
-				};
-			}
-		}
+			} 
 	});
 	
 	if (result.success) {
@@ -734,6 +734,7 @@ async function handleFatalOrUnknownStatus(row, reportType, status) {
         
         if (asins.length > 0 && row.AmazonSellerID) {
             await model.ASINsBySellerUpdated(
+				row.SellerID,
                 row.AmazonSellerID,
                 asins,
                 3,           // Status 3 = Failed

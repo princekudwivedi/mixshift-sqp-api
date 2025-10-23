@@ -198,7 +198,6 @@ async function updateProcessStatusById(id, processStatus, extra = {}) {
 	if (typeof extra.fullyImported === 'number') data.FullyImported = extra.fullyImported;
 	if (typeof extra.lastError === 'string') data.LastProcessError = extra.lastError;
 	const where = extra.reportID ? { ID: id, ReportID: extra.reportID } : { ID: id };
-	console.log('where', where);
 	
 	await SqpDownloadUrls.update(data, { where: where });
 }

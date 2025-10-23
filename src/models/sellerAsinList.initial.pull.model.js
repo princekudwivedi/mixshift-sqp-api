@@ -22,7 +22,7 @@ const logger = require('../utils/logger.utils');
  * @param {Date} startTime - Start time (optional)
  * @param {Date} endTime - End time (optional)
  */
-async function updateInitialPullStatus(amazonSellerID, asinList, status, startTime = null, endTime = null) {
+async function updateInitialPullStatus(cronDetailID, SellerID, amazonSellerID, asinList, status, startTime = null, endTime = null) {
     try {
         const SellerAsinList = getSellerAsinList();
         
@@ -38,18 +38,79 @@ async function updateInitialPullStatus(amazonSellerID, asinList, status, startTi
         
         if (endTime) {
             updateData.InitialPullEndTime = endTime;
-        }
+        }        
         
         // Build where clause
         const where = { AmazonSellerID: amazonSellerID };
         if (asinList && asinList.length > 0) {
             where.ASIN = asinList;
+            if(cronDetailID != ''){
+                for (const asin of asinList) {
+                    for (const reportType of ['WEEK', 'MONTH', 'QUARTER']) {                    
+                        try {
+                            const { getModel: getSqpWeekly } = require('../models/sequelize/sqpWeekly.model');
+                            const { getModel: getSqpMonthly } = require('../models/sequelize/sqpMonthly.model');
+                            const { getModel: getSqpQuarterly } = require('../models/sequelize/sqpQuarterly.model');
+    
+                            const SqpModel = reportType === 'WEEK' ? getSqpWeekly()
+                                : reportType === 'MONTH' ? getSqpMonthly()
+                                : reportType === 'QUARTER' ? getSqpQuarterly()
+                                : null;
+    
+                            if (!SqpModel) {
+                                console.error(`❌ Invalid report type: ${reportType}`);
+                                return;
+                            }
+                            const dateRanges = await SqpModel.findOne({
+                                where: { ASIN: asin, SellerID: SellerID, AmazonSellerID: amazonSellerID },
+                                attributes: [
+                                    [literal('MAX(StartDate)'), 'minStartDate'],
+                                    [literal('MAX(EndDate)'), 'maxEndDate']
+                                ],
+                                raw: true
+                            });
+    
+                            let minRange = null;
+                            let maxRange = null;
+                            let isDataAvailable = 2; // default: no data
+    
+                            if (dateRanges?.minStartDate && dateRanges?.maxEndDate) {
+                                minRange = dateRanges.minStartDate;
+                                maxRange = dateRanges.maxEndDate;
+                                isDataAvailable = 1;
+                            }
+    
+                            console.log(`🔹 Processing ASIN ${asin}`, {
+                                reportType,
+                                minRange,
+                                maxRange,
+                                isDataAvailable
+                            });
+    
+                            await updateSellerAsinLatestRanges({
+                                cronDetailID,
+                                amazonSellerID: amazonSellerID,
+                                reportType,
+                                minRange: minRange || '',
+                                maxRange: maxRange || '',
+                                jsonAsins: [asin],
+                                IsDataAvailable: isDataAvailable
+                            });
+                        } catch (asinError) {
+                            console.error(`❌ Error processing ASIN ${asin}:`, asinError.message);
+                        }
+                    }
+                }
+            }
         }
-        
+        if(SellerID){
+            where.SellerID = SellerID;
+        }
         const [affectedRows] = await SellerAsinList.update(updateData, { where });
         
         logger.info({
             amazonSellerID,
+            SellerID,
             status,
             affectedRows,
             asinCount: asinList?.length || 'all'
@@ -69,8 +130,10 @@ async function updateInitialPullStatus(amazonSellerID, asinList, status, startTi
 /**
  * Mark initial pull as started (status = 1)
  */
-async function markInitialPullStarted(amazonSellerID, asinList) {
+async function markInitialPullStarted(amazonSellerID, asinList, SellerID, cronDetailID) {
     return updateInitialPullStatus(
+        '',
+        SellerID,
         amazonSellerID,
         asinList,
         1, // In Progress
@@ -82,8 +145,10 @@ async function markInitialPullStarted(amazonSellerID, asinList) {
 /**
  * Mark initial pull as completed (status = 2)
  */
-async function markInitialPullCompleted(amazonSellerID, asinList) {
+async function markInitialPullCompleted(amazonSellerID, asinList, SellerID, cronDetailID) {
     return updateInitialPullStatus(
+        cronDetailID,
+        SellerID,
         amazonSellerID,
         asinList,
         2, // Completed
@@ -95,8 +160,10 @@ async function markInitialPullCompleted(amazonSellerID, asinList) {
 /**
  * Mark initial pull as failed (status = 3)
  */
-async function markInitialPullFailed(amazonSellerID, asinList) {
+async function markInitialPullFailed(amazonSellerID, asinList, SellerID, cronDetailID) {
     return updateInitialPullStatus(
+        cronDetailID,
+        SellerID,
         amazonSellerID,
         asinList,
         3, // Failed
@@ -105,83 +172,9 @@ async function markInitialPullFailed(amazonSellerID, asinList) {
     );
 }
 
-/**
- * Get initial pull status for ASINs
- * @param {string} amazonSellerID - Amazon Seller ID
- * @returns {Promise<Array>} ASINs with their status
- */
-async function getInitialPullStatus(amazonSellerID) {
-    try {
-        const SellerAsinList = getSellerAsinList();
-        
-        const results = await SellerAsinList.findAll({
-            where: { AmazonSellerID: amazonSellerID },
-            attributes: [
-                'ASIN',
-                'ItemName',
-                'InitialPullStatus',
-                'InitialPullStartTime',
-                'InitialPullEndTime'
-            ],
-            raw: true
-        });
-        
-        return results;
-    } catch (error) {
-        logger.error({
-            error: error.message,
-            amazonSellerID
-        }, 'Error getting initial pull status');
-        throw error;
-    }
-}
-
-/**
- * Get initial pull status summary for a seller
- * @param {string} amazonSellerID - Amazon Seller ID
- * @returns {Promise<Object>} Summary with counts
- */
-async function getInitialPullSummary(amazonSellerID) {
-    try {
-        const SellerAsinList = getSellerAsinList();
-        
-        const results = await SellerAsinList.findAll({
-            where: { AmazonSellerID: amazonSellerID, IsActive: 1 },
-            attributes: ['InitialPullStatus'],
-            raw: true
-        });
-        
-        const summary = {
-            total: results.length,
-            pending: 0,
-            inProgress: 0,
-            completed: 0,
-            failed: 0
-        };
-        
-        results.forEach(row => {
-            const status = row.InitialPullStatus;
-            if (status === 0 || status === null) summary.pending++;
-            else if (status === 1) summary.inProgress++;
-            else if (status === 2) summary.completed++;
-            else if (status === 3) summary.failed++;
-        });
-        
-        return summary;
-    } catch (error) {
-        logger.error({
-            error: error.message,
-            amazonSellerID
-        }, 'Error getting initial pull summary');
-        throw error;
-    }
-}
-
 module.exports = {
     updateInitialPullStatus,
     markInitialPullStarted,
     markInitialPullCompleted,
-    markInitialPullFailed,
-    getInitialPullStatus,
-    getInitialPullSummary
+    markInitialPullFailed
 };

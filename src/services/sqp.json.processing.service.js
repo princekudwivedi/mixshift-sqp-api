@@ -102,7 +102,7 @@ async function handleReportCompletion(cronJobID, reportType, amazonSellerID = nu
 		for (const asin of cronAsins) {
 			try {
 				const dateRanges = await SqpModel.findOne({
-					where: { ASIN: asin, SellerID: sellerId },
+					where: { ASIN: asin, SellerID: sellerId, AmazonSellerID: finalAmazonSellerID },
 					attributes: [
 						[literal('MAX(StartDate)'), 'minStartDate'],
 						[literal('MAX(EndDate)'), 'maxEndDate']
@@ -153,6 +153,7 @@ async function handleReportCompletion(cronJobID, reportType, amazonSellerID = nu
 		const endTime = new Date();
 
 		await model.ASINsBySellerUpdated(
+			sellerId,
 			finalAmazonSellerID, 
 			cronAsins, 
 			statusForThisReport, 
@@ -293,32 +294,15 @@ async function parseAndStoreJsonData(download, jsonContent, filePath, reportDate
 			maxRange,
 			recordsSample: records.slice(0, 2).map(r => ({ startDate: r.startDate, endDate: r.endDate }))
 		});
-
-		logger.info(`parseAndStoreJsonData:before bulkCreate`, {			
-			rows: rows.length,
-			download: download
-		});
 		if (rows.length > 0) {
             const type = (download.ReportType || '').toUpperCase();
             if (type === 'WEEK') {
-				logger.info(`parseAndStoreJsonData:before bulkCreate WEEK`, {			
-					rows: rows.length,
-					download: download
-				});
                 const SqpWeekly = getSqpWeekly();
                 await SqpWeekly.bulkCreate(rows, { validate: false, ignoreDuplicates: false });
             } else if (type === 'MONTH') {
-				logger.info(`parseAndStoreJsonData:before bulkCreate MONTH`, {			
-					rows: rows.length,
-					download: download
-				});
                 const SqpMonthly = getSqpMonthly();
                 await SqpMonthly.bulkCreate(rows, { validate: false, ignoreDuplicates: false });
             } else if (type === 'QUARTER') {
-				logger.info(`parseAndStoreJsonData:before bulkCreate QUARTER`, {			
-					rows: rows.length,
-					download: download
-				});
                 const SqpQuarterly = getSqpQuarterly();
                 await SqpQuarterly.bulkCreate(rows, { validate: false, ignoreDuplicates: false });
             } 
@@ -339,12 +323,6 @@ async function importJsonWithRetry(download, jsonContent, filePath, reportDateOv
     let lastError = null;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
-			logger.info(`__importJson:before attempt ${attempt}`, {			
-				AmazonSellerID: download.AmazonSellerID || '',
-				SellerID: download.SellerID || 0,
-				ReportType: download.ReportType,
-				CronJobID: download.CronJobID
-			});
             const stats = await parseAndStoreJsonData(download, jsonContent, filePath, reportDateOverride);
             return stats;
         } catch (e) {
@@ -494,7 +472,7 @@ async function updateSellerAsinLatestRanges({
             ? 'IsMonthDataAvailable'
             : reportType === 'QUARTER'
             ? 'IsQuarterDataAvailable'
-            : null;
+            : 0;
 
     if (!col || !IsDataAvl) {
         console.log(`updateSellerAsinLatestRanges: Invalid reportType`, { reportType });
@@ -504,8 +482,6 @@ async function updateSellerAsinLatestRanges({
     const rangeStr = minRange && maxRange ? `${minRange} - ${maxRange}` : null;
     console.log(`updateSellerAsinLatestRanges: Range string`, { rangeStr, column: col });
 
-    // 🧩 Retrieve ASIN_List from sqp_cron_details
-    const { getSqpCronDetails } = require('../models/sequelize/sqp_cron_details.model');
     const SqpCronDetails = getSqpCronDetails();
 
     console.log(`updateSellerAsinLatestRanges: Fetching cron details for ID`, { cronJobID });
@@ -588,7 +564,7 @@ async function updateSellerAsinLatestRanges({
     if (IsDataAvailable === 2) {
         // Mark data unavailable (nullify date range)
         result = await SellerAsinList.update(
-            { [col]: null, [IsDataAvl]: IsDataAvailable, dtUpdatedOn: new Date() },
+            { [IsDataAvl]: IsDataAvailable, dtUpdatedOn: new Date() },
             { where }
         );
     } else {

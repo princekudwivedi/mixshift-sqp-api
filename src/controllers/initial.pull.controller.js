@@ -230,7 +230,9 @@ class InitialPullController {
             try {
                 await asinInitialPull.markInitialPullStarted(
                     seller.AmazonSellerID,
-                    asinList
+                    asinList,
+                    seller.idSellerAccount,
+                    cronDetailRow.ID
                 );
                 
                 logger.info({
@@ -519,19 +521,21 @@ class InitialPullController {
                 type: log.ReportType,
                 range: { range: log.Range }
             }));
+            let SellerID = '';
             
-            // Get ASIN list if not provided
-            if (!asinList || asinList.length === 0) {
-                const cronDetail = await SqpCronDetails.findOne({
-                    where: { ID: cronDetailID },
-                    attributes: ['ASIN_List', 'AmazonSellerID']
-                });
-                if (cronDetail) {
-                    asinList = cronDetail.ASIN_List ? cronDetail.ASIN_List.split(/\s+/).filter(Boolean) : [];
-                    amazonSellerID = amazonSellerID || cronDetail.AmazonSellerID;
+            const cronDetail = await SqpCronDetails.findOne({
+                where: { ID: cronDetailID },
+                attributes: ['ASIN_List', 'AmazonSellerID', 'SellerID']
+            });
+
+            if (cronDetail) {
+                // Get ASIN list if not provided
+                if (!asinList || asinList.length === 0) {
+                    asinList = asinList && asinList.length ? asinList : (cronDetail.ASIN_List?.split(/\s+/).filter(Boolean) || []);
                 }
+                amazonSellerID = amazonSellerID || cronDetail.AmazonSellerID;
+                SellerID = cronDetail.SellerID;
             }
-            
             // Group requests by type
             const typeGroups = {
                 WEEK: reportRequests.filter(r => r.type === 'WEEK'),
@@ -723,10 +727,10 @@ class InitialPullController {
             
             // Update seller_ASIN_list.InitialPullStatus
             if (overallAsinStatus === 2) {
-                await asinInitialPull.markInitialPullCompleted(amazonSellerID, asinList);
+                await asinInitialPull.markInitialPullCompleted(amazonSellerID, asinList, SellerID, cronDetailID);
                 logger.info({ amazonSellerID, asinCount: asinList.length }, 'Marked initial pull as completed for ASINs');
             } else {
-                await asinInitialPull.markInitialPullFailed(amazonSellerID, asinList);
+                await asinInitialPull.markInitialPullFailed(amazonSellerID, asinList, SellerID, cronDetailID);
                 logger.warn({ amazonSellerID, asinCount: asinList.length }, 'Marked initial pull as failed for ASINs');
             }
             
@@ -936,7 +940,7 @@ class InitialPullController {
                     const downloadMeta = { 
                         AmazonSellerID: seller.AmazonSellerID, 
                         ReportType: reportType, 
-                        ReportID: documentId || reportId 
+                        ReportID: documentId || reportId
                     };
                     let filePath = null;
                     let fileSize = 0;
