@@ -81,15 +81,48 @@ async function handleReportCompletion(cronJobID, reportType, amazonSellerID = nu
 		await model.setProcessRunningStatus(cronJobID, reportType, 4);
 		await model.updateSQPReportStatus(cronJobID, reportType, 1, undefined, new Date(), 2);
 
-		// 🧩 Step 4 & 5: Update each ASIN's date range using utility
-		const { getLatestDataRangeAndAvailability } = require('../utils/sqp.data.utils');
-		const sellerId = parseInt(cronDetail.SellerID) || 0;
+		const SqpModel = reportType === 'WEEK' ? getSqpWeekly()
+			: reportType === 'MONTH' ? getSqpMonthly()
+			: reportType === 'QUARTER' ? getSqpQuarterly()
+			: null;
 
+		if (!SqpModel) {
+			console.error(`❌ Invalid report type: ${reportType}`);
+			return;
+		}
+
+		// 🧩 Step 4 & 5: Update each ASIN's date range using utility		
+		const sellerId = parseInt(cronDetail.SellerID) || 0;
 		for (const asin of cronAsins) {
 			try {
-				// Get latest data range and availability using utility
-				const { minRange, maxRange, isDataAvailable } = 
-					await getLatestDataRangeAndAvailability(reportType, asin, sellerId, finalAmazonSellerID, hasData);
+				const dateRanges = await SqpModel.findOne({
+					where: { ASIN: asin, SellerID: sellerId, AmazonSellerID: finalAmazonSellerID },
+					attributes: [
+						[literal('MAX(StartDate)'), 'minStartDate'],
+						[literal('MAX(EndDate)'), 'maxEndDate']
+					],
+					raw: true
+				});
+
+				let minRange = null;
+				let maxRange = null;
+				let isDataAvailable = 2; // default: no data or not current
+
+				if (hasData && dateRanges?.minStartDate && dateRanges?.maxEndDate) {
+					minRange = dateRanges.minStartDate;
+					maxRange = dateRanges.maxEndDate;
+					
+					// Get current date range for this report type
+					const datesUtils = require('../utils/dates.utils');
+					const currentRange = datesUtils.getDateRangeForPeriod(reportType);
+					
+					// Check if data is for current period
+					const isCurrentPeriod = 
+						minRange === currentRange.start && 
+						maxRange === currentRange.end;
+					
+					isDataAvailable = isCurrentPeriod ? 1 : 2;
+				}
 
 				console.log(`🔹 Processing ASIN ${asin}`, {
 					reportType,
@@ -406,23 +439,24 @@ async function updateSellerAsinLatestRanges({
     jsonAsins = [],
     IsDataAvailable = 1
 }) {
-    console.log(`updateSellerAsinLatestRanges called with:`, {
+    logger.info({
         cronJobID,
         amazonSellerID,
         reportType,
         minRange,
         maxRange,
-        jsonAsinsCount: jsonAsins.length
-    });
+        jsonAsinsCount: jsonAsins.length,
+        IsDataAvailable
+    }, 'updateSellerAsinLatestRanges called');
 
     // 🧩 Validate inputs
     if (!cronJobID || !reportType || (IsDataAvailable !== 2 && (!minRange || !maxRange))) {
-        console.log(`updateSellerAsinLatestRanges: Missing required parameters`, {
+        logger.warn({
             cronJobID: !!cronJobID,
             reportType: !!reportType,
             minRange: !!minRange,
             maxRange: !!maxRange
-        });
+        }, 'updateSellerAsinLatestRanges: Missing required parameters - SKIPPING UPDATE');
         return;
     }
 
@@ -446,16 +480,23 @@ async function updateSellerAsinLatestRanges({
             : 0;
 
     if (!col || !IsDataAvl) {
-        console.log(`updateSellerAsinLatestRanges: Invalid reportType`, { reportType });
+        logger.warn({
+            reportType
+        }, 'updateSellerAsinLatestRanges: Invalid reportType - SKIPPING UPDATE');
         return;
     }
 
     const rangeStr = minRange && maxRange ? `${minRange} - ${maxRange}` : null;
-    console.log(`updateSellerAsinLatestRanges: Range string`, { rangeStr, column: col });
+    logger.info({
+        rangeStr,
+        column: col
+    }, 'updateSellerAsinLatestRanges: Range string');
 
     const SqpCronDetails = getSqpCronDetails();
 
-    console.log(`updateSellerAsinLatestRanges: Fetching cron details for ID`, { cronJobID });
+    logger.info({
+        cronJobID
+    }, 'updateSellerAsinLatestRanges: Fetching cron details for ID');
     const cronRow = await SqpCronDetails.findOne({
         where: { ID: cronJobID },
         attributes: ['ASIN_List', 'SellerID']
@@ -511,13 +552,13 @@ async function updateSellerAsinLatestRanges({
         where.SellerID = cronRow.SellerID;
     }
 
-    console.log(`updateSellerAsinLatestRanges: Updating seller_ASIN_list`, {
+    logger.info({
         amazonSellerID,
         column: col,
         rangeStr,
         asinsCount: asins.length,
         where
-    });
+    }, 'updateSellerAsinLatestRanges: Updating seller_ASIN_list');
     
     const existingRecords = await SellerAsinList.findAll({
         where,
@@ -525,17 +566,17 @@ async function updateSellerAsinLatestRanges({
         raw: true
     });
 
-    console.log(`updateSellerAsinLatestRanges: Found existing records`, {
+    logger.info({
         amazonSellerID,
         existingRecordsCount: existingRecords.length,
         existingRecords: existingRecords.slice(0, 3)
-    });
+    }, 'updateSellerAsinLatestRanges: Found existing records');
     
     let result;
     if (IsDataAvailable === 2) {
         // Mark data unavailable (nullify date range)
         result = await SellerAsinList.update(
-            { [IsDataAvl]: IsDataAvailable, dtUpdatedOn: new Date() },
+            { [col]: rangeStr, [IsDataAvl]: IsDataAvailable, dtUpdatedOn: new Date() },
             { where }
         );
     } else {

@@ -1226,8 +1226,9 @@ class InitialPullController {
         // Find initial pull records with failed status (3)
         const failedRecords = await SqpCronDetails.findAll({
             where: {
-                iInitialPull: 1,
+                iInitialPull: 1,                
                 [Op.or]: [
+                    { cronRunningStatus: 3},
                     {
                         [Op.and]: [
                             { WeeklyProcessRunningStatus: { [Op.in]: [1, 2, 3, 4] } },
@@ -1268,10 +1269,11 @@ class InitialPullController {
             },
             attributes: [
                 'ID', 'AmazonSellerID', 'ASIN_List', 'dtCreatedOn', 'dtUpdatedOn',
-                'WeeklyProcessRunningStatus', 'WeeklySQPDataPullStatus', 'WeeklySQPDataPullEndDate', 'WeeklySQPDataPullStartDate',
+                'cronRunningStatus', 'WeeklyProcessRunningStatus', 'WeeklySQPDataPullStatus', 'WeeklySQPDataPullEndDate', 'WeeklySQPDataPullStartDate',
                 'MonthlyProcessRunningStatus', 'MonthlySQPDataPullStatus', 'MonthlySQPDataPullEndDate', 'MonthlySQPDataPullStartDate',
                 'QuarterlyProcessRunningStatus', 'QuarterlySQPDataPullStatus', 'QuarterlySQPDataPullEndDate', 'QuarterlySQPDataPullStartDate'
-            ]
+            ],
+            limit: 1
         });
         
         // Enrich records with failed report types and get related logs
@@ -1295,17 +1297,29 @@ class InitialPullController {
             // Exclude FATAL and CANCELLED messages
             const failedLogs = await SqpCronLogs.findAll({
                 where: {
-                    CronJobID: record.ID,
-                    Status: { [Op.in]: [0, 2] }, // Status 0 (pending/in-progress) or 2 (error)
-                    iInitialPull: 1,
-                    [Op.and]: [
-                        { Message: { [Op.notLike]: '%FATAL%' } },
-                        { Message: { [Op.notLike]: '%CANCELLED%' } }
-                    ]
+                  CronJobID: record.ID,
+                  iInitialPull: 1,
+                  [Op.and]: [
+                    {
+                      [Op.or]: [
+                        {
+                          Status: { [Op.in]: [0, 2] },
+                        },
+                        {
+                          Status: 1,
+                          Action: { [Op.like]: '%Request Report%' }
+                        }
+                      ]
+                    },
+                    { Message: { [Op.notLike]: '%FATAL%' } },
+                    { Message: { [Op.notLike]: '%CANCELLED%' } }
+                  ]
                 },
                 order: [['dtCreatedOn', 'DESC']],
-                limit: 50 // Get last 50 log entries
+                limit: 70
             });
+              
+              
             if(failedLogs.length > 0) {
                 return {    
                     ...record.toJSON(),            

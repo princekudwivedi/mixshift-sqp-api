@@ -585,6 +585,7 @@ class SqpCronApiController {
             where: {
                 iInitialPull: 0,
                 [Op.or]: [
+                    { cronRunningStatus: 3},
                     {
                         [Op.and]: [
                             { WeeklyProcessRunningStatus: { [Op.in]: [1, 2, 3, 4] } },
@@ -628,7 +629,8 @@ class SqpCronApiController {
                 'WeeklyProcessRunningStatus', 'WeeklySQPDataPullStatus', 'WeeklySQPDataPullEndDate', 'WeeklySQPDataPullStartDate',
                 'MonthlyProcessRunningStatus', 'MonthlySQPDataPullStatus', 'MonthlySQPDataPullEndDate', 'MonthlySQPDataPullStartDate',
                 'QuarterlyProcessRunningStatus', 'QuarterlySQPDataPullStatus', 'QuarterlySQPDataPullEndDate', 'QuarterlySQPDataPullStartDate'
-            ]
+            ],
+            limit: 1
         });
         
         // Enrich records with additional information

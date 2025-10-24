@@ -56,18 +56,55 @@ async function updateInitialPullStatus(cronDetailID, SellerID, amazonSellerID, a
                 endTime
             }, 'Updating initial pull status for ASINs in seller_ASIN_list');
             if(cronDetailID != ''){
-                const { getLatestDataRangeAndAvailability } = require('../utils/sqp.data.utils');
-                
+                const { getModel: getSqpWeekly } = require('../models/sequelize/sqpWeekly.model');
+                const { getModel: getSqpMonthly } = require('../models/sequelize/sqpMonthly.model');
+                const { getModel: getSqpQuarterly } = require('../models/sequelize/sqpQuarterly.model');
                 for (const asin of asinList) {
-                    for (const reportType of ['WEEK', 'MONTH', 'QUARTER']) {                    
-                        logger.info({
-                            asin,
-                            reportType
-                        }, 'Processing ASIN for report type');
+                    for (const reportType of ['WEEK', 'MONTH', 'QUARTER']) {
+                        let SqpModel = null;
+                        SqpModel = reportType === 'WEEK' ? getSqpWeekly()
+                            : reportType === 'MONTH' ? getSqpMonthly()
+                            : reportType === 'QUARTER' ? getSqpQuarterly()
+                            : null;
+
+                        if (!SqpModel) {
+                            logger.error({
+                                asin,
+                                reportType,
+                                amazonSellerID,
+                                SellerID
+                            }, 'Invalid SQP model for report type');
+                            continue;
+                        }
                         try {
-                            // Get latest data range and availability using utility
-                            const { minRange, maxRange, isDataAvailable } = 
-                                await getLatestDataRangeAndAvailability(reportType, asin, SellerID, amazonSellerID);
+                            const dateRanges = await SqpModel.findOne({
+                                where: { ASIN: asin, SellerID: SellerID, AmazonSellerID: amazonSellerID },
+                                attributes: [
+                                    [literal('MAX(StartDate)'), 'minStartDate'],
+                                    [literal('MAX(EndDate)'), 'maxEndDate']
+                                ],
+                                raw: true
+                            });
+    
+                            let minRange = null;
+                            let maxRange = null;
+                            let isDataAvailable = 2;
+    
+                            if (dateRanges?.minStartDate && dateRanges?.maxEndDate) {
+                                minRange = dateRanges.minStartDate;
+                                maxRange = dateRanges.maxEndDate;
+                                
+                                // Get current date range for this report type
+                                const datesUtils = require('../utils/dates.utils');
+                                const currentRange = datesUtils.getDateRangeForPeriod(reportType);
+                                
+                                // Check if data is for current period
+                                const isCurrentPeriod = 
+                                    minRange === currentRange.start && 
+                                    maxRange === currentRange.end;
+                                
+                                isDataAvailable = isCurrentPeriod ? 1 : 2;
+                            }
     
                             logger.info({
                                 asin,
