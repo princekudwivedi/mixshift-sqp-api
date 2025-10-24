@@ -513,12 +513,19 @@ async function updateSellerAsinLatestRanges({
         asins: jsonAsins.slice(0, 5),
         where
     }, 'Updating seller_ASIN_list per ASIN');
-
-    const result = await SellerAsinList.update(
-        { [col]: rangeStr, [IsDataAvl]: IsDataAvailable, dtUpdatedOn: new Date() },
-        { where }
-    );
-
+	let result;
+	if(rangeStr === null){
+		result = await SellerAsinList.update(
+			{ [IsDataAvl]: IsDataAvailable, dtUpdatedOn: new Date() },
+			{ where }
+		);
+	} else {
+		result = await SellerAsinList.update(
+			{ [col]: rangeStr, [IsDataAvl]: IsDataAvailable, dtUpdatedOn: new Date() },
+			{ where }
+		);
+	}
+    
     logger.info({
         amazonSellerID,
         reportType,
