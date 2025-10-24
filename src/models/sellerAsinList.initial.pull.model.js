@@ -56,6 +56,8 @@ async function updateInitialPullStatus(cronDetailID, SellerID, amazonSellerID, a
                 endTime
             }, 'Updating initial pull status for ASINs in seller_ASIN_list');
             if(cronDetailID != ''){
+                const { getLatestDataRangeAndAvailability } = require('../utils/sqp.data.utils');
+                
                 for (const asin of asinList) {
                     for (const reportType of ['WEEK', 'MONTH', 'QUARTER']) {                    
                         logger.info({
@@ -63,37 +65,9 @@ async function updateInitialPullStatus(cronDetailID, SellerID, amazonSellerID, a
                             reportType
                         }, 'Processing ASIN for report type');
                         try {
-                            const { getModel: getSqpWeekly } = require('../models/sequelize/sqpWeekly.model');
-                            const { getModel: getSqpMonthly } = require('../models/sequelize/sqpMonthly.model');
-                            const { getModel: getSqpQuarterly } = require('../models/sequelize/sqpQuarterly.model');
-    
-                            const SqpModel = reportType === 'WEEK' ? getSqpWeekly()
-                                : reportType === 'MONTH' ? getSqpMonthly()
-                                : reportType === 'QUARTER' ? getSqpQuarterly()
-                                : null;
-    
-                            if (!SqpModel) {
-                                console.error(`❌ Invalid report type: ${reportType}`);
-                                return;
-                            }
-                            const dateRanges = await SqpModel.findOne({
-                                where: { ASIN: asin, SellerID: SellerID, AmazonSellerID: amazonSellerID },
-                                attributes: [
-                                    [literal('MAX(StartDate)'), 'minStartDate'],
-                                    [literal('MAX(EndDate)'), 'maxEndDate']
-                                ],
-                                raw: true
-                            });
-    
-                            let minRange = null;
-                            let maxRange = null;
-                            let isDataAvailable = 2; // default: no data
-    
-                            if (dateRanges?.minStartDate && dateRanges?.maxEndDate) {
-                                minRange = dateRanges.minStartDate;
-                                maxRange = dateRanges.maxEndDate;
-                                isDataAvailable = 1;
-                            }
+                            // Get latest data range and availability using utility
+                            const { minRange, maxRange, isDataAvailable } = 
+                                await getLatestDataRangeAndAvailability(reportType, asin, SellerID, amazonSellerID);
     
                             logger.info({
                                 asin,

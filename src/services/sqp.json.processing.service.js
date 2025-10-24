@@ -81,44 +81,15 @@ async function handleReportCompletion(cronJobID, reportType, amazonSellerID = nu
 		await model.setProcessRunningStatus(cronJobID, reportType, 4);
 		await model.updateSQPReportStatus(cronJobID, reportType, 1, undefined, new Date(), 2);
 
-		// 🧩 Step 4: Determine correct model
-		const { getModel: getSqpWeekly } = require('../models/sequelize/sqpWeekly.model');
-		const { getModel: getSqpMonthly } = require('../models/sequelize/sqpMonthly.model');
-		const { getModel: getSqpQuarterly } = require('../models/sequelize/sqpQuarterly.model');
-
-		const SqpModel = reportType === 'WEEK' ? getSqpWeekly()
-			: reportType === 'MONTH' ? getSqpMonthly()
-			: reportType === 'QUARTER' ? getSqpQuarterly()
-			: null;
-
-		if (!SqpModel) {
-			console.error(`❌ Invalid report type: ${reportType}`);
-			return;
-		}
-
+		// 🧩 Step 4 & 5: Update each ASIN's date range using utility
+		const { getLatestDataRangeAndAvailability } = require('../utils/sqp.data.utils');
 		const sellerId = parseInt(cronDetail.SellerID) || 0;
 
-		// 🧩 Step 5: Update each ASIN’s date range
 		for (const asin of cronAsins) {
 			try {
-				const dateRanges = await SqpModel.findOne({
-					where: { ASIN: asin, SellerID: sellerId, AmazonSellerID: finalAmazonSellerID },
-					attributes: [
-						[literal('MAX(StartDate)'), 'minStartDate'],
-						[literal('MAX(EndDate)'), 'maxEndDate']
-					],
-					raw: true
-				});
-
-				let minRange = null;
-				let maxRange = null;
-				let isDataAvailable = 2; // default: no data
-
-				if (hasData && dateRanges?.minStartDate && dateRanges?.maxEndDate) {
-					minRange = dateRanges.minStartDate;
-					maxRange = dateRanges.maxEndDate;
-					isDataAvailable = 1;
-				}
+				// Get latest data range and availability using utility
+				const { minRange, maxRange, isDataAvailable } = 
+					await getLatestDataRangeAndAvailability(reportType, asin, sellerId, finalAmazonSellerID, hasData);
 
 				console.log(`🔹 Processing ASIN ${asin}`, {
 					reportType,
