@@ -449,7 +449,7 @@ async function updateSellerAsinLatestRanges({
         IsDataAvailable
     }, 'updateSellerAsinLatestRanges called');
 
-    // 🧩 Validate inputs
+    // Validate inputs
     if (!cronJobID || !reportType || (IsDataAvailable !== 2 && (!minRange || !maxRange))) {
         logger.warn({
             cronJobID: !!cronJobID,
@@ -460,141 +460,73 @@ async function updateSellerAsinLatestRanges({
         return;
     }
 
-    // 🧩 Determine column and availability flag based on report type
-    const col =
-        reportType === 'WEEK'
-            ? 'LatestRecordDateRangeWeekly'
-            : reportType === 'MONTH'
-            ? 'LatestRecordDateRangeMonthly'
-            : reportType === 'QUARTER'
-            ? 'LatestRecordDateRangeQuarterly'
-            : null;
+    // Determine column names based on report type
+    const colMap = {
+        WEEK: 'LatestRecordDateRangeWeekly',
+        MONTH: 'LatestRecordDateRangeMonthly',
+        QUARTER: 'LatestRecordDateRangeQuarterly'
+    };
+    const availMap = {
+        WEEK: 'IsWeekDataAvailable',
+        MONTH: 'IsMonthDataAvailable',
+        QUARTER: 'IsQuarterDataAvailable'
+    };
 
-    const IsDataAvl =
-        reportType === 'WEEK'
-            ? 'IsWeekDataAvailable'
-            : reportType === 'MONTH'
-            ? 'IsMonthDataAvailable'
-            : reportType === 'QUARTER'
-            ? 'IsQuarterDataAvailable'
-            : 0;
-
+    const col = colMap[reportType];
+    const IsDataAvl = availMap[reportType];
     if (!col || !IsDataAvl) {
-        logger.warn({
-            reportType
-        }, 'updateSellerAsinLatestRanges: Invalid reportType - SKIPPING UPDATE');
+        logger.warn({ reportType }, 'Invalid reportType - SKIPPING UPDATE');
         return;
     }
 
     const rangeStr = minRange && maxRange ? `${minRange} - ${maxRange}` : null;
-    logger.info({
-        rangeStr,
-        column: col
-    }, 'updateSellerAsinLatestRanges: Range string');
 
+    // Fetch cron details for SellerID (if needed)
     const SqpCronDetails = getSqpCronDetails();
-
-    logger.info({
-        cronJobID
-    }, 'updateSellerAsinLatestRanges: Fetching cron details for ID');
     const cronRow = await SqpCronDetails.findOne({
         where: { ID: cronJobID },
-        attributes: ['ASIN_List', 'SellerID']
+        attributes: ['SellerID'],
+        raw: true
     }).catch((error) => {
-        console.error(`updateSellerAsinLatestRanges: Error fetching cron details`, {
-            cronJobID,
-            error: error.message
-        });
+        logger.error({ cronJobID, error: error.message }, 'Error fetching cron details');
         return null;
     });
 
-    // 🧩 Combine ASINs from cron and JSON input
-    const asinSet = new Set();
+    const sellerID = cronRow?.SellerID || null;
 
-    if (cronRow?.ASIN_List) {
-        const cronAsins = cronRow.ASIN_List.split(/\s+/).filter(Boolean).map((a) => a.trim());
-        cronAsins.forEach((a) => asinSet.add(a));
-        console.log(`updateSellerAsinLatestRanges: Found ASINs from cron details`, {
-            cronAsinsCount: cronAsins.length,
-            cronAsins: cronAsins.slice(0, 5)
-        });
-    } else {
-        console.log(`updateSellerAsinLatestRanges: No ASIN_List found in cron details`, {
-            cronJobID,
-            hasCronRow: !!cronRow
-        });
-    }
-
-    jsonAsins.forEach((a) => asinSet.add(String(a).trim()));
-    const asins = Array.from(asinSet).filter(Boolean);
-
-    console.log(`updateSellerAsinLatestRanges: Final ASIN list`, {
-        asinsCount: asins.length,
-        asins: asins.slice(0, 5)
-    });
-
-    if (asins.length === 0) {
-        console.log(`updateSellerAsinLatestRanges: No ASINs to update`);
-        return;
-    }
-
-    
+    // Update ASIN-wise
     const { getModel: getSellerAsinList } = require('../models/sequelize/sellerAsinList.model');
     const SellerAsinList = getSellerAsinList();
 
-    
     const where = {
         AmazonSellerID: amazonSellerID,
-        ASIN: asins
+        ASIN: { [Op.in]: jsonAsins }
     };
-
-    if (cronRow?.SellerID) {
-        where.SellerID = cronRow.SellerID;
-    }
+    if (sellerID) where.SellerID = sellerID;
 
     logger.info({
         amazonSellerID,
+        reportType,
         column: col,
         rangeStr,
-        asinsCount: asins.length,
+        IsDataAvailable,
+        asins: jsonAsins.slice(0, 5),
         where
-    }, 'updateSellerAsinLatestRanges: Updating seller_ASIN_list');
-    
-    const existingRecords = await SellerAsinList.findAll({
-        where,
-        attributes: ['ID', 'AmazonSellerID', 'ASIN', col],
-        raw: true
-    });
+    }, 'Updating seller_ASIN_list per ASIN');
+
+    const result = await SellerAsinList.update(
+        { [col]: rangeStr, [IsDataAvl]: IsDataAvailable, dtUpdatedOn: new Date() },
+        { where }
+    );
 
     logger.info({
         amazonSellerID,
-        existingRecordsCount: existingRecords.length,
-        existingRecords: existingRecords.slice(0, 3)
-    }, 'updateSellerAsinLatestRanges: Found existing records');
-    
-    let result;
-    if (IsDataAvailable === 2) {
-        // Mark data unavailable (nullify date range)
-        result = await SellerAsinList.update(
-            { [col]: rangeStr, [IsDataAvl]: IsDataAvailable, dtUpdatedOn: new Date() },
-            { where }
-        );
-    } else {
-        result = await SellerAsinList.update(
-            { [col]: rangeStr, [IsDataAvl]: IsDataAvailable, dtUpdatedOn: new Date() },
-            { where }
-        );
-    }
-
-    console.log(`updateSellerAsinLatestRanges: Update completed`, {
-        amazonSellerID,
-        column: col,
-        rangeStr,
-        asinsCount: asins.length,
+        reportType,
         updatedRows: result?.[0] || 0,
-        existingRecordsCount: existingRecords.length
-    });
+        asinsUpdated: jsonAsins
+    }, 'updateSellerAsinLatestRanges: Update completed');
 }
+
 
 async function __importJson(row, processed = 0, errors = 0, iInitialPull = 0){
 	try {
