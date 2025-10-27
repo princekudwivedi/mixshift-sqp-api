@@ -315,7 +315,7 @@ async function getActiveASINsBySeller(sellerId = null, limit = true, reportType 
         // if (where[Op.and]) {
         //     console.log('   ✅ Has [Op.and] conditions:', where[Op.and].length, 'items');
         // }
-        
+
         const asins = await SellerAsinList.findAll({
             where,
             attributes: ['ASIN', 'WeeklyLastSQPDataPullStatus', 'WeeklyLastSQPDataPullStartTime',

@@ -1,23 +1,35 @@
 {
-  "name": "dash-amazon-sp-api-node",
-  "version": "1.0.0",
-  "main": "index.js",
+  "name": "mixshift-sqp-api",
+  "version": "2.0.0",
+  "description": "Optimized Amazon SP-API SQP (Search Query Performance) Cron Service",
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=16.0.0",
+    "npm": ">=8.0.0"
+  },
   "scripts": {
-    "test": "jest --runInBand --coverage",
-    "test:unit": "jest --runInBand tests/helpers.test.js",
-    "test:integration": "jest --runInBand tests/cron.integration.test.js",
-    "test:watch": "jest --watch --runInBand",
-    "test:coverage": "jest --coverage --runInBand",
     "start": "node src/server.js",
     "dev": "nodemon --watch src --ext js,json --exec node src/server.js",
-    "serve": "node src/server.js",
-    "lint": "eslint src/ tests/",
-    "lint:fix": "eslint src/ tests/ --fix"
+    "serve": "NODE_ENV=production node src/server.js",
+    "test": "jest --runInBand --coverage",
+    "test:unit": "jest --runInBand tests/unit",
+    "test:integration": "jest --runInBand tests/integration",
+    "test:watch": "jest --watch --runInBand",
+    "test:coverage": "jest --coverage --runInBand --collectCoverageFrom='src/**/*.js'",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix",
+    "format": "prettier --write 'src/**/*.js'",
+    "validate": "npm run lint && npm run test"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": [
+    "amazon-sp-api",
+    "search-query-performance",
+    "cron",
+    "brand-analytics",
+    "multi-tenant"
+  ],
+  "author": "MaxShift Team",
   "license": "ISC",
-  "description": "",
   "dependencies": {
     "@amazon-sp-api-release/amazon-sp-api-sdk-js": "^1.4.0",
     "@aws-sdk/client-s3": "^3.645.0",

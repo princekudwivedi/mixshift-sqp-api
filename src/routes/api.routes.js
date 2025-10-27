@@ -1,7 +1,9 @@
 const express = require('express');
 const router = express.Router();
-const sqpCronApiController = require('../controllers/sqp.cron.api.controller');
-const initialPullController = require('../controllers/initial.pull.controller');
+// Using refactored controllers
+const initialPullController = require('../controllers/cron/initial-pull.controller');
+const mainCronController = require('../controllers/cron/main-cron.controller');
+const asinSyncController = require('../controllers/cron/asin-sync.controller');
 const AuthMiddleware = require('../middleware/auth.middleware');
 
 // Apply shared middleware to all routes
@@ -9,23 +11,24 @@ const AuthMiddleware = require('../middleware/auth.middleware');
 router.use(AuthMiddleware.securityHeaders);
 router.use(AuthMiddleware.sanitizeInput);
 
-// Cron routes - Lower rate limit for cron operations
+// Cron routes - Lower rate limit for cron operations (NO AUTH REQUIRED)
 router.use('/cron/sqp', AuthMiddleware.rateLimit(50, 15 * 60 * 1000)); // 50 requests per 15 minutes for cron endpoints
-router.get('/cron/sqp/all', (req, res) => sqpCronApiController.runAllCronOperations(req, res));
+// NEW: Using refactored main cron controller
+router.get('/cron/sqp/all', (req, res) => mainCronController.runMainCron(req, res));
 
-// Notification retry cron route
-router.get('/cron/sqp/retry-report', (req, res) => sqpCronApiController.retryNotifications(req, res));
+// Notification retry cron route (NO AUTH REQUIRED)
+router.get('/cron/sqp/retry-report', (req, res) => mainCronController.retryNotifications(req, res));
 
-// ASIN sync cron routes
-router.get('/cron/asin/syncSellerAsins/:userId/:amazonSellerID', (req, res) => sqpCronApiController.syncSellerAsins(req, res));
+// ASIN sync cron routes (NO AUTH REQUIRED)
+router.get('/cron/asin/syncSellerAsins/:userId/:amazonSellerID', (req, res) => asinSyncController.syncSellerAsins(req, res));
 
-// ASIN reset cron routes
-router.get('/cron/asin-reset', (req, res) => sqpCronApiController.resetAsinStatus(req, res));
+// ASIN reset cron routes (NO AUTH REQUIRED)
+router.get('/cron/asin-reset', (req, res) => asinSyncController.resetAsinStatus(req, res));
 
-// Initial Pull cron route
+// Initial Pull cron route (NO AUTH REQUIRED)
 router.get('/cron/sqp/initial/pull', (req, res) => initialPullController.runInitialPull(req, res));
 
-// Retry failed initial pull route
+// Retry failed initial pull route (NO AUTH REQUIRED)
 router.get('/cron/sqp/initial/retry', (req, res) => initialPullController.retryFailedInitialPull(req, res));
 
 // Shared error handling middleware for all routes
