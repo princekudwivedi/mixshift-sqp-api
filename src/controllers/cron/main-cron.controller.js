@@ -95,7 +95,9 @@ class MainCronController {
                     breakAfterFirst: true,
                     sellerCallback: async (seller) => {
                         // Process this seller
-                        await this._processSeller(seller);
+                        //await this._processSeller(seller);
+                        logger.info({ seller }, 'Processing seller');
+                        logger.info({ totalProcessed, totalErrors, shouldBreak }, 'Seller result');
                         return { processed: true, error: false, shouldBreak: true };
                     }
                 });
@@ -119,48 +121,40 @@ class MainCronController {
                 amazonSellerID: seller.AmazonSellerID
             }, 'Starting main cron for seller');
 
-            // 1. Get eligible ASINs using AsinManagementService
-            const asinList = await asinService.getEligibleAsins({
+            // 1. Get eligible ASINs            
+            const { asins:asinList, reportTypes:reportTypeList } = await asinService.getEligibleAsins({
                 sellerId: seller.idSellerAccount,
                 isInitialPull: false
             });
 
-            if (asinList.length === 0) {
+            if (asinList.length === 0 && reportTypeList.length === 0) {
                 logger.info({ sellerId: seller.idSellerAccount }, 'No eligible ASINs for main cron');
                 return;
             }
 
+            const datesUtils = require('../../utils/dates.utils');
+            const weekRange = datesUtils.getDateRangeForPeriod('WEEK');
+			const monthRange = datesUtils.getDateRangeForPeriod('MONTH');
+			const quarterRange = datesUtils.getDateRangeForPeriod('QUARTER');
+			const FullWeekRange = `${weekRange.start} to ${weekRange.end}`;
+			const FullMonthRange = `${monthRange.start} to ${monthRange.end}`;
+			const FullQuarterRange = `${quarterRange.start} to ${quarterRange.end}`;
+			
+
             // 2. Create cron detail record
-            const cronDetailRow = await model.createCronDetail({
-                userId: seller.UserID,
-                sellerId: seller.idSellerAccount,
-                amazonSellerID: seller.AmazonSellerID,
-                iInitialPull: 0
-            });
+            const cronDetailRow = await model.createSQPCronDetail(seller.AmazonSellerID, asinList.join(','), seller.idSellerAccount, { SellerName: seller.SellerName, FullWeekRange: FullWeekRange, FullMonthRange: FullMonthRange, FullQuarterRange: FullQuarterRange });
 
             logger.info({ cronDetailID: cronDetailRow.ID }, 'Cron detail created');
 
-            // 3. Mark ASINs as pending
-            await asinService.markAsinsAsPending(asinList, seller.idSellerAccount, false);
-
-            // 4. Build auth overrides with rate limiting
+            
+            // 3. Build auth overrides with rate limiting
             const authOverrides = await buildAuthWithRateLimit(seller, this.rateLimiter);
 
-            // 5. Get current date ranges for each report type
-            const reportTypes = env.TYPE_ARRAY || ['WEEK', 'MONTH', 'QUARTER'];
-
-            // 6. Request reports for all types
-            for (const reportType of reportTypes) {
+            // 4. Request reports for all types
+            for (const reportType of reportTypeList) {
                 try {
-                    const range = this._getCurrentRange(reportType);
-
-                    logger.info({
-                        type: reportType,
-                        range: range.range
-                    }, 'Requesting report');
-
-                    // Use ReportOperationsService for complete workflow
-                    await reportOps.completeReportWorkflow({
+                    // Use ReportOperationsService
+                    const result = await reportOps.requestReport({
                         seller,
                         asinList,
                         range,
@@ -168,30 +162,34 @@ class MainCronController {
                         authOverrides,
                         cronDetailID: cronDetailRow.ID,
                         model,
-                        downloadUrls,
-                        jsonSvc,
-                        isInitialPull: false
+                        isInitialPull: true
                     });
 
-                    logger.info({
-                        type: reportType,
-                        range: range.range
-                    }, 'Report workflow completed');
+                    const reportID = result?.reportID || result?.data?.reportId;
+                    if (reportID) {
+                        reportRequests.push({
+                            reportType,
+                            range,
+                            cronDetailID: cronDetailRow.ID,
+                            reportId: reportID
+                        });
+
+                        logger.info({
+                            reportId: reportID,
+                            reportType,
+                            range: range.range
+                        }, 'Report requested successfully');
+                    }
+
 
                 } catch (error) {
                     logger.error({
                         cronDetailID: cronDetailRow.ID,
-                        reportType,
+                        reportType: reportType,
                         error: error.message
                     }, 'Failed to process report type');
                 }
             }
-
-            // 7. Mark ASINs as completed
-            await asinService.markAsinsAsCompleted(asinList, seller.idSellerAccount, false);
-
-            // 8. Update cron detail status
-            await model.updateCronDetailStatus(cronDetailRow.ID, 2); // Completed
 
             logger.info({
                 cronDetailID: cronDetailRow.ID,
@@ -205,6 +203,25 @@ class MainCronController {
             }, 'Error in _processSeller');
             throw error;
         }
+
+
+        // 8. Wait for reports to be ready
+        const initialDelay = Number(process.env.INITIAL_DELAY_SECONDS) || 30;
+        await this._wait(initialDelay);
+
+        // 9. Check status and download all reports
+        await this._checkAndDownloadReports(
+            cronDetailRow,
+            seller,
+            reportRequests,
+            asinList,
+            authOverrides
+        );
+
+        logger.info({
+            cronDetailID: cronDetailRow.ID,
+            amazonSellerID: seller.AmazonSellerID
+        }, 'Main cron completed for seller');
     }
 
     /**
@@ -225,6 +242,74 @@ class MainCronController {
         throw new Error(`Unknown report type: ${reportType}`);
     }
 
+    /**
+     * Check status and download all reports
+     */
+    async _checkAndDownloadReports(cronDetailRow, seller, reportRequests, asinList, authOverrides) {
+        try {
+            logger.info({
+                cronDetailID: cronDetailRow.ID,
+                reportCount: reportRequests.length
+            }, 'Checking status for all reports');
+            
+            for (const request of reportRequests) {
+                try {
+                    // Check status using ReportOperationsService
+                    const statusResult = await reportOps.checkReportStatus({
+                        seller,
+                        reportId: request.reportId,
+                        range: request.range,
+                        reportType: request.reportType,
+                        authOverrides,
+                        cronDetailID: cronDetailRow.ID,
+                        model,
+                        downloadUrls,
+                        isInitialPull: false
+                    });
+                    
+                    if (statusResult.status === 'DONE') {
+                        // Download using ReportOperationsService
+                        await reportOps.downloadReport({
+                            seller,
+                            reportId: request.reportId,
+                            documentId: statusResult.documentId,
+                            range: request.range,
+                            reportType: request.reportType,
+                            authOverrides,
+                            cronDetailID: cronDetailRow.ID,
+                            model,
+                            downloadUrls,
+                            jsonSvc,
+                            isInitialPull: false
+                        });
+
+                        logger.info({
+                            reportId: request.reportId,
+                            reportType: request.reportType
+                        }, 'Report downloaded and imported successfully');
+                    }
+                } catch (error) {
+                    logger.error({
+                        cronDetailID: cronDetailRow.ID,
+                        reportType: request.reportType,
+                        error: error.message
+                    }, 'Failed to process report type');
+                }
+            }
+
+            logger.info({
+                cronDetailID: cronDetailRow.ID,
+                amazonSellerID: seller.AmazonSellerID
+            }, 'Main cron completed for seller');
+
+        } catch (error) {
+            logger.error({
+                error: error.message,
+                seller: seller.AmazonSellerID
+            }, 'Error in _checkAndDownloadReports');
+            throw error;
+        }
+    }
 
     /**
      * API Endpoint: Retry failed notifications

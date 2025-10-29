@@ -133,29 +133,29 @@ class InitialPullController {
                 reportType
             }, 'Starting initial pull for seller');
 
-            // 1. Get eligible ASINs using AsinManagementService
-            const asinList = await asinService.getEligibleAsins({
+            // 1. Get eligible ASINs            
+             const { asins:asinList, reportTypes:reportTypeList } = await asinService.getEligibleAsins({
                 sellerId: seller.idSellerAccount,
                 isInitialPull: true
             });
 
-            if (asinList.length === 0) {
+            if (asinList.length === 0 && reportTypeList.length === 0) {
                 logger.info({ sellerId: seller.idSellerAccount }, 'No eligible ASINs for initial pull');
                 return;
             }
 
+            const datesUtils = require('../../utils/dates.utils');
+            const weekRange = datesUtils.getDateRangeForPeriod('WEEK');
+            const monthRange = datesUtils.getDateRangeForPeriod('MONTH');
+            const quarterRange = datesUtils.getDateRangeForPeriod('QUARTER');
+            const FullWeekRange = `${weekRange.start} to ${weekRange.end}`;
+            const FullMonthRange = `${monthRange.start} to ${monthRange.end}`;
+            const FullQuarterRange = `${quarterRange.start} to ${quarterRange.end}`;
+
             // 2. Create cron detail record
-            const cronDetailRow = await model.createCronDetail({
-                userId: seller.UserID,
-                sellerId: seller.idSellerAccount,
-                amazonSellerID: seller.AmazonSellerID,
-                iInitialPull: 1
-            });
+            const cronDetailRow = await model.createSQPCronDetail(seller.AmazonSellerID, asinList.join(','), seller.idSellerAccount, { SellerName: seller.SellerName, FullWeekRange: FullWeekRange, FullMonthRange: FullMonthRange, FullQuarterRange: FullQuarterRange });
 
             logger.info({ cronDetailID: cronDetailRow.ID }, 'Cron detail created');
-
-            // 3. Mark ASINs as pending
-            await asinService.markAsinsAsPending(asinList, seller.idSellerAccount, true);
 
             // 4. Build auth overrides with rate limiting
             const authOverrides = await buildAuthWithRateLimit(seller, this.rateLimiter);
@@ -164,9 +164,7 @@ class InitialPullController {
             const ranges = await initialPullService.calculateFullRanges();
 
             // 6. Determine which report types to pull
-            const typesToPull = reportType 
-                ? [reportType] 
-                : env.TYPE_ARRAY || ['WEEK', 'MONTH', 'QUARTER'];
+            const typesToPull = reportTypeList;
 
             // 7. Request all reports using ReportOperationsService
             const reportRequests = [];

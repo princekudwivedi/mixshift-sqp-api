@@ -61,7 +61,8 @@ async function processUsers(validatedUserId, userCallback, options = {}) {
 
             // Execute user callback
             const result = await userCallback(user);
-            
+            logger.info({ result }, 'User result');
+            logger.info({ totalProcessed, totalErrors, shouldBreak }, 'User result');
             if (result.processed) totalProcessed++;
             if (result.error) totalErrors++;
             if (result.shouldBreak) {
@@ -129,7 +130,7 @@ async function processSellers(validatedSellerId, sellerCallback, options = {}) {
 
             // Check eligible ASINs
             if (checkEligibleAsins) {
-                const hasEligible = await hasAnyEligibleAsins(isInitialPull, seller.idSellerAccount);
+                const hasEligible = await hasAnyEligibleAsins(seller.idSellerAccount, isInitialPull);
                 if (!hasEligible) {
                     logger.info({
                         sellerId: seller.idSellerAccount,
@@ -146,7 +147,8 @@ async function processSellers(validatedSellerId, sellerCallback, options = {}) {
 
             // Execute seller callback
             const result = await sellerCallback(seller);
-            
+            logger.info({ result }, 'Seller result');
+            logger.info({ totalProcessed, totalErrors, shouldBreak }, 'Seller result');
             if (result.processed) totalProcessed++;
             if (result.error) totalErrors++;
             if (result.shouldBreak) {
@@ -201,7 +203,7 @@ async function buildAuthWithRateLimit(seller, rateLimiter) {
  * @param {boolean} isInitialPull - Whether this is for initial pull
  * @returns {Promise<boolean>} True if eligible ASINs exist
  */
-async function hasAnyEligibleAsins(isInitialPull = false, sellerID = null) {
+async function hasAnyEligibleAsins(sellerID = null, isInitialPull = false) {
     return isInitialPull
         ? await model.hasEligibleASINsInitialPull(sellerID, false)
         : await model.hasEligibleASINs(sellerID, false);
@@ -230,7 +232,7 @@ async function processUserSellerCombination(options) {
         async (user) => {
             // Check if any eligible ASINs exist before processing sellers
             if (checkEligibleAsins) {
-                const hasEligible = await hasAnyEligibleAsins(isInitialPull, null);
+                const hasEligible = await hasAnyEligibleAsins(null, isInitialPull);
                 if (!hasEligible) {
                     logger.info({
                         userId: user.ID

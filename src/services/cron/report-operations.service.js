@@ -36,10 +36,10 @@ class ReportOperationsService {
                 // Build payload
                 const payload = {
                     reportType: env.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT,
-                    dataStartTime: `${range.startDate}T00:00:00Z`,
-                    dataEndTime: `${range.endDate}T23:59:59Z`,
+                    dataStartTime: `${range.start}T00:00:00Z`,
+                    dataEndTime: `${range.end}T23:59:59Z`,
                     marketplaceIds: [seller.AmazonMarketplaceId],
-                    reportOptions: { asin: asinString, reportPeriod: range.type }
+                    reportOptions: { asin: asinString, reportPeriod: reportType }
                 };
 
                 // Verify access token
@@ -56,8 +56,7 @@ class ReportOperationsService {
                 
                 // Update status
                 if (range.range) {
-                    await model.updateSQPReportStatus(cronDetailID, reportType, 0, new Date());
-                    
+                    await model.ASINsBySellerUpdated(seller.idSellerAccount, seller.AmazonSellerID, asinList, 2, reportType, new Date()); // 2 = Completed
                     // Log activity
                     await model.logCronActivity({
                         cronJobID: cronDetailID,
