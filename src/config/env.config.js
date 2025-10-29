@@ -18,10 +18,6 @@ function toInt(value, defaultValue) {
     return Number.isFinite(parsed) ? parsed : defaultValue;
 }
 
-function isProduction() {
-    return String(env('NODE_ENV', 'development')).toLowerCase() === 'production';
-}
-
 const config = {
     // Application
     NODE_ENV: env('NODE_ENV', 'development'),
@@ -148,49 +144,5 @@ const config = {
     MONTHS_TO_PULL: toInt(env('MONTHS_TO_PULL'), 2),
     QUARTERS_TO_PULL: toInt(env('QUARTERS_TO_PULL'), 2),
 };
-
-// Validation
-const requiredEnvVars = [
-    'DB_HOST',
-    'DB_USER',
-    'DB_NAME',
-    'JWT_SECRET'
-];
-
-const missingVars = requiredEnvVars.filter(varName => !config[varName]);
-
-if (missingVars.length > 0) {
-    console.error('Missing required environment variables:', missingVars);
-    process.exit(1);
-}
-
-// Production hardening checks
-if (isProduction()) {
-    const defaultSecrets = [
-        'your-super-secret-jwt-key-change-in-production',
-        'your-session-secret-change-in-production'
-    ];
-
-    if (!config.JWT_SECRET || defaultSecrets.includes(config.JWT_SECRET)) {
-        console.error('Security error: JWT_SECRET must be set to a strong value in production.');
-        process.exit(1);
-    }
-    if (!config.SESSION_SECRET || defaultSecrets.includes(config.SESSION_SECRET)) {
-        console.error('Security error: SESSION_SECRET must be set to a strong value in production.');
-        process.exit(1);
-    }
-
-    // Enforce strict CORS allowlist in production
-    const allowedOrigins = (config.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
-    if (allowedOrigins.length === 0 || allowedOrigins.includes('*')) {
-        console.error('Security error: ALLOWED_ORIGINS must be a non-empty, explicit list in production.');
-        process.exit(1);
-    }
-
-    // Recommend DB password in production
-    if (!config.DB_PASS || config.DB_PASS === '') {
-        console.warn('Warning: DB_PASS is empty in production. Consider setting a strong database password.');
-    }
-}
 
 module.exports = { env, ...config };

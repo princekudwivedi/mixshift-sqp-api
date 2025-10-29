@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const logger = require('../utils/logger.utils');
 const sqpCronApiController = require('../controllers/sqp.cron.api.controller');
 const initialPullController = require('../controllers/initial.pull.controller');
 const AuthMiddleware = require('../middleware/auth.middleware');
@@ -30,7 +31,7 @@ router.get('/cron/sqp/initial/retry', (req, res) => initialPullController.retryF
 
 // Shared error handling middleware for all routes
 router.use((err, req, res, next) => {
-    console.error('API route error:', err);
+    logger.error({ error: err.message, path: req.path }, 'API route error');
     res.status(500).json({
         success: false,
         message: 'Internal server error',

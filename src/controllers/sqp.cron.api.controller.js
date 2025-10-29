@@ -159,7 +159,7 @@ class SqpCronApiController {
                                         () => ctrl.requestForSeller(s, authOverrides, env.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT),
                                         { sellerId: s.idSellerAccount, operation: 'requestForSeller' }
                                     );
-                                    console.log('cronDetailData', cronDetailData);
+                                    
                                     totalProcessed++;
 
                                     if (cronDetailIDs.length > 0) {

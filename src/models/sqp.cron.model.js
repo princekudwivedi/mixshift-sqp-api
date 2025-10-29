@@ -343,8 +343,7 @@ async function getActiveASINsBySeller(sellerId = null, limit = true, reportType 
     // Execute scenarios in order
     for (const scenario of [scenario1, scenario2, scenario3, scenario4, scenario5, scenario6, scenario7]) {        
         const result = await scenario();
-        if (result.asins.length > 0){
-            console.log('scenario', scenario);
+        if (result.asins.length > 0){            
             return result;
         } 
     }
@@ -452,7 +451,6 @@ async function ASINsBySellerUpdated(SellerID, amazonSellerID, asinList, status, 
 
 async function hasEligibleASINs(sellerId, reportType = null, limit = true) {
     const { asins, reportTypes } = await getActiveASINsBySeller(sellerId, limit, reportType);
-    console.log('eligibleAsins', asins);
     const hasEligible = asins.length > 0;
 
     logger.info({ sellerId, reportType, eligibleCount: asins.length, hasEligible, reportTypes }, 'Seller ASIN eligibility check');
@@ -460,7 +458,6 @@ async function hasEligibleASINs(sellerId, reportType = null, limit = true) {
 }
 async function hasEligibleASINsInitialPull(sellerId, limit = true) {
     const { asins } = await getActiveASINsBySellerInitialPull(sellerId, limit);
-    console.log('eligibleAsins', asins);
     const hasEligible = asins.length > 0;
 
     logger.info({ sellerId, eligibleCount: asins.length, hasEligible }, 'Seller ASIN eligibility check');
@@ -606,7 +603,7 @@ async function setProcessRunningStatus(cronDetailID, reportType, status) {
         const SqpCronDetails = getSqpCronDetails();
         await SqpCronDetails.update({ [`${prefix}ProcessRunningStatus`]: Number(status), dtUpdatedOn: new Date() }, { where: { ID: cronDetailID } });
     } catch (error) {
-        console.error('Failed to update ProcessRunningStatus:', error.message);
+        logger.error({ error: error.message, cronDetailID, reportType }, 'Failed to update ProcessRunningStatus');
     }
 }
 
