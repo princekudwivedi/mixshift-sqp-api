@@ -1,4 +1,5 @@
 const logger = require('../utils/logger.utils');
+const { sanitizeLogData } = require('../utils/security.utils');
 
 /**
  * Success response handler
@@ -96,16 +97,15 @@ class ErrorHandler {
             success: false,
             message,
             error: error.message || error,
-            timestamp: new Date().toISOString(),
-            ...(process.env.NODE_ENV === 'development' && { stack: error.stack })
+            timestamp: new Date().toISOString()
         };
 
-        logger.error({ 
+        logger.error(sanitizeLogData({ 
             statusCode, 
             message, 
             error: error.message || error,
-            stack: error.stack 
-        }, 'Error response sent');
+            errorName: error.name
+        }), 'Error response sent');
 
         return res.status(statusCode).json(response);
     }
@@ -205,14 +205,14 @@ class ErrorHandler {
             success: false,
             message,
             error: 'Database operation failed',
-            timestamp: new Date().toISOString(),
-            ...(process.env.NODE_ENV === 'development' && { details: error.message })
+            timestamp: new Date().toISOString()
         };
 
-        logger.error({ 
+        logger.error(sanitizeLogData({ 
             error: error.message,
-            message 
-        }, 'Database error response sent');
+            message,
+            code: error.code
+        }), 'Database error response sent');
 
         return res.status(500).json(response);
     }
@@ -269,15 +269,14 @@ class AsyncErrorHandler {
      * Global error handler middleware
      */
     static globalErrorHandler(err, req, res, next) {
-        // Log the error
-        logger.error({
+        //Sanitize error logs
+        logger.error(sanitizeLogData({
             error: err.message,
-            stack: err.stack,
             url: req.url,
             method: req.method,
             ip: req.ip,
             userAgent: req.get('User-Agent')
-        }, 'Unhandled error in request');
+        }), 'Unhandled error in request');
 
         // Send appropriate error response
         if (err.name === 'ValidationError') {

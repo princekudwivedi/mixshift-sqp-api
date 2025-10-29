@@ -2,9 +2,9 @@ const { loadDatabase, initDatabaseContext } = require('../db/tenant.db');
 const { getAllAgencyUserList } = require('../models/sequelize/user.model');
 const { getModel: getSellerAsinList } = require('../models/sequelize/sellerAsinList.model');
 const logger = require('../utils/logger.utils');
+const { isUserAllowed, sanitizeLogData } = require('../utils/security.utils');
 const env = require('../config/env.config');
 const isDevEnv = ["local", "development"].includes(env.NODE_ENV);
-const allowedUsers = [8,3];
 
 class AsinResetService {
 
@@ -30,8 +30,8 @@ class AsinResetService {
                 let totalReset = 0, processedUsers = 0;
 
                 for (const user of users) {
-                    try {
-                        if(isDevEnv && !allowedUsers.includes(user.ID)) {
+                    try {                        
+                        if(isDevEnv && !isUserAllowed(user.ID)) {
                             continue;
                         } else {
                             await loadDatabase(user.ID);

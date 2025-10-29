@@ -14,9 +14,9 @@ const { getModel: getSqpCronDetails } = require('../models/sequelize/sqpCronDeta
 const { getModel: getSqpCronLogs } = require('../models/sequelize/sqpCronLogs.model');
 const { Op, literal } = require('sequelize');
 const logger = require('../utils/logger.utils');
+const { isUserAllowed, isValidSellerID, sanitizeLogData } = require('../utils/security.utils');
 const env = require('../config/env.config');
 const isDevEnv = ["local", "development"].includes(env.NODE_ENV);
-const allowedUsers = [8,3];
 const asinResetService = require('../services/asin.reset.service');
 const authService = require('../services/auth.service');
 /**
@@ -93,9 +93,8 @@ class SqpCronApiController {
                 let breakUserProcessing = false;
                 // Process one user → one seller per run, exit after completing that seller            
                 for (const user of users) {
-                    console.log('user.ID', user.ID);                    
-                    if (isDevEnv && !allowedUsers.includes(user.ID)) {
-                        logger.info({ userId: user.ID }, 'Skip user as it is not allowed');
+                    if (isDevEnv && !isUserAllowed(user.ID)) {
+                        logger.info(sanitizeLogData({ userId: user.ID }), 'Skip user as it is not allowed');
                         continue;
                     } else {
                         logger.info({ userId: user.ID }, 'Process user started');
@@ -246,7 +245,12 @@ class SqpCronApiController {
         try {
             const { userId, amazonSellerID } = req.params;
             
-            logger.info({ userId, amazonSellerID }, 'ASIN sync started - background processing');
+            if (!isValidSellerID(amazonSellerID)) {
+                return ErrorHandler.sendValidationError(res, ['Invalid Amazon Seller ID format']);
+            }
+            
+            // Sanitize log data
+            logger.info(sanitizeLogData({ userId, amazonSellerID }), 'ASIN sync started - background processing');
 
             // Process in background
             this._processSyncSellerAsins(userId, amazonSellerID)
@@ -482,8 +486,8 @@ class SqpCronApiController {
                 
                 // Process each user
                 for (const user of users) {
-                    try {
-                        if (isDevEnv && !allowedUsers.includes(user.ID)) {
+                    try {                        
+                        if (isDevEnv && !isUserAllowed(user.ID)) {
                             continue;
                         }
                         await loadDatabase(user.ID);

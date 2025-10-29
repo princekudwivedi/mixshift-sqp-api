@@ -20,9 +20,9 @@ const jsonSvc = require('../services/sqp.json.processing.service');
 const downloadUrls = require('../models/sqp.download.urls.model');
 const asinInitialPull = require('../models/sellerAsinList.initial.pull.model');
 const logger = require('../utils/logger.utils');
+const { isUserAllowed, sanitizeLogData } = require('../utils/security.utils');
 const env = require('../config/env.config');
 const isDevEnv = ["local", "development"].includes(env.NODE_ENV);
-const allowedUsers = [8,3];
 const { getModel: getSqpDownloadUrls } = require('../models/sequelize/sqpDownloadUrls.model');
 const { Op, literal } = require('sequelize');
 
@@ -112,14 +112,13 @@ class InitialPullController {
                 let breakUserProcessing = false;
                 for (const user of users) {
                     try {
-                        if (isDevEnv && !allowedUsers.includes(user.ID)) {
+                        if (isDevEnv && !isUserAllowed(user.ID)) {
                             continue;
                         }
-                        logger.info({ userId: user.ID }, 'Process user started');
+                        logger.info(sanitizeLogData({ userId: user.ID }), 'Process user started');
                         await loadDatabase(user.ID);
                         // Check cron limits for this user
-                        const cronLimits = await Helpers.checkCronLimits(user.ID, 1);
-                        logger.info({ cronLimits }, 'cronLimits');
+                        const cronLimits = await Helpers.checkCronLimits(user.ID, 1);                        
                         if (cronLimits.shouldProcess) {
                             // Check if user has eligible seller which has eligible ASINs before processing
                             const hasEligibleUser = await model.hasEligibleASINsInitialPull(null, false);
@@ -1407,8 +1406,8 @@ class InitialPullController {
                 
                 // Process each user
                 for (const user of users) {
-                    try {
-                        if (isDevEnv && !allowedUsers.includes(user.ID)) {
+                    try {                        
+                        if (isDevEnv && !isUserAllowed(user.ID)) {
                             continue;
                         }
                         
