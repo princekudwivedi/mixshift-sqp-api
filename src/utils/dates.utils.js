@@ -1,7 +1,7 @@
 const { format, subDays, lastDayOfMonth, startOfMonth } = require('date-fns');
 
 // Denver timezone (Mountain Time)
-const DENVER_TZ = 'America/Denver';
+const DENVER_TZ = process.env.TZ;
 
 function fmt(date) {
     return format(date, 'yyyy-MM-dd');

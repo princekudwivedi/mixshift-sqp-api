@@ -30,17 +30,9 @@ const config = {
     DB_USER: env('DB_USER', 'root'),
     DB_PASS: env('DB_PASS', ''),
     DB_NAME: env('DB_NAME', 'sqp_database'),
-    
-    // JWT
-    JWT_SECRET: env('JWT_SECRET'),
-    JWT_EXPIRES_IN: env('JWT_EXPIRES_IN', '24h'),
-    JWT_REFRESH_EXPIRES_IN: env('JWT_REFRESH_EXPIRES_IN', '7d'),
-
-    // API Token (for cron endpoints)
-    API_ACCESS_TOKEN: env('API_ACCESS_TOKEN'),
-
+        
     // CORS
-    ALLOWED_ORIGINS: env('ALLOWED_ORIGINS', 'http://localhost:3000,http://localhost:3001'),
+    ALLOWED_ORIGINS: env('ALLOWED_ORIGINS', ''),
     
     // AWS Configuration
     AWS_ACCESS_KEY_ID: env('AWS_ACCESS_KEY_ID'),
@@ -49,9 +41,9 @@ const config = {
     AWS_STS_REGION: env('AWS_STS_REGION', 'us-east-1'),
     
     // Amazon SP API
-    AMAZON_SP_API_BASE_URL: env('AMAZON_SP_API_BASE_URL', 'https://sellingpartnerapi-na.amazon.com'),
-    AMAZON_SP_API_ASIA_BASE_URL: env('AMAZON_SP_API_ASIA_BASE_URL', 'https://sellingpartnerapi-fe.amazon.com'),
-    AMAZON_SP_API_EUROPE_BASE_URL: env('AMAZON_SP_API_EUROPE_BASE_URL', 'https://sellingpartnerapi-eu.amazon.com'),
+    AMAZON_SP_API_BASE_URL: env('AMAZON_SP_API_BASE_URL', ''),
+    AMAZON_SP_API_ASIA_BASE_URL: env('AMAZON_SP_API_ASIA_BASE_URL', ''),
+    AMAZON_SP_API_EUROPE_BASE_URL: env('AMAZON_SP_API_EUROPE_BASE_URL', ''),
     LWA_CLIENT_ID: env('LWA_CLIENT_ID'),
     LWA_CLIENT_SECRET: env('LWA_CLIENT_SECRET'),
     
@@ -102,8 +94,7 @@ const config = {
     
     // Security
     BCRYPT_ROUNDS: toInt(env('BCRYPT_ROUNDS', '12'), 12),
-    SESSION_SECRET: env('SESSION_SECRET'),
-
+    
     // report Types
     GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT: env('GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT', 'GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT'),
     MAX_ASINS_PER_REQUEST: toInt(env('MAX_ASINS_PER_REQUEST', '15'), 15),
@@ -119,10 +110,7 @@ const config = {
     MAX_MEMORY_USAGE_MB: toInt(env('MAX_MEMORY_USAGE_MB', '500'), 500),
     MAX_JSON_SIZE_MB: toInt(env('MAX_JSON_SIZE_MB', '50'), 50),
     
-    // Retry settings
-    MAX_RETRIES: toInt(env('MAX_RETRIES', '3'), 3),
-    RETRY_BASE_DELAY_MS: toInt(env('RETRY_BASE_DELAY_MS', '1000'), 1000),
-    RETRY_MAX_DELAY_MS: toInt(env('RETRY_MAX_DELAY_MS', '30000'), 30000),
+    // Retry settings    
     INITIAL_DELAY_SECONDS: toInt(env('INITIAL_DELAY_SECONDS', '30'), 30),
     
     // Rate limiting
