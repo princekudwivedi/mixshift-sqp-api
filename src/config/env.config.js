@@ -22,7 +22,6 @@ const config = {
     // Application
     NODE_ENV: env('NODE_ENV', 'development'),
     PORT: toInt(env('PORT', '3001'), 3001),
-    API_VERSION: env('API_VERSION', 'v1'),
     
     // Database
     DB_HOST: env('DB_HOST', 'localhost'),
