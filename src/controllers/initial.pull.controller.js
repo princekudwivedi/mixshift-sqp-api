@@ -35,7 +35,7 @@ class InitialPullController {
             Number(process.env.CIRCUIT_BREAKER_TIMEOUT_MS) || 60000
         );
         this.rateLimiter = new RateLimiter(
-            Number(process.env.API_RATE_LIMIT_PER_MINUTE) || 100,
+            Number(process.env.RATE_LIMIT_MAX_REQUESTS) || 100,
             Number(process.env.RATE_LIMIT_WINDOW_MS) || 60000
         );
         // MemoryMonitor uses static methods, no instance needed

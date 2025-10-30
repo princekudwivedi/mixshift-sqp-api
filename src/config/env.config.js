@@ -113,10 +113,6 @@ const config = {
     // Retry settings    
     INITIAL_DELAY_SECONDS: toInt(env('INITIAL_DELAY_SECONDS', '30'), 30),
     
-    // Rate limiting
-    API_RATE_LIMIT_PER_MINUTE: toInt(env('API_RATE_LIMIT_PER_MINUTE', '60'), 60),
-    RATE_LIMIT_WINDOW_MS: toInt(env('RATE_LIMIT_WINDOW_MS', '60000'), 60000),
-    
     // Circuit breaker
     CIRCUIT_BREAKER_THRESHOLD: toInt(env('CIRCUIT_BREAKER_THRESHOLD', '5'), 5),
     CIRCUIT_BREAKER_TIMEOUT_MS: toInt(env('CIRCUIT_BREAKER_TIMEOUT_MS', '60000'), 60000),
