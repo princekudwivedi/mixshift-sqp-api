@@ -228,13 +228,22 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
             try {
                 resp = await sp.createReport(seller, payload, currentAuthOverrides);
             } catch (err) {
+                const status = err.status || err.statusCode || err.response?.status;
                 logger.error({
-                    status: err.status || err.statusCode,
+                    status,
                     body: err.response && (err.response.body || err.response.text),
                     message: err.message,
                     payload
                 }, 'SP-API createReport failed');
-                throw err;
+                // If unauthorized/forbidden, force refresh token once and retry
+                if (status === 401 || status === 403) {
+					currentAuthOverrides = await authService.buildAuthOverrides(seller.AmazonSellerID, true);
+					if (!currentAuthOverrides.accessToken) {				
+						logger.error({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request');
+						throw new Error('No access token available for report request after forced refresh');
+					}
+					resp = await sp.createReport(seller, payload, currentAuthOverrides);
+                }
             }
 			const reportId = resp.reportId;
 			
@@ -383,13 +392,27 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 				throw new Error('No access token available for report request');
 			}
 			
-			const res = await sp.getReportStatus(seller, reportId, currentAuthOverrides);
+            let res;
+            try {
+                res = await sp.getReportStatus(seller, reportId, currentAuthOverrides);
+            } catch (err) {
+                const status = err.status || err.statusCode || err.response?.status;
+                if (status === 401 || status === 403) {
+                    // Force refresh and retry once
+                    const refreshed = await authService.buildAuthOverrides(seller.AmazonSellerID, true);
+                    if (!refreshed.accessToken) {				
+                        logger.error({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request');
+                        throw new Error('No access token available for report request after forced refresh');
+                    }
+                    res = await sp.getReportStatus(seller, reportId, refreshed);
+                } 
+            }
 			const status = res.processingStatus;
 			
             if (status === 'DONE') {
 				// Keep ReportID_* as the original reportId; store documentId separately
 				const documentId = res.reportDocumentId || null;
-                //await model.updateSQPReportStatus(row.ID, reportType, 1);
+
 				// Enqueue for download processing (store in sqp_download_urls as PENDING)
                 await downloadUrls.storeDownloadUrl({
 					CronJobID: row.ID,
@@ -455,7 +478,7 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 		}
 	});
 	
-	if (result.success) {
+    if (result.success) {
 		if (result.data?.noRetryNeeded) {
 			logger.info({ cronDetailID: row.ID, reportType, status: result.data.status }, 'Status check completed - report still processing');
 		} else {
@@ -577,7 +600,20 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 			logger.info({ documentId, attempt }, 'Using document ID for download');
 			
 			// Download the report document
-			const res = await sp.downloadReport(seller, documentId, currentAuthOverrides);
+			let res;
+			try {
+				res = await sp.downloadReport(seller, documentId, currentAuthOverrides);
+			} catch (err) {
+				const status = err.status || err.statusCode || err.response?.status;
+				if (status === 401 || status === 403) {
+					const refreshed = await authService.buildAuthOverrides(seller.AmazonSellerID, true);
+					if (!refreshed.accessToken) {				
+						logger.error({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request');
+						throw new Error('No access token available for report request after forced refresh');
+					}
+					res = await sp.downloadReport(seller, documentId, refreshed);
+				}
+			}
 			
 			// Get JSON data directly (no Excel needed)
 			let data = [];

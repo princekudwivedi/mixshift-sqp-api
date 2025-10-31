@@ -367,14 +367,27 @@ class InitialPullController {
                 };
 
                 // Get access token
-                const currentAuthOverrides = await authService.buildAuthOverrides(seller.AmazonSellerID);
+                let currentAuthOverrides = await authService.buildAuthOverrides(seller.AmazonSellerID);
                 if (!currentAuthOverrides.accessToken) {
                     logger.error({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request');
                     throw new Error('No access token available for report request');
                 }
 
                 // Create report via SP-API
-                const resp = await sp.createReport(seller, payload, currentAuthOverrides);
+                let resp;
+                try {
+                    resp = await sp.createReport(seller, payload, currentAuthOverrides);
+                } catch (err) {
+                    const status = err.status || err.statusCode || err.response?.status;
+                    if (status === 401 || status === 403) {
+                        currentAuthOverrides = await authService.buildAuthOverrides(seller.AmazonSellerID, true);
+                        if (!currentAuthOverrides.accessToken) {
+                            logger.error({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request after forced refresh');
+                            throw new Error('No access token available for report request after forced refresh');
+                        }
+                        resp = await sp.createReport(seller, payload, currentAuthOverrides);
+                    }
+                }
                 const reportId = resp.reportId;
                 
                 logger.info({ reportId, range: range.range, attempt }, 'Initial pull report created');
@@ -767,8 +780,21 @@ class InitialPullController {
                     logger.error({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request');
                     throw new Error('No access token available for report request');
                 }
-                // Check report status
-                const res = await sp.getReportStatus(seller, reportId, currentAuthOverrides);
+                // Check report status with force refresh+retry on 401/403
+                let res;
+                try {
+                    res = await sp.getReportStatus(seller, reportId, currentAuthOverrides);
+                } catch (err) {
+                    const status = err.status || err.statusCode || err.response?.status;
+                    if (status === 401 || status === 403) {
+                        const refreshedOverrides = await authService.buildAuthOverrides(seller.AmazonSellerID, true);
+                        if(!refreshedOverrides.accessToken) {
+                            logger.error({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request after forced refresh');
+                            throw new Error('No access token available for report request after forced refresh');
+                        }
+                        res = await sp.getReportStatus(seller, reportId, refreshedOverrides);
+                    }
+                }
                 const status = res.processingStatus;
                 if (status === 'DONE') {
                     const documentId = res.reportDocumentId || null;
@@ -917,8 +943,21 @@ class InitialPullController {
                     throw new Error('No access token available for report request');
                 }
                 
-                // Download report
-                const res = await sp.downloadReport(seller, documentId || reportId, currentAuthOverrides);
+                // Download report with force refresh+retry on 401/403
+                let res;
+                try {
+                    res = await sp.downloadReport(seller, documentId || reportId, currentAuthOverrides);
+                } catch (err) {
+                    const status = err.status || err.statusCode || err.response?.status;
+                    if (status === 401 || status === 403) {
+                        const refreshedOverrides = await authService.buildAuthOverrides(seller.AmazonSellerID, true);
+                        if(!refreshedOverrides.accessToken) {
+                            logger.error({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request after forced refresh');
+                            throw new Error('No access token available for report request after forced refresh');
+                        }
+                        res = await sp.downloadReport(seller, documentId || reportId, refreshedOverrides);
+                    }
+                }
                 
                 // Extract data
                 let data = [];

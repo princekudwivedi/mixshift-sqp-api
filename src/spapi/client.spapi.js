@@ -161,15 +161,21 @@ async function getReportStatus(sellerProfile, reportId, authOverrides = {}) {
 		const reportDocumentId = data?.reportDocumentId || data?.payload?.reportDocumentId;
 		return { processingStatus: status, reportDocumentId };
 	} catch (error) {
-		logger.error({ 
-			error: error.message,
-			status: error.status,
-			statusText: error.statusText,
-			response: error.response?.data,
-			sellerId: sellerProfile.AmazonSellerID,
-			reportId
-		}, 'SP-API getReportStatus failed');
-		throw error;
+        logger.error({ 
+            error: error.message,
+            status: error.status,
+            statusText: error.statusText,
+            response: error.response?.data,
+            sellerId: sellerProfile.AmazonSellerID,
+            reportId
+        }, 'SP-API getReportStatus failed');
+        // Normalize 403 Forbidden into a clear, non-retryable error with preserved status
+        if ((error.status || error.response?.status) === 403) {
+            const e = new Error('Forbidden: SP-API Brand Analytics permission missing or token/seller mismatch');
+            e.status = 403;
+            throw e;
+        }
+        throw error;
 	}
 }
 

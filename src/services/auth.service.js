@@ -10,12 +10,12 @@ const LWA_TOKEN_URL = 'https://api.amazon.com/auth/o2/token';
      * Build authentication overrides for a seller
      * Automatically refreshes token if expired or about to expire
 */
-async function buildAuthOverrides(amazonSellerID) {
+async function buildAuthOverrides(amazonSellerID, forceRefresh = false) {
 	try {
 		const authOverrides = {};
 		
 		// Use the new getValidAccessToken which automatically refreshes if needed
-		const tokenResult = await this.getValidAccessToken(amazonSellerID);
+		const tokenResult = await this.getValidAccessToken(amazonSellerID, forceRefresh);
 		
 		if (tokenResult.accessToken) {
 			authOverrides.accessToken = tokenResult.accessToken;
@@ -162,7 +162,7 @@ async function updateTokenInDatabase(amazonSellerID, tokenData) {
  * @param {string} amazonSellerID - Amazon Seller ID
  * @returns {Object} - { accessToken, wasRefreshed }
  */
-async function getValidAccessToken(amazonSellerID) {
+async function getValidAccessToken(amazonSellerID, forceRefresh = false) {
 	try {
 		// Get current token from database using AuthToken model
 		const tokenRow = await AuthToken.getSavedToken(amazonSellerID);
@@ -172,7 +172,7 @@ async function getValidAccessToken(amazonSellerID) {
 			return { accessToken: null, wasRefreshed: false };
 		}
 		// Check if token is expired
-		if (isTokenExpired(tokenRow)) {
+		if (isTokenExpired(tokenRow) || forceRefresh) {
 			logger.info({ 
 				amazonSellerID,
 				expiresAt: tokenRow.expires_in 

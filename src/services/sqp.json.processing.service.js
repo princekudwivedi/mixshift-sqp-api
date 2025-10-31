@@ -12,7 +12,6 @@ const nodeEnv = (env.NODE_ENV || 'development').toLowerCase();
 const downloadUrls = require('../models/sqp.download.urls.model');
 const { getModel: getSqpDownloadUrls } = require('../models/sequelize/sqpDownloadUrls.model');
 const dates = require('../utils/dates.utils');
-const { DateHelpers } = require('../helpers/sqp.helpers');
 const logger = require('../utils/logger.utils');
 const { Op, literal } = require('sequelize');
 
@@ -253,9 +252,10 @@ async function saveReportJsonFile(download, jsonContent) {
  * Parse JSON content and store in database
  */
 async function parseAndStoreJsonData(download, jsonContent, filePath, reportDateOverride) {
-	try {
-		// Get the report date based on the report type (fallback)
-		const defaultReportDate = DateHelpers.getReportDateForPeriod(download.ReportType);
+	try {        
+        const { DateHelpers } = require('../helpers/sqp.helpers');
+        // Get the report date based on the report type (fallback)
+        const defaultReportDate = DateHelpers.getReportDateForPeriod(download.ReportType);
 
 		let records = [];
 		
