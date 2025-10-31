@@ -8,6 +8,7 @@ const sp = require('../../spapi/client.spapi');
 const logger = require('../../utils/logger.utils');
 const env = require('../../config/env.config');
 const { RetryHelpers, DelayHelpers } = require('../../helpers/sqp.helpers');
+const DateTime = require('luxon');
 
 class ReportOperationsService {
     /**
@@ -15,7 +16,7 @@ class ReportOperationsService {
      * @param {Object} params - Request parameters
      * @returns {Promise<Object>} Report ID and metadata
      */
-    async requestReport({ seller, asinList, range, reportType, authOverrides, cronDetailID, model, isInitialPull = false }) {
+    async requestReport({ seller, asinList, range, reportType, authOverrides, cronDetailID, model, isInitialPull = false, timezone = 'America/Denver' }) {
         const result = await RetryHelpers.executeWithRetry({
             cronDetailID,
             amazonSellerID: seller.AmazonSellerID,
@@ -23,7 +24,7 @@ class ReportOperationsService {
             action: isInitialPull ? 'Initial Pull - Request Report' : 'Request Report',
             context: { seller, asinList, range, reportType, reportId: null },
             model,
-            maxRetries: 3,
+            maxRetries: Number(process.env.RETRY_MAX_ATTEMPTS) || 5,
             skipIfMaxRetriesReached: true,
             extraLogFields: isInitialPull ? { Range: range.range, iInitialPull: 1 } : {},
             operation: async ({ attempt, currentRetry, context, startTime }) => {
@@ -56,7 +57,7 @@ class ReportOperationsService {
                 
                 // Update status
                 if (range.range) {
-                    await model.ASINsBySellerUpdated(seller.idSellerAccount, seller.AmazonSellerID, asinList, 2, reportType, new Date()); // 2 = Completed
+                    await model.ASINsBySellerUpdated(seller.idSellerAccount, seller.AmazonSellerID, asinList, 2, reportType, DateTime.now().setZone(timezone)); // 2 = Completed
                     // Log activity
                     await model.logCronActivity({
                         cronJobID: cronDetailID,
@@ -93,7 +94,10 @@ class ReportOperationsService {
      * @param {Object} params - Status check parameters
      * @returns {Promise<Object>} Status and document ID if ready
      */
-    async checkReportStatus({ seller, reportId, range, reportType, authOverrides, cronDetailID, model, downloadUrls, isInitialPull = false, retry = false }) {
+    async checkReportStatus({ seller, reportId, range, reportType, authOverrides, cronDetailID, model, downloadUrls, isInitialPull = false, retry = false, timezone = 'America/Denver' }) {
+        // Get status check service for failure notifications
+        const statusCheckService = require('./status-check.service');
+        
         const result = await RetryHelpers.executeWithRetry({
             cronDetailID,
             amazonSellerID: seller.AmazonSellerID,
@@ -101,8 +105,9 @@ class ReportOperationsService {
             action: isInitialPull ? 'Initial Pull - Check Status' : 'Check Status',
             context: { seller, reportId, range, reportType, retry },
             model,
-            maxRetries: 3,
+            maxRetries: Number(process.env.RETRY_MAX_ATTEMPTS) || 5,
             skipIfMaxRetriesReached: true,
+            sendFailureNotification: statusCheckService.sendFailureNotification.bind(statusCheckService),
             extraLogFields: isInitialPull ? { Range: range.range, iInitialPull: 1 } : {},
             operation: async ({ attempt, currentRetry, context, startTime }) => {
                 // Set ProcessRunningStatus = 2 (Status Check)
@@ -137,22 +142,104 @@ class ReportOperationsService {
                     
                     logger.info({ reportId, documentId, range: range.range }, 'Report ready for download');
                     
+                    // Rate limiting delay
+                    const requestDelaySeconds = Number(process.env.REQUEST_DELAY_SECONDS) || 30;
+                    await DelayHelpers.wait(requestDelaySeconds, 'Between report status checks and downloads (rate limiting)');
+                    
                     return {
                         status: 'DONE',
                         documentId,
                         message: `Report ${reportId} is ready for download`,
                         data: { reportId, documentId, status: 'DONE' }
                     };
+                    
+                } else if (status === 'IN_QUEUE' || status === 'IN_PROGRESS' || status === 'PROCESSING') {
+                    // Report still processing - calculate delay and trigger retry
+                    const delaySeconds = DelayHelpers.calculateBackoffDelay(attempt, `Delay for ${status}`);
+                    
+                    // Log the status
+                    await model.logCronActivity({
+                        cronJobID: cronDetailID,
+                        reportType,
+                        action: isInitialPull ? 'Initial Pull - Check Status' : 'Check Status',
+                        status: 0,
+                        message: `Report ${status.toLowerCase().replace('_', ' ')} on attempt ${attempt}, waiting ${delaySeconds}s before retry`,
+                        reportID: reportId,
+                        Range: range.range,
+                        iInitialPull: isInitialPull ? 1 : 0,
+                        retryCount: currentRetry,
+                        executionTime: (Date.now() - startTime) / 1000
+                    });
+                    
+                    logger.info({ 
+                        reportId, 
+                        status, 
+                        attempt, 
+                        delaySeconds,
+                        range: range.range 
+                    }, `Report still processing, waiting ${delaySeconds}s before retry`);
+                    
+                    // Wait before retrying
+                    await DelayHelpers.wait(delaySeconds, `Before retry ${status}`);
+                    
+                    // Throw error to trigger retry mechanism
+                    throw new Error(`Report still ${status.toLowerCase().replace('_', ' ')} after ${delaySeconds}s wait - retrying`);
+                    
+                } else if (status === 'FATAL' || status === 'CANCELLED') {
+                    // Fatal or cancelled status
+                    logger.error({ reportId, status, range: range.range }, `Report failed with ${status} status`);
+                    
+                    await model.logCronActivity({
+                        cronJobID: cronDetailID,
+                        reportType,
+                        action: isInitialPull ? 'Initial Pull - Check Status' : 'Check Status',
+                        status: 2,
+                        message: `Report ${status}: No retries attempted`,
+                        reportID: reportId,
+                        Range: range.range,
+                        iInitialPull: isInitialPull ? 1 : 0,
+                        retryCount: currentRetry,
+                        executionTime: (Date.now() - startTime) / 1000
+                    });
+                    
+                    // Rate limiting delay
+                    const requestDelaySeconds = Number(process.env.REQUEST_DELAY_SECONDS) || 30;
+                    await DelayHelpers.wait(requestDelaySeconds, 'Between report status checks and fatal/cancelled (rate limiting)');
+                    
+                    return {
+                        status,
+                        message: `Report ${status}`,
+                        data: { reportId, status, noRetryNeeded: true }
+                    };
+                    
+                } else {
+                    // Unknown status
+                    const unknownStatus = status || 'UNKNOWN';
+                    logger.warn({ reportId, status: unknownStatus, range: range.range }, 'Unknown report status');
+                    
+                    await model.logCronActivity({
+                        cronJobID: cronDetailID,
+                        reportType,
+                        action: isInitialPull ? 'Initial Pull - Check Status' : 'Check Status',
+                        status: 2,
+                        message: `Unknown status: ${unknownStatus}`,
+                        reportID: reportId,
+                        Range: range.range,
+                        iInitialPull: isInitialPull ? 1 : 0,
+                        retryCount: currentRetry,
+                        executionTime: (Date.now() - startTime) / 1000
+                    });
+                    
+                    // Rate limiting delay
+                    const requestDelaySeconds = Number(process.env.REQUEST_DELAY_SECONDS) || 30;
+                    await DelayHelpers.wait(requestDelaySeconds, 'Between report status checks and unknown status (rate limiting)');
+                    
+                    return {
+                        status: unknownStatus,
+                        message: `Unknown status: ${unknownStatus}`,
+                        data: { reportId, status: unknownStatus, noRetryNeeded: true }
+                    };
                 }
-                
-                // Still processing
-                logger.info({ reportId, status, range: range.range }, 'Report still processing');
-                
-                return {
-                    status,
-                    message: `Report ${reportId} status: ${status}`,
-                    data: { reportId, status }
-                };
             }
         });
         
@@ -172,7 +259,7 @@ class ReportOperationsService {
             action: isInitialPull ? 'Initial Pull - Download Report' : 'Download Report',
             context: { seller, reportId, documentId, range, reportType, retry },
             model,
-            maxRetries: 3,
+            maxRetries: Number(process.env.RETRY_MAX_ATTEMPTS) || 5,
             skipIfMaxRetriesReached: true,
             extraLogFields: isInitialPull ? { Range: range.range, iInitialPull: 1 } : {},
             operation: async ({ attempt, currentRetry, context, startTime }) => {
@@ -311,68 +398,6 @@ class ReportOperationsService {
         });
         
         return result;
-    }
-
-    /**
-     * Complete workflow: Request → Check → Download
-     * @param {Object} params - Complete workflow parameters
-     * @returns {Promise<Object>} Final result
-     */
-    async completeReportWorkflow(params) {
-        const { seller, asinList, range, reportType, authOverrides, cronDetailID, model, downloadUrls, jsonSvc, isInitialPull = false } = params;
-        
-        try {
-            // Step 1: Request report
-            const requestResult = await this.requestReport({
-                seller, asinList, range, reportType, authOverrides, cronDetailID, model, isInitialPull
-            });
-            
-            const reportId = requestResult.reportID || requestResult.data?.reportId;
-            
-            if (!reportId) {
-                throw new Error('Failed to get report ID from request');
-            }
-            
-            // Step 2: Wait for report to be ready
-            const initialDelay = Number(process.env.INITIAL_DELAY_SECONDS) || 30;
-            await DelayHelpers.wait(initialDelay, 'Before status check');
-            
-            // Step 3: Check status
-            const statusResult = await this.checkReportStatus({
-                seller, reportId, range, reportType, authOverrides, cronDetailID, model, downloadUrls, isInitialPull
-            });
-            
-            if (statusResult.status !== 'DONE') {
-                return {
-                    success: false,
-                    message: `Report not ready yet. Status: ${statusResult.status}`,
-                    data: { reportId, status: statusResult.status }
-                };
-            }
-            
-            const documentId = statusResult.documentId;
-            
-            // Step 4: Download and import
-            const downloadResult = await this.downloadReport({
-                seller, reportId, documentId, range, reportType, authOverrides, cronDetailID, model, downloadUrls, jsonSvc, isInitialPull
-            });
-            
-            return {
-                success: true,
-                message: 'Complete workflow finished successfully',
-                data: { reportId, documentId, ...downloadResult.data }
-            };
-            
-        } catch (error) {
-            logger.error({ 
-                error: error.message, 
-                seller: seller.AmazonSellerID, 
-                reportType, 
-                range: range.range 
-            }, 'Complete workflow failed');
-            
-            throw error;
-        }
     }
 }
 

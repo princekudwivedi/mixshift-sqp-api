@@ -516,63 +516,7 @@ class ValidationHelpers {
  * Date calculation helpers
  */
 class DateHelpers {
-    /**
-     * Get report date for a specific period with error handling
-     */
-    static getReportDateForPeriod(reportType, timezone = datesUtils.DENVER_TZ, useDenverTz = true) {
-        try {
-            // Validate inputs
-            if (!reportType || typeof reportType !== 'string') {
-                throw new Error('Report type is required and must be a string');
-            }
-            
-            if (!timezone || typeof timezone !== 'string') {
-                throw new Error('Timezone is required and must be a string');
-            }
-            
-            const today = useDenverTz ? datesUtils.getNowInDenver(timezone) : new Date();
-            
-            // Validate date object
-            if (!today || isNaN(today.getTime())) {
-                throw new Error('Invalid date object created');
-            }
-            
-            switch (reportType.toUpperCase()) {
-                case 'WEEK':
-                    // Use the current week's end date (Saturday)
-                    const daysUntilSaturday = 6 - today.getDay();
-                    const weekEnd = new Date(today);
-                    weekEnd.setDate(today.getDate() + daysUntilSaturday);
-                    return weekEnd.toISOString().split('T')[0];
-                    
-                case 'MONTH':
-                    // Use the current month's end date
-                    const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-                    return monthEnd.toISOString().split('T')[0];
-                    
-                case 'QUARTER':
-                    // Use the current quarter's end date
-                    const quarter = Math.floor(today.getMonth() / 3);
-                    const quarterEnd = new Date(today.getFullYear(), (quarter + 1) * 3, 0);
-                    return quarterEnd.toISOString().split('T')[0];
-                    
-                default:
-                    logger.warn({ reportType }, 'Unknown report type, using current date');
-                    return today.toISOString().split('T')[0];
-            }
-        } catch (error) {
-            logger.error({ 
-                error: error.message, 
-                reportType, 
-                timezone, 
-                useDenverTz 
-            }, 'Date calculation failed, using fallback');
-            
-            // Fallback to current date
-            return new Date().toISOString().split('T')[0];
-        }
-    }
-
+    
     /**
      * Validate date string format
      */

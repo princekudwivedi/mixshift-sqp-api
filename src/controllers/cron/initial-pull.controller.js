@@ -18,6 +18,7 @@ const asinInitialPull = require('../../models/sellerAsinList.initial.pull.model'
 const logger = require('../../utils/logger.utils');
 const env = require('../../config/env.config');
 const { CircuitBreaker, RateLimiter } = require('../../helpers/sqp.helpers');
+const { Op } = require('sequelize');
 
 class InitialPullController {
     constructor() {
@@ -106,9 +107,9 @@ class InitialPullController {
                     checkMemory: true,
                     checkEligibleAsins: true,
                     breakAfterFirst: true,
-                    sellerCallback: async (seller) => {
+                    sellerCallback: async (seller, userDetails) => {
                         // Process this seller
-                        await this._processSeller(seller, reportType);
+                        await this._processSeller(seller, userDetails);
                         return { processed: true, error: false, shouldBreak: true };
                     }
                 });
@@ -125,12 +126,12 @@ class InitialPullController {
     /**
      * Process single seller for initial pull
      */
-    async _processSeller(seller, reportType) {
+    async _processSeller(seller, userDetails) {
         try {
             logger.info({
                 sellerId: seller.idSellerAccount,
                 amazonSellerID: seller.AmazonSellerID,
-                reportType
+                userDetails
             }, 'Starting initial pull for seller');
 
             // 1. Get eligible ASINs            
@@ -145,15 +146,16 @@ class InitialPullController {
             }
 
             const datesUtils = require('../../utils/dates.utils');
-            const weekRange = datesUtils.getDateRangeForPeriod('WEEK');
-            const monthRange = datesUtils.getDateRangeForPeriod('MONTH');
-            const quarterRange = datesUtils.getDateRangeForPeriod('QUARTER');
+            const weekRange = datesUtils.getDateRangeForPeriod('WEEK', userDetails.Timezone);
+            const monthRange = datesUtils.getDateRangeForPeriod('MONTH', userDetails.Timezone);
+            const quarterRange = datesUtils.getDateRangeForPeriod('QUARTER', userDetails.Timezone);
             const FullWeekRange = `${weekRange.start} to ${weekRange.end}`;
             const FullMonthRange = `${monthRange.start} to ${monthRange.end}`;
             const FullQuarterRange = `${quarterRange.start} to ${quarterRange.end}`;
-
+            const userTimezone = userDetails.Timezone;
+            
             // 2. Create cron detail record
-            const cronDetailRow = await model.createSQPCronDetail(seller.AmazonSellerID, asinList.join(','), seller.idSellerAccount, { SellerName: seller.SellerName, FullWeekRange: FullWeekRange, FullMonthRange: FullMonthRange, FullQuarterRange: FullQuarterRange });
+            const cronDetailRow = await model.createSQPCronDetail(seller.AmazonSellerID, asinList.join(','), seller.idSellerAccount, { SellerName: seller.SellerName, FullWeekRange: FullWeekRange, FullMonthRange: FullMonthRange, FullQuarterRange: FullQuarterRange, Timezone: userTimezone, iInitialPull: 1 });
 
             logger.info({ cronDetailID: cronDetailRow.ID }, 'Cron detail created');
 
@@ -190,7 +192,8 @@ class InitialPullController {
                             authOverrides,
                             cronDetailID: cronDetailRow.ID,
                             model,
-                            isInitialPull: true
+                            isInitialPull: true,
+                            timezone: userDetails.Timezone
                         });
 
                         const reportID = result?.reportID || result?.data?.reportId;
@@ -229,7 +232,8 @@ class InitialPullController {
                 seller,
                 reportRequests,
                 asinList,
-                authOverrides
+                authOverrides,
+                userDetails.Timezone
             );
 
             logger.info({
@@ -249,16 +253,18 @@ class InitialPullController {
     /**
      * Check status and download all requested reports
      */
-    async _checkAndDownloadReports(cronDetailRow, seller, reportRequests, asinList, authOverrides) {
+    async _checkAndDownloadReports(cronDetailRow, seller, reportRequests, asinList, authOverrides, timezone) {
         try {
             logger.info({
                 cronDetailID: cronDetailRow.ID,
                 reportCount: reportRequests.length
             }, 'Checking status for all reports');
 
+            const statusCheckService = require('../../services/cron/status-check.service');
+
             for (const request of reportRequests) {
                 try {
-                    // Check status using ReportOperationsService
+                    // Check status using ReportOperationsService (handles retries internally)
                     const statusResult = await reportOps.checkReportStatus({
                         seller,
                         reportId: request.reportId,
@@ -268,7 +274,8 @@ class InitialPullController {
                         cronDetailID: cronDetailRow.ID,
                         model,
                         downloadUrls,
-                        isInitialPull: true
+                        isInitialPull: true,
+                        timezone: timezone
                     });
 
                     if (statusResult.status === 'DONE') {
@@ -290,15 +297,41 @@ class InitialPullController {
                         logger.info({
                             reportId: request.reportId,
                             type: request.type
-                        }, 'Report downloaded and imported successfully');
+                        }, 'Initial Pull - Report downloaded and imported successfully');
+                        
+                    } else if (statusResult.status === 'FATAL' || statusResult.status === 'CANCELLED') {
+                        // Fatal error - send notification
+                        logger.error({
+                            reportId: request.reportId,
+                            reportType: request.type,
+                            status: statusResult.status
+                        }, 'Initial Pull - Report processing failed with fatal status');
+                        
+                        await statusCheckService.sendFailureNotification(
+                            cronDetailRow.ID,
+                            seller.AmazonSellerID,
+                            request.type,
+                            `Initial Pull - Report status: ${statusResult.status}`,
+                            0,
+                            request.reportId,
+                            true // isFatalError
+                        );
+                    } else {
+                        // Other status (already handled by executeWithRetry)
+                        logger.info({
+                            reportId: request.reportId,
+                            reportType: request.type,
+                            status: statusResult.status
+                        }, 'Initial Pull - Report status check completed');
                     }
 
                 } catch (error) {
                     logger.error({
                         cronDetailID: cronDetailRow.ID,
+                        reportType: request.type,
                         reportId: request.reportId,
                         error: error.message
-                    }, 'Failed to process report');
+                    }, 'Initial Pull - Error processing report');
                 }
             }
 
@@ -321,7 +354,6 @@ class InitialPullController {
         try {
             const { getModel: getSqpCronDetails } = require('../../models/sequelize/sqpCronDetails.model');
             const { getModel: getSqpCronLogs } = require('../../models/sequelize/sqpCronLogs.model');
-            const { Op } = require('sequelize');
 
             const SqpCronDetails = getSqpCronDetails();
             const SqpCronLogs = getSqpCronLogs();
@@ -451,10 +483,74 @@ class InitialPullController {
      * Internal: Process retry for failed initial pulls
      */
     async _processRetryFailedInitialPull(userId, sellerId) {
-        // Implementation similar to _processInitialPull but for retry
-        // Uses same services
-        logger.info({ userId, sellerId }, 'Processing retry for failed initial pull');
-        // ... Implementation here
+        return initDatabaseContext(async () => {
+            try {
+                const statusCheckService = require('../../services/cron/status-check.service');
+                const { getModel: getSqpCronDetails } = require('../../models/sequelize/sqpCronDetails.model');
+                const SqpCronDetails = getSqpCronDetails();
+                
+                // Get failed initial pull crons
+                const whereClause = {
+                    iInitialPull: 1,
+                    cronRunningStatus: { [Op.in]: [2, 3] }, // Failed or retry marked
+                    [Op.or]: [
+                        { WeeklySQPDataPullStatus: 2 },
+                        { MonthlySQPDataPullStatus: 2 },
+                        { QuarterlySQPDataPullStatus: 2 }
+                    ]
+                };
+
+                if (sellerId) {
+                    whereClause.SellerID = sellerId;
+                }
+
+                const failedCrons = await SqpCronDetails.findAll({
+                    where: whereClause,
+                    order: [['dtCreatedOn', 'DESC']],
+                    limit: 50
+                });
+
+                logger.info({ 
+                    userId, 
+                    sellerId, 
+                    count: failedCrons.length 
+                }, 'Found failed initial pull crons for retry');
+
+                if (failedCrons.length === 0) {
+                    logger.info('No failed initial pull crons to retry');
+                    return;
+                }
+
+                // Process each failed cron
+                for (const cronDetail of failedCrons) {
+                    try {
+                        await statusCheckService.checkReportStatuses(
+                            {},
+                            {
+                                cronDetailID: cronDetail.ID,
+                                cronDetailData: [cronDetail.toJSON()]
+                            },
+                            true // retry mode
+                        );
+                    } catch (error) {
+                        logger.error({
+                            cronDetailID: cronDetail.ID,
+                            error: error.message
+                        }, 'Error retrying initial pull cron detail');
+                    }
+                }
+
+                logger.info({ 
+                    userId, 
+                    sellerId, 
+                    count: failedCrons.length 
+                }, 'Initial pull retry completed');
+
+            } catch (error) {
+                logger.error({ error: error.message, userId, sellerId }, 'Error in retry failed initial pull');
+                throw error;
+            }
+        });
     }
 
     /**

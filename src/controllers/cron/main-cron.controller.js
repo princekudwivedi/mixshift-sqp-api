@@ -18,7 +18,6 @@ const logger = require('../../utils/logger.utils');
 const env = require('../../config/env.config');
 const { CircuitBreaker, RateLimiter, DelayHelpers } = require('../../helpers/sqp.helpers');
 const { Op } = require('sequelize');
-
 class MainCronController {
     constructor() {
         this.circuitBreaker = new CircuitBreaker(
@@ -36,7 +35,7 @@ class MainCronController {
      * GET /api/v1/main-cron?userId=X&sellerId=Y
      */
     async runMainCron(req, res) {
-        try {
+        try {            
             const { userId, sellerId } = req.query;
 
             // Validate inputs
@@ -93,11 +92,9 @@ class MainCronController {
                     checkMemory: true,
                     checkEligibleAsins: true,
                     breakAfterFirst: true,
-                    sellerCallback: async (seller) => {
+                    sellerCallback: async (seller, userDetails) => {
                         // Process this seller
-                        //await this._processSeller(seller);
-                        logger.info({ seller }, 'Processing seller');
-                        logger.info({ totalProcessed, totalErrors, shouldBreak }, 'Seller result');
+                        await this._processSeller(seller, userDetails);
                         return { processed: true, error: false, shouldBreak: true };
                     }
                 });
@@ -114,7 +111,7 @@ class MainCronController {
     /**
      * Process single seller for main cron
      */
-    async _processSeller(seller) {
+    async _processSeller(seller, userDetails) {
         try {
             logger.info({
                 sellerId: seller.idSellerAccount,
@@ -133,26 +130,32 @@ class MainCronController {
             }
 
             const datesUtils = require('../../utils/dates.utils');
-            const weekRange = datesUtils.getDateRangeForPeriod('WEEK');
-			const monthRange = datesUtils.getDateRangeForPeriod('MONTH');
-			const quarterRange = datesUtils.getDateRangeForPeriod('QUARTER');
-			const FullWeekRange = `${weekRange.start} to ${weekRange.end}`;
-			const FullMonthRange = `${monthRange.start} to ${monthRange.end}`;
-			const FullQuarterRange = `${quarterRange.start} to ${quarterRange.end}`;
-			
+            const weekRange = datesUtils.getDateRangeForPeriod('WEEK', userDetails.Timezone);
+            const monthRange = datesUtils.getDateRangeForPeriod('MONTH', userDetails.Timezone);
+            const quarterRange = datesUtils.getDateRangeForPeriod('QUARTER', userDetails.Timezone);
+            const FullWeekRange = `${weekRange.start} to ${weekRange.end}`;
+            const FullMonthRange = `${monthRange.start} to ${monthRange.end}`;
+            const FullQuarterRange = `${quarterRange.start} to ${quarterRange.end}`;
+            
+            // Initialize variables
+            const userTimezone = userDetails.Timezone;
+            const authOverrides = await buildAuthWithRateLimit(seller);
+            const reportRequests = [];
 
             // 2. Create cron detail record
-            const cronDetailRow = await model.createSQPCronDetail(seller.AmazonSellerID, asinList.join(','), seller.idSellerAccount, { SellerName: seller.SellerName, FullWeekRange: FullWeekRange, FullMonthRange: FullMonthRange, FullQuarterRange: FullQuarterRange });
+            const cronDetailRow = await model.createSQPCronDetail(seller.AmazonSellerID, asinList.join(','), seller.idSellerAccount, { SellerName: seller.SellerName, FullWeekRange: FullWeekRange, FullMonthRange: FullMonthRange, FullQuarterRange: FullQuarterRange, Timezone: userTimezone, iInitialPull: 0 });
 
             logger.info({ cronDetailID: cronDetailRow.ID }, 'Cron detail created');
 
-            
-            // 3. Build auth overrides with rate limiting
-            const authOverrides = await buildAuthWithRateLimit(seller, this.rateLimiter);
-
-            // 4. Request reports for all types
             for (const reportType of reportTypeList) {
                 try {
+                    const datePeriod = datesUtils.getDateRangeForPeriod(reportType, userDetails.Timezone);
+                    const range = {
+                        start: datePeriod.start,
+                        end: datePeriod.end,
+                        range: `${datePeriod.start} to ${datePeriod.end}`
+                    };
+                    
                     // Use ReportOperationsService
                     const result = await reportOps.requestReport({
                         seller,
@@ -162,7 +165,8 @@ class MainCronController {
                         authOverrides,
                         cronDetailID: cronDetailRow.ID,
                         model,
-                        isInitialPull: true
+                        isInitialPull: false,
+                        timezone: userTimezone
                     });
 
                     const reportID = result?.reportID || result?.data?.reportId;
@@ -191,6 +195,20 @@ class MainCronController {
                 }
             }
 
+            // 3. Wait for reports to be ready
+            const initialDelay = Number(process.env.INITIAL_DELAY_SECONDS) || 30;
+            await this._wait(initialDelay);
+
+            // 4. Check status and download all reports
+            await this._checkAndDownloadReports(
+                cronDetailRow,
+                seller,
+                reportRequests,
+                asinList,
+                authOverrides,
+                userTimezone
+            );
+
             logger.info({
                 cronDetailID: cronDetailRow.ID,
                 amazonSellerID: seller.AmazonSellerID
@@ -203,58 +221,23 @@ class MainCronController {
             }, 'Error in _processSeller');
             throw error;
         }
-
-
-        // 8. Wait for reports to be ready
-        const initialDelay = Number(process.env.INITIAL_DELAY_SECONDS) || 30;
-        await this._wait(initialDelay);
-
-        // 9. Check status and download all reports
-        await this._checkAndDownloadReports(
-            cronDetailRow,
-            seller,
-            reportRequests,
-            asinList,
-            authOverrides
-        );
-
-        logger.info({
-            cronDetailID: cronDetailRow.ID,
-            amazonSellerID: seller.AmazonSellerID
-        }, 'Main cron completed for seller');
-    }
-
-    /**
-     * Get current date range for report type
-     */
-    _getCurrentRange(reportType) {
-        const now = new Date();
-        const dateUtils = require('../../utils/dates.utils');
-
-        if (reportType === 'WEEK') {
-            return dateUtils.getCurrentWeekRange();
-        } else if (reportType === 'MONTH') {
-            return dateUtils.getCurrentMonthRange();
-        } else if (reportType === 'QUARTER') {
-            return dateUtils.getCurrentQuarterRange();
-        }
-
-        throw new Error(`Unknown report type: ${reportType}`);
-    }
+    }    
 
     /**
      * Check status and download all reports
      */
-    async _checkAndDownloadReports(cronDetailRow, seller, reportRequests, asinList, authOverrides) {
+    async _checkAndDownloadReports(cronDetailRow, seller, reportRequests, asinList, authOverrides, timezone) {
         try {
             logger.info({
                 cronDetailID: cronDetailRow.ID,
                 reportCount: reportRequests.length
             }, 'Checking status for all reports');
             
+            const statusCheckService = require('../../services/cron/status-check.service');
+            
             for (const request of reportRequests) {
                 try {
-                    // Check status using ReportOperationsService
+                    // Check status using ReportOperationsService (handles retries internally)
                     const statusResult = await reportOps.checkReportStatus({
                         seller,
                         reportId: request.reportId,
@@ -264,7 +247,8 @@ class MainCronController {
                         cronDetailID: cronDetailRow.ID,
                         model,
                         downloadUrls,
-                        isInitialPull: false
+                        isInitialPull: false,
+                        timezone: timezone
                     });
                     
                     if (statusResult.status === 'DONE') {
@@ -287,20 +271,47 @@ class MainCronController {
                             reportId: request.reportId,
                             reportType: request.reportType
                         }, 'Report downloaded and imported successfully');
+                        
+                    } else if (statusResult.status === 'FATAL' || statusResult.status === 'CANCELLED') {
+                        // Fatal error - send notification
+                        logger.error({
+                            reportId: request.reportId,
+                            reportType: request.reportType,
+                            status: statusResult.status
+                        }, 'Report processing failed with fatal status');
+                        
+                        await statusCheckService.sendFailureNotification(
+                            cronDetailRow.ID,
+                            seller.AmazonSellerID,
+                            request.reportType,
+                            `Report status: ${statusResult.status}`,
+                            0,
+                            request.reportId,
+                            true // isFatalError
+                        );
+                    } else {
+                        // Other status (already handled by executeWithRetry)
+                        logger.info({
+                            reportId: request.reportId,
+                            reportType: request.reportType,
+                            status: statusResult.status
+                        }, 'Report status check completed');
                     }
+                    
                 } catch (error) {
                     logger.error({
                         cronDetailID: cronDetailRow.ID,
                         reportType: request.reportType,
+                        reportId: request.reportId,
                         error: error.message
-                    }, 'Failed to process report type');
+                    }, 'Error processing report');
                 }
             }
 
             logger.info({
                 cronDetailID: cronDetailRow.ID,
                 amazonSellerID: seller.AmazonSellerID
-            }, 'Main cron completed for seller');
+            }, 'Report status check and download completed');
 
         } catch (error) {
             logger.error({
@@ -355,10 +366,50 @@ class MainCronController {
             try {
                 // Use status check service
                 const statusCheckService = require('../../services/cron/status-check.service');
+                const { getModel: getSqpCronDetails } = require('../../models/sequelize/sqpCronDetails.model');
+                const SqpCronDetails = getSqpCronDetails();
                 
-                await statusCheckService.checkReportStatuses({}, { retryNotifications: true }, true);
-                
-                logger.info({ userId }, 'Notification retry completed');
+                // Get failed cron details that need retry
+                const failedCrons = await SqpCronDetails.findAll({
+                    where: {
+                        cronRunningStatus: { [Op.in]: [2, 3] }, // Failed or retry marked
+                        [Op.or]: [
+                            { WeeklySQPDataPullStatus: 2 },
+                            { MonthlySQPDataPullStatus: 2 },
+                            { QuarterlySQPDataPullStatus: 2 }
+                        ]
+                    },
+                    order: [['dtCreatedOn', 'DESC']],
+                    limit: 50
+                });
+
+                logger.info({ count: failedCrons.length }, 'Found failed crons for retry');
+
+                if (failedCrons.length === 0) {
+                    logger.info('No failed crons to retry');
+                    return;
+                }
+
+                // Process each failed cron
+                for (const cronDetail of failedCrons) {
+                    try {
+                        await statusCheckService.checkReportStatuses(
+                            {},
+                            {
+                                cronDetailID: cronDetail.ID,
+                                cronDetailData: [cronDetail.toJSON()]
+                            },
+                            true // retry mode
+                        );
+                    } catch (error) {
+                        logger.error({
+                            cronDetailID: cronDetail.ID,
+                            error: error.message
+                        }, 'Error retrying cron detail');
+                    }
+                }
+
+                logger.info({ userId, count: failedCrons.length }, 'Notification retry completed');
 
             } catch (error) {
                 logger.error({ error: error.message, userId }, 'Error in retry notifications');
@@ -367,71 +418,11 @@ class MainCronController {
         });
     }
 
-
     /**
-     * API Endpoint: Cleanup old records
-     * POST /api/v1/cleanup
+     * Wait helper method
      */
-    async cleanup(req, res) {
-        try {
-            logger.info('Cleanup triggered');
-
-            // Process cleanup in background
-            this._performCleanup()
-                .catch(error => {
-                    logger.error({ error: error.message }, 'Error in cleanup background process');
-                });
-
-            return SuccessHandler.sendSuccess(res, {
-                message: 'Cleanup started',
-                processing: 'Background cleanup initiated'
-            }, 'Cleanup started successfully');
-
-        } catch (error) {
-            logger.error({ error: error.message }, 'Error starting cleanup');
-            return ErrorHandler.sendError(res, error, 'Failed to start cleanup');
-        }
-    }
-
-    /**
-     * Internal: Perform cleanup
-     */
-    async _performCleanup() {
-        return initDatabaseContext(async () => {
-            try {
-                const { getModel: getSqpCronDetails } = require('../../models/sequelize/sqpCronDetails.model');
-                const { getModel: getSqpCronLogs } = require('../../models/sequelize/sqpCronLogs.model');
-                const SqpCronDetails = getSqpCronDetails();
-                const SqpCronLogs = getSqpCronLogs();
-
-                const thirtyDaysAgo = new Date();
-                thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-
-                // Delete old cron details
-                const deletedDetails = await SqpCronDetails.destroy({
-                    where: {
-                        cronRunningStatus: 2,
-                        dtUpdatedOn: { [Op.lte]: thirtyDaysAgo }
-                    }
-                });
-
-                // Delete old cron logs
-                const deletedLogs = await SqpCronLogs.destroy({
-                    where: {
-                        dtCreatedOn: { [Op.lte]: thirtyDaysAgo }
-                    }
-                });
-
-                logger.info({
-                    deletedDetails,
-                    deletedLogs
-                }, 'Cleanup completed');
-
-            } catch (error) {
-                logger.error({ error: error.message }, 'Error in cleanup');
-                throw error;
-            }
-        });
+    async _wait(seconds) {
+        return new Promise(resolve => setTimeout(resolve, seconds * 1000));
     }
 }
 

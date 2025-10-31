@@ -8,6 +8,8 @@ const logger = require('../../utils/logger.utils');
 const model = require('../../models/sqp.cron.model');
 const sp = require('../../spapi/client.spapi');
 const downloadUrls = require('../../models/sqp.download.urls.model');
+const sellerModel = require('../../models/sequelize/seller.model');
+const authService = require('../../services/auth.service');
 const { RetryHelpers } = require('../../helpers/sqp.helpers');
 const { getModel: getSqpCronDetails } = require('../../models/sequelize/sqpCronDetails.model');
 const { getModel: getSqpCronLogs } = require('../../models/sequelize/sqpCronLogs.model');
@@ -114,7 +116,8 @@ class StatusCheckService {
             action: 'Check Status',
             context: { row, reportType, reportId, retry },
             model,
-            maxRetries: 3,
+            maxRetries: Number(process.env.RETRY_MAX_ATTEMPTS) || 5,
+            sendFailureNotification: this.sendFailureNotification.bind(this),
             operation: async ({ attempt, currentRetry, context, startTime }) => {
                 const { row, reportType, reportId } = context;
 
@@ -160,7 +163,49 @@ class StatusCheckService {
                     logger.info({ 
                         reportId, 
                         documentId 
-                    }, 'Report ready for download');
+                    }, 'Report ready for download - starting download process');
+
+                    // Now download the report
+                    const reportOps = require('./report-operations.service');
+                    const jsonSvc = require('../sqp.json.processing.service');
+                    
+                    try {
+                        await reportOps.downloadReport({
+                            seller,
+                            reportId,
+                            documentId,
+                            range: { range: 'N/A' }, // Range not available in retry context
+                            reportType,
+                            authOverrides: currentAuthOverrides,
+                            cronDetailID: row.ID,
+                            model,
+                            downloadUrls,
+                            jsonSvc,
+                            isInitialPull: false,
+                            retry: true
+                        });
+
+                        logger.info({ 
+                            reportId, 
+                            documentId 
+                        }, 'Report downloaded and imported successfully');
+
+                    } catch (downloadErr) {
+                        logger.error({ 
+                            error: downloadErr.message,
+                            reportId,
+                            documentId
+                        }, 'Failed to download report after status check');
+                        
+                        // Don't throw - let retry mechanism handle it
+                        return {
+                            success: false,
+                            status: 'DOWNLOAD_FAILED',
+                            error: downloadErr.message,
+                            reportId,
+                            documentId
+                        };
+                    }
 
                     return {
                         success: true,
@@ -168,13 +213,72 @@ class StatusCheckService {
                         documentId,
                         reportId
                     };
+                    
+                } else if (status === 'IN_QUEUE' || status === 'IN_PROGRESS' || status === 'PROCESSING') {
+                    // Report still processing - calculate delay and trigger retry
+                    const { DelayHelpers } = require('../../helpers/sqp.helpers');
+                    const delaySeconds = DelayHelpers.calculateBackoffDelay(attempt, `Delay for ${status}`);
+                    
+                    // Log the status
+                    await model.logCronActivity({
+                        cronJobID: row.ID,
+                        reportType,
+                        action: 'Check Status',
+                        status: 0,
+                        message: `Report ${status.toLowerCase().replace('_', ' ')} on attempt ${attempt}, waiting ${delaySeconds}s before retry`,
+                        reportID: reportId,
+                        retryCount: currentRetry,
+                        executionTime: (Date.now() - startTime) / 1000
+                    });
+                    
+                    logger.info({ 
+                        reportId, 
+                        status, 
+                        attempt, 
+                        delaySeconds
+                    }, `Report still processing, waiting ${delaySeconds}s before retry`);
+                    
+                    // Wait before retrying
+                    await DelayHelpers.wait(delaySeconds, `Before retry ${status}`);
+                    
+                    // Throw error to trigger retry mechanism
+                    throw new Error(`Report still ${status.toLowerCase().replace('_', ' ')} after ${delaySeconds}s wait - retrying`);
+                    
+                } else if (status === 'FATAL' || status === 'CANCELLED') {
+                    // Fatal or cancelled status
+                    logger.error({ reportId, status }, `Report failed with ${status} status`);
+                    
+                    await model.logCronActivity({
+                        cronJobID: row.ID,
+                        reportType,
+                        action: 'Check Status',
+                        status: 2,
+                        message: `Report ${status}: No retries attempted`,
+                        reportID: reportId,
+                        retryCount: currentRetry,
+                        executionTime: (Date.now() - startTime) / 1000
+                    });
+                    
+                    return {
+                        success: false,
+                        status,
+                        message: `Report ${status}`,
+                        reportId,
+                        noRetryNeeded: true
+                    };
+                    
+                } else {
+                    // Unknown status
+                    const unknownStatus = status || 'UNKNOWN';
+                    logger.warn({ reportId, status: unknownStatus }, 'Unknown report status');
+                    
+                    return {
+                        success: false,
+                        status: unknownStatus,
+                        message: `Unknown status: ${unknownStatus}`,
+                        reportId
+                    };
                 }
-
-                return {
-                    success: false,
-                    status,
-                    message: `Report still ${status}`
-                };
             }
         });
 

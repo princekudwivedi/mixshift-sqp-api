@@ -6,18 +6,25 @@ const logger = require('./utils/logger.utils');
 const apiRoutes = require('./routes/api.routes');
 const { AsyncErrorHandler } = require('./middleware/response.handlers');
 const { addConnectionStats, getHealthCheckData } = require('./middleware/connection.monitor');
-const { corsOriginValidator } = require('./utils/security.utils');
+const { generateCorsConfig } = require('./utils/security.utils');
 
 const app = express();
 
 // Security middleware
 app.use(helmet());
 
-app.use(cors({
-    origin: corsOriginValidator,
-    credentials: true
-}));
-
+// Secure CORS configuration - NEVER allows wildcard in production
+try {
+    const corsConfig = generateCorsConfig(process.env.ALLOWED_ORIGINS);
+    app.use(cors(corsConfig));
+    logger.info({ 
+        environment: process.env.NODE_ENV || 'development',
+        corsConfigured: !!process.env.ALLOWED_ORIGINS 
+    }, 'CORS middleware configured');
+} catch (error) {
+    logger.error({ error: error.message }, 'Failed to configure CORS');
+    process.exit(1);
+}
 // Compression middleware
 app.use(compression());
 

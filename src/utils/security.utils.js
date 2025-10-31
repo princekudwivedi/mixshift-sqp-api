@@ -1,137 +1,276 @@
 /**
  * Security Utilities
- * Minimal security functions for sensitive data handling
+ * Handles log sanitization, input validation, and security-related functions
  */
+
+const logger = require('./logger.utils');
 
 /**
- * Mask sensitive seller ID (show first 2 and last 2 characters)
- * @param {string} sellerID - Seller ID to mask
- * @returns {string} - Masked seller ID
+ * Sensitive fields that should be sanitized from logs
  */
-function maskSellerID(sellerID) {
-    if (!sellerID || typeof sellerID !== 'string' || sellerID.length <= 4) {
-        return '***';
-    }
-    return `${sellerID.substring(0, 2)}***${sellerID.substring(sellerID.length - 2)}`;
-}
+const SENSITIVE_FIELDS = [
+    'password',
+    'accessToken',
+    'access_token',
+    'refreshToken',
+    'refresh_token',
+    'secret',
+    'apiKey',
+    'api_key',
+    'token',
+    'authorization',
+    'auth',
+    'creditCard',
+    'ssn',
+    'privateKey',
+    'private_key',
+    'clientSecret',
+    'client_secret'
+];
 
 /**
- * Sanitize log data - masks sensitive fields
- * @param {Object} data - Data to sanitize
- * @returns {Object} - Sanitized data
+ * Sensitive patterns to redact (partial masking)
  */
-function sanitizeLogData(data) {
-    if (!data || typeof data !== 'object') {
-        return data;
+const PARTIAL_MASK_FIELDS = [
+    'email',
+    'phone',
+    'phoneNumber',
+    'amazonSellerID'
+];
+
+/**
+ * Sanitize object for logging - removes or masks sensitive data
+ * @param {Object} obj - Object to sanitize
+ * @param {boolean} deep - Whether to perform deep sanitization
+ * @returns {Object} - Sanitized object
+ */
+function sanitizeForLogging(obj, deep = true) {
+    if (!obj || typeof obj !== 'object') {
+        return obj;
     }
 
-    const sanitized = { ...data };
-    
-    // Mask seller IDs
-    if (sanitized.amazonSellerID) {
-        sanitized.amazonSellerID = maskSellerID(sanitized.amazonSellerID);
+    if (Array.isArray(obj)) {
+        return obj.map(item => sanitizeForLogging(item, deep));
     }
-    if (sanitized.AmazonSellerID) {
-        sanitized.AmazonSellerID = maskSellerID(sanitized.AmazonSellerID);
-    }
-    
-    // Redact tokens and secrets
-    const redactFields = ['accessToken', 'access_token', 'refreshToken', 'refresh_token', 
-                          'password', 'secret', 'apiKey', 'api_key', 'token'];
-    
-    for (const field of redactFields) {
-        if (field in sanitized) {
-            sanitized[field] = '[REDACTED]';
+
+    const sanitized = {};
+
+    for (const [key, value] of Object.entries(obj)) {
+        const lowerKey = key.toLowerCase();
+
+        // Check if field should be completely redacted
+        if (SENSITIVE_FIELDS.some(field => lowerKey.includes(field.toLowerCase()))) {
+            sanitized[key] = '[REDACTED]';
+            continue;
+        }
+
+        // Check if field should be partially masked
+        if (PARTIAL_MASK_FIELDS.some(field => lowerKey.includes(field.toLowerCase()))) {
+            sanitized[key] = maskSensitiveData(value);
+            continue;
+        }
+
+        // Deep sanitization for nested objects
+        if (deep && value && typeof value === 'object') {
+            sanitized[key] = sanitizeForLogging(value, deep);
+        } else {
+            sanitized[key] = value;
         }
     }
-    
+
     return sanitized;
 }
 
 /**
- * Validate Amazon Seller ID format
+ * Mask sensitive data (show first/last few characters)
+ * @param {string} value - Value to mask
+ * @returns {string} - Masked value
+ */
+function maskSensitiveData(value) {
+    if (!value || typeof value !== 'string') {
+        return value;
+    }
+
+    if (value.length <= 6) {
+        return '***';
+    }
+
+    // Show first 2 and last 2 characters
+    return `${value.substring(0, 2)}***${value.substring(value.length - 2)}`;
+}
+
+/**
+ * Sanitize error for client response
+ * Removes stack traces and sensitive information in production
+ * @param {Error} error - Error object
+ * @param {boolean} includeStack - Whether to include stack trace (development only)
+ * @returns {Object} - Sanitized error object
+ */
+function sanitizeError(error, includeStack = false) {
+    const isProduction = process.env.NODE_ENV === 'production';
+    
+    const sanitized = {
+        message: error.message || 'An error occurred'
+    };
+
+    // Only include stack trace in development if explicitly allowed
+    if (!isProduction && includeStack && error.stack) {
+        // Sanitize stack trace to remove file system paths that could leak info
+        sanitized.stack = error.stack
+            .split('\n')
+            .map(line => line.replace(/\(.*[\\/]/, '('))  // Remove file paths
+            .join('\n');
+    }
+
+    // Include error name if available
+    if (error.name && error.name !== 'Error') {
+        sanitized.name = error.name;
+    }
+
+    // For specific error types, include relevant info
+    if (error.code) {
+        sanitized.code = error.code;
+    }
+
+    return sanitized;
+}
+
+/**
+ * Validate seller ID format
  * @param {string} sellerID - Seller ID to validate
- * @returns {boolean} - True if valid
+ * @returns {Object} - Validation result
  */
-function isValidSellerID(sellerID) {
+function validateSellerID(sellerID) {
     if (!sellerID || typeof sellerID !== 'string') {
-        return false;
+        return {
+            valid: false,
+            error: 'Seller ID is required and must be a string'
+        };
     }
-    // Amazon Seller IDs: A[0-9A-Z]{12,14}
-    return /^A[0-9A-Z]{12,14}$/.test(sellerID);
+
+    // Amazon Seller IDs typically follow pattern: A[0-9A-Z]{12,14}
+    const sellerIDPattern = /^A[0-9A-Z]{12,14}$/;
+    
+    if (!sellerIDPattern.test(sellerID)) {
+        return {
+            valid: false,
+            error: 'Invalid Seller ID format'
+        };
+    }
+
+    return { valid: true };
 }
 
 /**
- * Get allowed user IDs from environment
- * @returns {Array<number>} - Array of allowed user IDs
+ * Safe logger wrapper that automatically sanitizes sensitive data
+ * @param {string} level - Log level (info, error, warn, debug)
+ * @param {Object} data - Data to log
+ * @param {string} message - Log message
  */
-function getAllowedUsers() {
-    const envUsers = process.env.ALLOWED_USER_IDS;
-    if (!envUsers) {
-        throw new Error('ALLOWED_USER_IDS not configured in environment');
-    }
-    return envUsers.split(',').map(id => parseInt(id.trim(), 10)).filter(id => !isNaN(id));
+function safeLog(level, data, message) {
+    const sanitizedData = sanitizeForLogging(data);
+    logger[level](sanitizedData, message);
 }
 
 /**
- * Check if user is allowed
- * @param {number} userId - User ID to check
- * @returns {boolean} - True if allowed
+ * Validate and sanitize request parameters
+ * @param {Object} params - Request parameters
+ * @param {Array<string>} required - Required parameter names
+ * @returns {Object} - Validation result
  */
-function isUserAllowed(userId) {
-    try {
-        const allowed = getAllowedUsers();
-        return allowed.includes(parseInt(userId, 10));
-    } catch (error) {
-        // In production, deny access if configuration is missing
-        if (process.env.NODE_ENV === 'production') {
-            return false;
+function validateRequestParams(params, required = []) {
+    const errors = [];
+    const sanitized = {};
+
+    for (const key of required) {
+        if (!params[key]) {
+            errors.push(`${key} is required`);
+        } else {
+            // Basic XSS prevention - strip HTML tags
+            if (typeof params[key] === 'string') {
+                sanitized[key] = params[key].replace(/<[^>]*>/g, '').trim();
+            } else {
+                sanitized[key] = params[key];
+            }
         }
     }
+
+    return {
+        valid: errors.length === 0,
+        errors,
+        sanitized
+    };
 }
 
 /**
- * Secure CORS origin validator
- * @param {string} origin - Origin to validate
- * @param {Function} callback - Callback function
+ * Check if CORS origin is allowed
+ * @param {string} origin - Origin to check
+ * @param {string} allowedOrigins - Comma-separated list of allowed origins
+ * @returns {boolean} - Whether origin is allowed
  */
-function corsOriginValidator(origin, callback) {
-    const allowedOrigins = process.env.ALLOWED_ORIGINS;
-    
-    // Production: MUST have configured origins
-    if (process.env.NODE_ENV === 'production') {
+function isOriginAllowed(origin, allowedOrigins) {
+    if (!allowedOrigins) {
+        return false; // Never allow if not configured
+    }
+
+    const allowed = allowedOrigins.split(',').map(o => o.trim());
+    return allowed.includes(origin);
+}
+
+/**
+ * Generate safe CORS configuration
+ * @param {string} allowedOrigins - Comma-separated allowed origins from env
+ * @returns {Object} - CORS configuration
+ */
+function generateCorsConfig(allowedOrigins) {
+    const isProduction = process.env.NODE_ENV === 'production';
+
+    // In production, NEVER allow wildcard
+    if (isProduction) {
         if (!allowedOrigins) {
-            return callback(new Error('CORS not configured for production'));
+            logger.error('ALLOWED_ORIGINS not configured in production!');
+            throw new Error('CORS origins must be explicitly configured in production');
         }
-        
-        const allowed = allowedOrigins.split(',').map(o => o.trim());
-        
-        // Allow requests with no origin (mobile apps, curl, etc)
-        if (!origin || allowed.includes(origin)) {
-            return callback(null, true);
-        }
-        
-        return callback(new Error('Not allowed by CORS'));
+
+        return {
+            origin: function (origin, callback) {
+                // Allow requests with no origin (mobile apps, curl, etc)
+                if (!origin) {
+                    return callback(null, true);
+                }
+
+                if (isOriginAllowed(origin, allowedOrigins)) {
+                    callback(null, true);
+                } else {
+                    logger.warn({ origin }, 'CORS request from unauthorized origin');
+                    callback(new Error('Not allowed by CORS'));
+                }
+            },
+            credentials: true,
+            optionsSuccessStatus: 200
+        };
     }
+
+    // In development, use configured origins or localhost
+    const devOrigins = allowedOrigins || 'http://localhost:3000,http://localhost:3001';
     
-    // Development: Use configured or safe defaults
-    const devAllowed = allowedOrigins 
-        ? allowedOrigins.split(',').map(o => o.trim())
-        : ['http://localhost:3000', 'http://localhost:3001'];
-    
-    if (!origin || devAllowed.includes(origin)) {
-        return callback(null, true);
-    }
-    
-    callback(null, true); // Allow in development
+    return {
+        origin: devOrigins.split(',').map(o => o.trim()),
+        credentials: true,
+        optionsSuccessStatus: 200
+    };
 }
 
 module.exports = {
-    maskSellerID,
-    sanitizeLogData,
-    isValidSellerID,
-    getAllowedUsers,
-    isUserAllowed,
-    corsOriginValidator
+    sanitizeForLogging,
+    maskSensitiveData,
+    sanitizeError,
+    validateSellerID,
+    safeLog,
+    validateRequestParams,
+    isOriginAllowed,
+    generateCorsConfig,
+    SENSITIVE_FIELDS,
+    PARTIAL_MASK_FIELDS
 };
 

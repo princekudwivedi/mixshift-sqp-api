@@ -28,11 +28,11 @@ async function handleReportCompletion(cronJobID, reportType, amazonSellerID = nu
 			hasData,
 			dataLength: Array.isArray(jsonData) ? jsonData.length : 0
 		});
-
+		
 		// 🧩 Step 1: Fetch cron details
-		const SqpCronDetails = getSqpCronDetails();
-		const cronDetail = await SqpCronDetails.findOne({ 
-			where: { ID: cronJobID }, 
+			const SqpCronDetails = getSqpCronDetails();
+			const cronDetail = await SqpCronDetails.findOne({ 
+				where: { ID: cronJobID }, 
 			attributes: [
 				'AmazonSellerID',
 				'SellerID',
@@ -51,16 +51,16 @@ async function handleReportCompletion(cronJobID, reportType, amazonSellerID = nu
 		let finalAmazonSellerID = amazonSellerID || cronDetail.AmazonSellerID;
 		let cronAsins = [];
 
-		if (cronDetail.ASIN_List) {
-			cronAsins = cronDetail.ASIN_List.split(/\s+/).filter(Boolean).map(a => a.trim());
-		}
-
+				if (cronDetail.ASIN_List) {
+					cronAsins = cronDetail.ASIN_List.split(/\s+/).filter(Boolean).map(a => a.trim());
+				}
+				
 		console.log(`✅ Retrieved cron details`, { 
-			cronJobID, 
-			amazonSellerID: finalAmazonSellerID, 
+					cronJobID, 
+					amazonSellerID: finalAmazonSellerID, 
 			asinCount: cronAsins.length
-		});
-
+				});
+		
 		// 🧩 Step 2: Update Download URL Process Status
 		const SqpDownloadUrls = getSqpDownloadUrls();
 		const latest = await SqpDownloadUrls.findOne({
@@ -69,18 +69,18 @@ async function handleReportCompletion(cronJobID, reportType, amazonSellerID = nu
 		});
 
 		if (latest && !hasData) {
-			await downloadUrls.updateProcessStatusById(latest.ID, 'SUCCESS', {
-				ProcessAttempts: 1,
-				LastProcessAt: new Date(),
-				fullyImported: 1
-			});
+				await downloadUrls.updateProcessStatusById(latest.ID, 'SUCCESS', {
+					ProcessAttempts: 1,
+					LastProcessAt: new Date(),
+					fullyImported: 1
+				});
 			console.log(`✅ Marked download URL as SUCCESS (no data)`);
 		}
-
+		
 		// 🧩 Step 3: Update Cron detail process statuses
 		await model.setProcessRunningStatus(cronJobID, reportType, 4);
-		await model.updateSQPReportStatus(cronJobID, reportType, 1, undefined, new Date(), 2);
-
+		await model.updateSQPReportStatus(cronJobID, reportType, 1, undefined, new Date(), 2);		
+		
 		const SqpModel = reportType === 'WEEK' ? getSqpWeekly()
 			: reportType === 'MONTH' ? getSqpMonthly()
 			: reportType === 'QUARTER' ? getSqpQuarterly()
@@ -130,7 +130,7 @@ async function handleReportCompletion(cronJobID, reportType, amazonSellerID = nu
 					maxRange,
 					isDataAvailable
 				});
-
+				
 				await updateSellerAsinLatestRanges({
 					cronJobID,
 					amazonSellerID: finalAmazonSellerID,
@@ -154,26 +154,26 @@ async function handleReportCompletion(cronJobID, reportType, amazonSellerID = nu
 
 		// 🧩 Step 6: Update ASIN-level completion status
 		const statusForThisReport = 2; // 2 = completed
-		const endTime = new Date();
+				const endTime = new Date();
 
-		await model.ASINsBySellerUpdated(
+				await model.ASINsBySellerUpdated(
 			sellerId,
-			finalAmazonSellerID, 
-			cronAsins, 
-			statusForThisReport, 
-			reportType,  
+					finalAmazonSellerID, 
+					cronAsins, 
+					statusForThisReport, 
+					reportType,  
 			null,        // startTime already set earlier
 			endTime
-		);
+				);
 
 		console.log(`✅ Updated ${reportType} ASIN status`, {
-			cronJobID,
-			reportType,
-			asinCount: cronAsins.length,
-			status: statusForThisReport,
-			endTime: endTime.toISOString()
-		});
-
+					cronJobID,
+					reportType,
+					asinCount: cronAsins.length,
+					status: statusForThisReport,
+					endTime: endTime.toISOString()
+				});	
+				
 		console.log(`🎯 Successfully handled report completion for ${reportType}`, { 
 			cronJobID, 
 			reportType, 
@@ -183,7 +183,7 @@ async function handleReportCompletion(cronJobID, reportType, amazonSellerID = nu
 		});
 
 		return true;
-
+		
 	} catch (error) {
 		console.error(`🚨 Failed to handle report completion for ${reportType}:`, error.message, { 
 			cronJobID, 
@@ -254,9 +254,6 @@ async function saveReportJsonFile(download, jsonContent) {
  */
 async function parseAndStoreJsonData(download, jsonContent, filePath, reportDateOverride) {
 	try {
-		// Get the report date based on the report type (fallback)
-		const defaultReportDate = DateHelpers.getReportDateForPeriod(download.ReportType);
-
 		let records = [];
 		
 		// Handle different JSON shapes
@@ -278,7 +275,7 @@ async function parseAndStoreJsonData(download, jsonContent, filePath, reportDate
         let minRange = null;
         let maxRange = null;
 		for (const record of records) {
-			const row = buildMetricsRow(download, defaultReportDate, record, filePath, reportDateOverride);
+			const row = buildMetricsRow(download, record, filePath, reportDateOverride);
 			if (row) rows.push(row);
             const s = record.startDate || null;
             const e = record.endDate || null;
@@ -346,7 +343,7 @@ async function importJsonWithRetry(download, jsonContent, filePath, reportDateOv
 /**
  * Store a single report record in the database
  */
-function buildMetricsRow(download, reportDate, record, filePath, reportDateOverride) {
+function buildMetricsRow(download, record, filePath, reportDateOverride) {
 	try {
 		// SQP structured fields
 		const startDate = record.startDate || null;
@@ -371,7 +368,7 @@ function buildMetricsRow(download, reportDate, record, filePath, reportDateOverr
 		return {
 			AmazonSellerID: amazonSellerID,
 			SellerID: sellerID,
-			ReportDate: reportDateOverride || endDate || reportDate,
+			ReportDate: reportDateOverride || endDate,
 			StartDate: startDate,
 			EndDate: endDate,
 			CurrencyCode: currencyCode,
@@ -459,7 +456,7 @@ async function updateSellerAsinLatestRanges({
         }, 'updateSellerAsinLatestRanges: Missing required parameters - SKIPPING UPDATE');
         return;
     }
-
+    
     // Determine column names based on report type
     const colMap = {
         WEEK: 'LatestRecordDateRangeWeekly',
@@ -478,7 +475,7 @@ async function updateSellerAsinLatestRanges({
         logger.warn({ reportType }, 'Invalid reportType - SKIPPING UPDATE');
         return;
     }
-
+    
     const rangeStr = minRange && maxRange ? `${minRange} - ${maxRange}` : null;
 
     // Fetch cron details for SellerID (if needed)
@@ -491,7 +488,7 @@ async function updateSellerAsinLatestRanges({
         logger.error({ cronJobID, error: error.message }, 'Error fetching cron details');
         return null;
     });
-
+    
     const sellerID = cronRow?.SellerID || null;
 
     // Update ASIN-wise
@@ -505,10 +502,10 @@ async function updateSellerAsinLatestRanges({
     if (sellerID) where.SellerID = sellerID;
 
     logger.info({
-        amazonSellerID,
+        amazonSellerID, 
         reportType,
-        column: col,
-        rangeStr,
+        column: col, 
+        rangeStr, 
         IsDataAvailable,
         asins: jsonAsins.slice(0, 5),
         where

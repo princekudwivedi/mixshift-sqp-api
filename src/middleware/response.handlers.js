@@ -1,5 +1,5 @@
 const logger = require('../utils/logger.utils');
-const { sanitizeLogData } = require('../utils/security.utils');
+const { sanitizeForLogging, sanitizeError } = require('../utils/security.utils');
 
 /**
  * Success response handler
@@ -93,18 +93,24 @@ class ErrorHandler {
      * Send error response
      */
     static sendError(res, error, message = 'An error occurred', statusCode = 500) {
+        // Sanitize error for client response
+        const sanitizedError = sanitizeError(error, process.env.NODE_ENV !== 'production');
+        
         const response = {
             success: false,
             message,
-            error: error.message || error,
-            timestamp: new Date().toISOString()
+            error: sanitizedError.message,
+            timestamp: new Date().toISOString(),
+            // Only include stack in non-production AND if enabled
+            ...(process.env.NODE_ENV !== 'production' && process.env.ENABLE_STACK_TRACES === 'true' && { stack: sanitizedError.stack })
         };
 
-        logger.error(sanitizeLogData({ 
+        // Log full error details server-side (sanitized)
+        logger.error(sanitizeForLogging({ 
             statusCode, 
             message, 
             error: error.message || error,
-            errorName: error.name
+            stack: error.stack 
         }), 'Error response sent');
 
         return res.status(statusCode).json(response);
@@ -206,12 +212,15 @@ class ErrorHandler {
             message,
             error: 'Database operation failed',
             timestamp: new Date().toISOString()
+            // Never expose database error details to client
         };
 
-        logger.error(sanitizeLogData({ 
+        // Log full error details server-side (sanitized)
+        logger.error(sanitizeForLogging({ 
             error: error.message,
             message,
-            code: error.code
+            code: error.code,
+            sql: error.sql ? '[REDACTED]' : undefined
         }), 'Database error response sent');
 
         return res.status(500).json(response);
@@ -269,8 +278,8 @@ class AsyncErrorHandler {
      * Global error handler middleware
      */
     static globalErrorHandler(err, req, res, next) {
-        //Sanitize error logs
-        logger.error(sanitizeLogData({
+        // Log the error (sanitized)
+        logger.error(sanitizeForLogging({
             error: err.message,
             url: req.url,
             method: req.method,

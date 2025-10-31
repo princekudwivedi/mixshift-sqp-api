@@ -6,6 +6,7 @@
 const { SuccessHandler, ErrorHandler } = require('../../middleware/response.handlers');
 const { initDatabaseContext } = require('../../db/tenant.db');
 const ValidationUtils = require('../../utils/validation.utils');
+const { validateSellerID, sanitizeForLogging } = require('../../utils/security.utils');
 const asinSyncService = require('../../services/cron/asin-sync.service');
 const logger = require('../../utils/logger.utils');
 
@@ -18,17 +19,20 @@ class AsinSyncController {
         try {
             const { userId, amazonSellerID } = req.params;
 
-            // Validate inputs
+            // Validate user ID
             const userValidation = ValidationUtils.validateUserId(userId);
             if (!userValidation.valid) {
                 return ErrorHandler.sendValidationError(res, [userValidation.error]);
             }
 
-            if (!amazonSellerID) {
-                return ErrorHandler.sendValidationError(res, ['Amazon Seller ID is required']);
+            // Validate Amazon Seller ID format (prevents injection)
+            const sellerValidation = validateSellerID(amazonSellerID);
+            if (!sellerValidation.valid) {
+                return ErrorHandler.sendValidationError(res, [sellerValidation.error]);
             }
 
-            logger.info({ userId, amazonSellerID }, 'ASIN sync triggered');
+            // Use sanitized logging
+            logger.info(sanitizeForLogging({ userId, amazonSellerID }), 'ASIN sync triggered');
 
             // Process sync in background
             asinSyncService.syncSellerAsins(userId, amazonSellerID)

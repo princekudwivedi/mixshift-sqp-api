@@ -5,6 +5,8 @@
 
 const logger = require('../../utils/logger.utils');
 const { Op } = require('sequelize');
+const DateTime = require('luxon');
+const model = require('../../models/sqp.cron.model');
 
 class AsinManagementService {
     /**
@@ -15,10 +17,10 @@ class AsinManagementService {
     async getEligibleAsins({ sellerId, isInitialPull = false, limit = null }) {
         try {
 
-            const { asins, reportTypes } = await model.getActiveASINsBySeller(sellerId);
+            const { asins, reportTypes } = await model.getActiveASINsBySeller(sellerId, isInitialPull);
             if (!asins.length) {
                 logger.warn({ sellerId }, 'No eligible ASINs for seller (pending or ${env.MAX_DAYS_AGO}+ day old completed)');
-                return [];
+                return { asins: [], reportTypes: [] };
             }
             logger.info({
                 sellerId,
@@ -26,7 +28,10 @@ class AsinManagementService {
                 count: asins.length
             }, 'Retrieved eligible ASINs');
 
-            return [...asins.map(a => a.ASIN), ...reportTypes];
+            return {
+                asins: asins.map(a => a.ASIN),
+                reportTypes: reportTypes
+            };
             
         } catch (error) {
             logger.error({
@@ -46,7 +51,7 @@ class AsinManagementService {
      */
     async hasEligibleAsins(sellerId, isInitialPull = false) {
         try {
-            const asins = await this.getEligibleAsins({ 
+            const { asins, reportTypes } = await this.getEligibleAsins({ 
                 sellerId, 
                 isInitialPull, 
                 limit: 1 

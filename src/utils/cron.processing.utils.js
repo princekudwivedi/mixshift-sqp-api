@@ -61,8 +61,6 @@ async function processUsers(validatedUserId, userCallback, options = {}) {
 
             // Execute user callback
             const result = await userCallback(user);
-            logger.info({ result }, 'User result');
-            logger.info({ totalProcessed, totalErrors, shouldBreak }, 'User result');
             if (result.processed) totalProcessed++;
             if (result.error) totalErrors++;
             if (result.shouldBreak) {
@@ -99,7 +97,8 @@ async function processSellers(validatedSellerId, sellerCallback, options = {}) {
         checkEligibleAsins = true,
         isInitialPull = false,
         pullAll = 0,
-        breakAfterFirst = false
+        breakAfterFirst = false,
+        userDetails = null
     } = options;
 
     const sellers = validatedSellerId
@@ -146,9 +145,7 @@ async function processSellers(validatedSellerId, sellerCallback, options = {}) {
             }, 'Processing seller');
 
             // Execute seller callback
-            const result = await sellerCallback(seller);
-            logger.info({ result }, 'Seller result');
-            logger.info({ totalProcessed, totalErrors, shouldBreak }, 'Seller result');
+            const result = await sellerCallback(seller, userDetails);            
             if (result.processed) totalProcessed++;
             if (result.error) totalErrors++;
             if (result.shouldBreak) {
@@ -159,8 +156,7 @@ async function processSellers(validatedSellerId, sellerCallback, options = {}) {
             if (breakAfterFirst && result.processed) {
                 shouldBreak = true;
                 break;
-            }
-
+            }            
         } catch (sellerError) {
             totalErrors++;
             logger.error({
@@ -168,6 +164,7 @@ async function processSellers(validatedSellerId, sellerCallback, options = {}) {
                 error: sellerError.message
             }, 'Error processing seller');
         }
+        break;
     }
 
     return { totalProcessed, totalErrors, shouldBreak };
@@ -255,7 +252,8 @@ async function processUserSellerCombination(options) {
                     checkEligibleAsins,
                     isInitialPull,
                     pullAll,
-                    breakAfterFirst
+                    breakAfterFirst,
+                    userDetails: user
                 }
             );
 
