@@ -429,11 +429,19 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 				const requestDelaySeconds = Number(process.env.REQUEST_DELAY_SECONDS) || 30;
 				await DelayHelpers.wait(requestDelaySeconds, 'Between report status checks and downloads (rate limiting)');
 
+				// ProcessRunningStatus = 3 (Download)
+                await model.setProcessRunningStatus(row.ID, reportType, 3);
+                
+				const downloadResult = await downloadReportByType(row, reportType, authOverrides, reportId);
+
+				//await model.logCronActivity({ cronJobID: row.ID, reportType, action: downloadResult?.action ? downloadResult?.action : 'Check Status and Download Report', status: 1, message: downloadResult?.message ? downloadResult?.message : `Report ready on attempt ${attempt}. Report ID: ${reportId}${documentId ? ' | Document ID: ' + documentId : ''}`, reportID: reportId, reportDocumentID: documentId });
 				return {
-					message: `Report ready on attempt ${attempt}. Report ID: ${reportId}${documentId ? ' | Document ID: ' + documentId : ''}`,
+					message: downloadResult?.message ? downloadResult?.message : `Report ready on attempt ${attempt}. Report ID: ${reportId}${documentId ? ' | Document ID: ' + documentId : ''}`,
+					action: downloadResult?.action ? downloadResult?.action : 'Check Status and Download Report',
 					reportID: reportId,
 					reportDocumentID: documentId,
-					data: { status, documentId }
+					data: { status, documentId },
+					skipped: true
 				};
 				
 			} else if (status === 'IN_QUEUE' || status === 'IN_PROGRESS') {				
@@ -493,48 +501,6 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 	return result;
 }
 
-async function downloadCompletedReports(authOverrides = {}, filter = {}, retry = false) {    
-	const { cronDetailID, cronDetailData } = filter;
-	const rows = cronDetailData;	
-    for (const row of rows) {
-		let loop = [];
-		if (retry && filter.reportType) {
-			loop = [filter.reportType];
-		} else {
-			loop = await model.getReportsForStatusType(row, retry);
-		}
-		logger.info({ loop }, `Loop download ${cronDetailID}`);
-        for (const type of loop) {
-			const statusField = `${model.mapPrefix(type)}SQPDataPullStatus`;
-            const processStatusField = row[statusField];
-            
-            // Skip download if:
-            // - Status is 3 (failed/FATAL)
-            // - Status is not 0 or 2 when in retry mode
-            if (processStatusField === 3) {
-                logger.info({ 
-                    cronDetailID: row.ID, 
-                    reportType: type,
-                    status: processStatusField 
-                }, 'Skipping download - report status is FAILED (3)');
-                continue;
-            }
-            
-            if (processStatusField === 0 || (retry && processStatusField === 2 && processStatusField !== 3)) {
-                const reportId = await model.getLatestReportId(row.ID, type);
-                if (!reportId) {
-                    await model.logCronActivity({ cronJobID: row.ID, reportType: type, action: 'Download Report', status: 3, message: 'Skipping download: ReportID not found in logs', reportID: null, retryCount: 0, executionTime: 0 });
-                    continue;
-                }
-                // ProcessRunningStatus = 3 (Download)
-                await model.setProcessRunningStatus(row.ID, type, 3);
-                await model.logCronActivity({ cronJobID: row.ID, reportType: type, action: 'Download Report', status: 1, message: 'Downloading report', reportID: reportId });
-                await downloadReportByType(row, type, authOverrides, reportId);
-            }
-        }
-    }
-}
-
 async function downloadReportByType(row, reportType, authOverrides = {}, reportId = null) {
     if (!reportId) {
         reportId = await model.getLatestReportId(row.ID, reportType);
@@ -587,7 +553,20 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
         	await DelayHelpers.wait(requestDelaySeconds, 'Between report download and status check (rate limiting)');
 
 			// First get report status to ensure we have the latest reportDocumentId
-			const statusRes = await sp.getReportStatus(seller, reportId, currentAuthOverrides);
+			let statusRes;
+			try {
+				statusRes = await sp.getReportStatus(seller, reportId, currentAuthOverrides);
+			} catch (err) {
+				const status = err.status || err.statusCode || err.response?.status;
+				if (status === 401 || status === 403) {
+					const refreshed = await authService.buildAuthOverrides(seller.AmazonSellerID, true);
+					if (!refreshed.accessToken) {				
+						logger.error({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request');
+						throw new Error('No access token available for report request after forced refresh');
+					}
+					statusRes = await sp.getReportStatus(seller, reportId, refreshed);
+				}
+			}
 			
 			logger.info({ status: statusRes.processingStatus, reportDocumentId: statusRes.reportDocumentId, attempt }, 'Report status check');
 			
@@ -682,7 +661,7 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 						}
 					}
 					return {
-						action: 'Download Completed - Import Done',
+						action: 'Download Completed & Import Done',
 						message: `Report downloaded successfully on attempt ${attempt} and import process completed`,
 						reportID: reportId,
 						reportDocumentID: documentId,
@@ -714,7 +693,7 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 					await jsonSvc.handleReportCompletion(row.ID, reportType, row.AmazonSellerID, null, false);
 					
 					return {
-						action: 'Download Completed - No Data to import',
+						action: 'Download Completed & Import Done - No Data to import',
 						message: `Report downloaded on attempt ${attempt} but contains no data`,
 						reportID: reportId,
 						reportDocumentID: documentId,
@@ -824,7 +803,6 @@ async function handleFatalOrUnknownStatus(row, reportType, status) {
 module.exports = {
 	requestForSeller,
 	checkReportStatuses,
-	downloadCompletedReports,
 	sendFailureNotification,
 };
 

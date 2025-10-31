@@ -174,19 +174,7 @@ class SqpCronApiController {
                                         } catch (error) {
                                             logger.error({ error: error.message, cronDetailID: cronDetailIDs }, 'Error checking report statuses (scoped)');
                                             totalErrors++;
-                                        }
-
-                                        // Step 3: Download with circuit breaker protection
-                                        try {
-                                            await this.circuitBreaker.execute(
-                                                () => ctrl.downloadCompletedReports(authOverrides, { cronDetailID: cronDetailIDs, cronDetailData: cronDetailData }),
-                                                { sellerId: s.idSellerAccount, operation: 'downloadCompletedReports' }
-                                            );
-                                            totalProcessed++;
-                                        } catch (error) {
-                                            logger.error({ error: error.message, cronDetailID: cronDetailIDs }, 'Error downloading reports (scoped)');
-                                            totalErrors++;
-                                        }
+                                        }                                        
                                     }
                                     
                                     logger.info({ 
@@ -726,20 +714,6 @@ class SqpCronApiController {
             res = await ctrl.checkReportStatuses(authOverrides, { cronDetailID: [record.ID], reportType: reportType, cronDetailData: [record] }, true);
         } catch (e) {
             logger.error({ id: record.ID, reportType, error: e.message }, 'Retry status check failed');
-        }
-        // Check if status check was successful AND not skipped (e.g., FATAL errors are skipped)
-        if(res && res[0] && res[0].success && !res[0].data?.handled) {
-            try {
-                await ctrl.downloadCompletedReports(authOverrides, { cronDetailID: [record.ID], reportType: reportType, cronDetailData: [record] }, true);
-            } catch (e) {
-                logger.error({ id: record.ID, reportType, error: e.message }, 'Retry download failed');
-            }
-        } else if (res && res[0] && res[0].data?.handled) {
-            logger.info({ 
-                id: record.ID, 
-                reportType,
-                status: res[0].data?.status 
-            }, 'Status check returned handled error (FATAL/CANCELLED) - skipping download');
         }
         
         // Re-fetch status and finalize
