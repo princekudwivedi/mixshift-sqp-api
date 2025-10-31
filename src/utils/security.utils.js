@@ -70,7 +70,7 @@ function getAllowedUsers() {
     if (!envUsers) {
         throw new Error('ALLOWED_USER_IDS not configured in environment');
     }
-    return envUsers.split(',').map(id => parseInt(id.trim(), 10)).filter(id => !isNaN(id));
+    return envUsers;
 }
 
 /**
