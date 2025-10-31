@@ -18,15 +18,10 @@ function toInt(value, defaultValue) {
     return Number.isFinite(parsed) ? parsed : defaultValue;
 }
 
-function isProduction() {
-    return String(env('NODE_ENV', 'development')).toLowerCase() === 'production';
-}
-
 const config = {
     // Application
     NODE_ENV: env('NODE_ENV', 'development'),
     PORT: toInt(env('PORT', '3001'), 3001),
-    API_VERSION: env('API_VERSION', 'v1'),
     
     // Database
     DB_HOST: env('DB_HOST', 'localhost'),
@@ -34,17 +29,9 @@ const config = {
     DB_USER: env('DB_USER', 'root'),
     DB_PASS: env('DB_PASS', ''),
     DB_NAME: env('DB_NAME', 'sqp_database'),
-    
-    // JWT
-    JWT_SECRET: env('JWT_SECRET'),
-    JWT_EXPIRES_IN: env('JWT_EXPIRES_IN', '24h'),
-    JWT_REFRESH_EXPIRES_IN: env('JWT_REFRESH_EXPIRES_IN', '7d'),
-
-    // API Token (for cron endpoints)
-    API_ACCESS_TOKEN: env('API_ACCESS_TOKEN'),
-
+        
     // CORS
-    ALLOWED_ORIGINS: env('ALLOWED_ORIGINS', 'http://localhost:3000,http://localhost:3001'),
+    ALLOWED_ORIGINS: env('ALLOWED_ORIGINS', ''),
     
     // AWS Configuration
     AWS_ACCESS_KEY_ID: env('AWS_ACCESS_KEY_ID'),
@@ -53,9 +40,9 @@ const config = {
     AWS_STS_REGION: env('AWS_STS_REGION', 'us-east-1'),
     
     // Amazon SP API
-    AMAZON_SP_API_BASE_URL: env('AMAZON_SP_API_BASE_URL', 'https://sellingpartnerapi-na.amazon.com'),
-    AMAZON_SP_API_ASIA_BASE_URL: env('AMAZON_SP_API_ASIA_BASE_URL', 'https://sellingpartnerapi-fe.amazon.com'),
-    AMAZON_SP_API_EUROPE_BASE_URL: env('AMAZON_SP_API_EUROPE_BASE_URL', 'https://sellingpartnerapi-eu.amazon.com'),
+    AMAZON_SP_API_BASE_URL: env('AMAZON_SP_API_BASE_URL', ''),
+    AMAZON_SP_API_ASIA_BASE_URL: env('AMAZON_SP_API_ASIA_BASE_URL', ''),
+    AMAZON_SP_API_EUROPE_BASE_URL: env('AMAZON_SP_API_EUROPE_BASE_URL', ''),
     LWA_CLIENT_ID: env('LWA_CLIENT_ID'),
     LWA_CLIENT_SECRET: env('LWA_CLIENT_SECRET'),
     
@@ -106,8 +93,7 @@ const config = {
     
     // Security
     BCRYPT_ROUNDS: toInt(env('BCRYPT_ROUNDS', '12'), 12),
-    SESSION_SECRET: env('SESSION_SECRET'),
-
+    
     // report Types
     GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT: env('GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT', 'GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT'),
     MAX_ASINS_PER_REQUEST: toInt(env('MAX_ASINS_PER_REQUEST', '15'), 15),
@@ -123,15 +109,8 @@ const config = {
     MAX_MEMORY_USAGE_MB: toInt(env('MAX_MEMORY_USAGE_MB', '500'), 500),
     MAX_JSON_SIZE_MB: toInt(env('MAX_JSON_SIZE_MB', '50'), 50),
     
-    // Retry settings
-    MAX_RETRIES: toInt(env('MAX_RETRIES', '3'), 3),
-    RETRY_BASE_DELAY_MS: toInt(env('RETRY_BASE_DELAY_MS', '1000'), 1000),
-    RETRY_MAX_DELAY_MS: toInt(env('RETRY_MAX_DELAY_MS', '30000'), 30000),
+    // Retry settings    
     INITIAL_DELAY_SECONDS: toInt(env('INITIAL_DELAY_SECONDS', '30'), 30),
-    
-    // Rate limiting
-    API_RATE_LIMIT_PER_MINUTE: toInt(env('API_RATE_LIMIT_PER_MINUTE', '60'), 60),
-    RATE_LIMIT_WINDOW_MS: toInt(env('RATE_LIMIT_WINDOW_MS', '60000'), 60000),
     
     // Circuit breaker
     CIRCUIT_BREAKER_THRESHOLD: toInt(env('CIRCUIT_BREAKER_THRESHOLD', '5'), 5),
@@ -148,49 +127,5 @@ const config = {
     MONTHS_TO_PULL: toInt(env('MONTHS_TO_PULL'), 2),
     QUARTERS_TO_PULL: toInt(env('QUARTERS_TO_PULL'), 2),
 };
-
-// Validation
-const requiredEnvVars = [
-    'DB_HOST',
-    'DB_USER',
-    'DB_NAME',
-    'JWT_SECRET'
-];
-
-const missingVars = requiredEnvVars.filter(varName => !config[varName]);
-
-if (missingVars.length > 0) {
-    console.error('Missing required environment variables:', missingVars);
-    process.exit(1);
-}
-
-// Production hardening checks
-if (isProduction()) {
-    const defaultSecrets = [
-        'your-super-secret-jwt-key-change-in-production',
-        'your-session-secret-change-in-production'
-    ];
-
-    if (!config.JWT_SECRET || defaultSecrets.includes(config.JWT_SECRET)) {
-        console.error('Security error: JWT_SECRET must be set to a strong value in production.');
-        process.exit(1);
-    }
-    if (!config.SESSION_SECRET || defaultSecrets.includes(config.SESSION_SECRET)) {
-        console.error('Security error: SESSION_SECRET must be set to a strong value in production.');
-        process.exit(1);
-    }
-
-    // Enforce strict CORS allowlist in production
-    const allowedOrigins = (config.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
-    if (allowedOrigins.length === 0 || allowedOrigins.includes('*')) {
-        console.error('Security error: ALLOWED_ORIGINS must be a non-empty, explicit list in production.');
-        process.exit(1);
-    }
-
-    // Recommend DB password in production
-    if (!config.DB_PASS || config.DB_PASS === '') {
-        console.warn('Warning: DB_PASS is empty in production. Consider setting a strong database password.');
-    }
-}
 
 module.exports = { env, ...config };

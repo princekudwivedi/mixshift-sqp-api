@@ -1,9 +1,8 @@
 const express = require('express');
 const router = express.Router();
-// Using refactored controllers
-const initialPullController = require('../controllers/cron/initial-pull.controller');
-const mainCronController = require('../controllers/cron/main-cron.controller');
-const asinSyncController = require('../controllers/cron/asin-sync.controller');
+const logger = require('../utils/logger.utils');
+const sqpCronApiController = require('../controllers/sqp.cron.api.controller');
+const initialPullController = require('../controllers/initial.pull.controller');
 const AuthMiddleware = require('../middleware/auth.middleware');
 
 // Apply shared middleware to all routes
@@ -33,7 +32,7 @@ router.get('/cron/sqp/initial/retry', (req, res) => initialPullController.retryF
 
 // Shared error handling middleware for all routes
 router.use((err, req, res, next) => {
-    console.error('API route error:', err);
+    logger.error({ error: err.message, path: req.path }, 'API route error');
     res.status(500).json({
         success: false,
         message: 'Internal server error',
