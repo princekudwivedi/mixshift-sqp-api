@@ -249,8 +249,6 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 			
 			logger.info({ reportId, attempt }, 'Report created successfully');
 			
-			// Update with reportId but preserve the start date
-			await model.updateSQPReportStatus(cronDetailID, reportType, 0, startDate);
 			// Log report creation so status checker can fetch ReportID from logs
 			await model.logCronActivity({
 				cronJobID: cronDetailID,
@@ -343,6 +341,8 @@ async function checkReportStatuses(authOverrides = {}, filter = {}, retry = fals
         }
     }
 
+    // Finalize cronRunningStatus after status checks
+    try { if (cronDetailID) await finalizeCronRunningStatus(cronDetailID); } catch (_) {}
     return retry ? res : undefined;
 }
 
@@ -424,7 +424,7 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 					MaxDownloadAttempts: 3,
 				});
                 // Log report ID and document ID in cron logs
-                await model.logCronActivity({ cronJobID: row.ID, reportType, action: 'Check Status', status: 1, message: 'Report ready', reportID: reportId, reportDocumentID: documentId });
+                await model.logCronActivity({ cronJobID: row.ID, reportType, action: 'Download Report', status: 1, message: 'Report ready', reportID: reportId, reportDocumentID: documentId });
 				
 				const requestDelaySeconds = Number(process.env.REQUEST_DELAY_SECONDS) || 30;
 				await DelayHelpers.wait(requestDelaySeconds, 'Between report status checks and downloads (rate limiting)');
@@ -433,8 +433,6 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
                 await model.setProcessRunningStatus(row.ID, reportType, 3);
                 
 				const downloadResult = await downloadReportByType(row, reportType, authOverrides, reportId);
-
-				//await model.logCronActivity({ cronJobID: row.ID, reportType, action: downloadResult?.action ? downloadResult?.action : 'Check Status and Download Report', status: 1, message: downloadResult?.message ? downloadResult?.message : `Report ready on attempt ${attempt}. Report ID: ${reportId}${documentId ? ' | Document ID: ' + documentId : ''}`, reportID: reportId, reportDocumentID: documentId });
 				return {
 					message: downloadResult?.message ? downloadResult?.message : `Report ready on attempt ${attempt}. Report ID: ${reportId}${documentId ? ' | Document ID: ' + documentId : ''}`,
 					action: downloadResult?.action ? downloadResult?.action : 'Check Status and Download Report',
@@ -723,7 +721,8 @@ async function handleFatalOrUnknownStatus(row, reportType, status) {
     const statusToSet = 3; // Failed status
     const endDate = new Date();
     
-    await model.updateSQPReportStatus(row.ID, reportType, statusToSet, null, endDate);
+    // Fatal should mark cron as completed (2) with failed SQP status (3); no retry
+    await model.updateSQPReportStatus(row.ID, reportType, statusToSet, null, endDate, 2);
     
     logger.fatal({ 
         cronDetailID: row.ID, 
@@ -736,7 +735,7 @@ async function handleFatalOrUnknownStatus(row, reportType, status) {
         cronJobID: row.ID,
         reportType,
         action: 'Fatal Error',  // Changed from 'Check Status' to 'Fatal Error'
-        status: 2,              // Keep status 2 (error/failed)
+        status: 3,              // Keep status 3 (error/failed)
         message: `Report ${status} - Permanent failure`,
         reportID: reportId,
         retryCount: 0,
@@ -798,6 +797,40 @@ async function handleFatalOrUnknownStatus(row, reportType, status) {
         reportID: reportId,
         data: { status, handled: true }
     };
+}
+
+// Finalize cronRunningStatus for a cron detail based on type statuses
+async function finalizeCronRunningStatus(cronDetailID) {
+    try {
+        const { getModel: getSqpCronDetails } = require('../models/sequelize/sqpCronDetails.model');
+        const SqpCronDetails = getSqpCronDetails();
+        const row = await SqpCronDetails.findOne({ where: { ID: cronDetailID }, raw: true });
+        if (!row) return;
+
+        const weekly = row.WeeklySQPDataPullStatus;
+        const monthly = row.MonthlySQPDataPullStatus;
+        const quarterly = row.QuarterlySQPDataPullStatus;
+
+        const statuses = [weekly, monthly, quarterly];
+        const anyFatal = statuses.some(s => s === 3);
+        const allDone = statuses.every(s => s === 1);
+        const needsRetry = statuses.some(s => s === 2);
+
+        // Priority: if any retryable exists -> 3; else if all done -> 2; else if only fatal(s) -> 2; else unchanged
+        let newStatus = row.cronRunningStatus;
+        if (needsRetry) {
+            newStatus = 3;
+        } else if (allDone) {
+            newStatus = 2;
+        } else if (anyFatal) {
+            newStatus = 2;
+        }
+        if (newStatus !== row.cronRunningStatus) {
+            await SqpCronDetails.update({ cronRunningStatus: newStatus, dtUpdatedOn: new Date() }, { where: { ID: cronDetailID } });
+        }
+    } catch (e) {
+        logger.error({ cronDetailID, error: e.message }, 'Failed to finalize cronRunningStatus');
+    }
 }
 
 module.exports = {

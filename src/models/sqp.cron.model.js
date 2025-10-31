@@ -711,37 +711,6 @@ async function checkCronDetailsOfSellersByDate(
     }
 }
 
-
-/**
- * Comprehensive error handling that updates both cron details and logs
- */
-async function handleCronError(cronDetailID, amazonSellerID, reportType, action, error, reportId = null) {
-    const prefix = mapPrefix(reportType);
-    
-    try {
-        // Update status to error (2)
-        await updateSQPReportStatus(cronDetailID, reportType, 2, null, new Date());
-
-        // Log to cron logs
-        await logCronActivity({
-            cronJobID: cronDetailID,
-            reportType: reportType,
-            action: action,
-            status: 2,
-            message: `${action} failed: ${error.message}`,
-            reportID: reportId,
-            retryCount: 0,
-            executionTime: 0
-        });
-        
-        console.log(`Error handled for ID ${cronDetailID}, type ${reportType}`);
-        
-    } catch (logError) {
-        console.error(`Failed to handle cron error for ID ${cronDetailID}:`, logError);
-        throw logError;
-    }
-}
-
 /**
  * Lightweight in-table retry counters using sqp_cron_logs.RetryCount
  * We record the latest retry count per CronJobID+ReportType by finding the most recent log row.
@@ -790,7 +759,6 @@ module.exports = {
     logCronActivity,
     setProcessRunningStatus,    
     checkCronDetailsOfSellersByDate,
-    handleCronError,
     getRetryCount,
     incrementRetryCount,
     ASINsBySellerUpdated,

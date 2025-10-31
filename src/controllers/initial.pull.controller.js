@@ -430,328 +430,231 @@ class InitialPullController {
         return result;
     }
 
-    /**
-     * Check status for all initial pull reports (Phase 2)
-     */
     async _checkAllInitialPullStatuses(cronDetailRow, seller, reportRequests, asinList = null, authOverrides = {}, retry = false) {
         try {
-            logger.info({ 
+          logger.info({
+            cronDetailID: cronDetailRow.ID,
+            totalReports: reportRequests.length
+          }, 'Checking status for all initial pull reports');
+      
+          // Count totals per type
+          const totalWeek = reportRequests.filter(r => r.type === 'WEEK').length;
+          const totalMonth = reportRequests.filter(r => r.type === 'MONTH').length;
+          const totalQuarter = reportRequests.filter(r => r.type === 'QUARTER').length;
+      
+          let doneWeek = 0, doneMonth = 0, doneQuarter = 0;
+          let totalSuccess = 0, totalFailed = 0;
+      
+          for (const request of reportRequests) {
+            if (!request.reportId) {
+              logger.warn({
                 cronDetailID: cronDetailRow.ID,
-                totalReports: reportRequests.length 
-            }, 'Checking status for all initial pull reports');
-            
-            // Track overall success/failure
-            let totalSuccess = 0;
-            let totalFailed = 0;
-            // Check status for each report individually with its specific reportId
-            for (const request of reportRequests) {
-                if (!request.reportId) {
-                    logger.warn({ 
-                        cronDetailID: cronDetailRow.ID,
-                        reportType: request.type,
-                        range: request.range.range
-                    }, 'No report ID found for request');
-                    totalFailed++;
-                    continue;
-                }
-                
-                logger.info({ 
-                    reportType: request.type,
-                    reportId: request.reportId,
-                    range: request.range.range 
-                }, 'Checking status for initial pull report');
-                
-                try {
-                    await this.circuitBreaker.execute(
-                        () => this._checkInitialPullReportStatus(
-                            cronDetailRow.ID,
-                            seller,
-                            request.reportId,
-                            request.range,
-                            request.type,
-                            authOverrides,
-                            retry
-                        ),
-                        { sellerId: seller.idSellerAccount, operation: 'checkInitialPullReportStatus' }
-                    );
-
-                    const requestDelaySeconds = Number(process.env.REQUEST_DELAY_SECONDS) || 30;
-                    await DelayHelpers.wait(requestDelaySeconds, 'Between report status checks (rate limiting)');
-
-                    totalSuccess++;
-                } catch (error) {
-                    logger.error({ 
-                        cronDetailID: cronDetailRow.ID,
-                        reportType: request.type,
-                        reportId: request.reportId,
-                        range: request.range.range,
-                        error: error.message 
-                    }, 'Failed to check initial pull report status');
-                    totalFailed++;
-                }
+                reportType: request.type,
+                range: request.range.range
+              }, 'No report ID found for request');
+              totalFailed++;
+              continue;
             }
-            
-            // Update status per report type and overall ASIN status
+      
+            logger.info({
+              reportType: request.type,
+              reportId: request.reportId,
+              range: request.range.range
+            }, 'Checking status for initial pull report');
+      
             try {
-                await this._updateInitialPullFinalStatus(cronDetailRow.ID, seller.AmazonSellerID, asinList);
-            } catch (statusError) {
-                logger.error({
-                    error: statusError.message,
-                    amazonSellerID: seller.AmazonSellerID
-                }, 'Failed to update initial pull status');
+              await this.circuitBreaker.execute(
+                () => this._checkInitialPullReportStatus(
+                  cronDetailRow.ID,
+                  seller,
+                  request.reportId,
+                  request.range,
+                  request.type,
+                  authOverrides,
+                  retry
+                ),
+                { sellerId: seller.idSellerAccount, operation: 'checkInitialPullReportStatus' }
+              );
+      
+              totalSuccess++;
+      
+              // Count completed by type
+              if (request.type === 'WEEK') doneWeek++;
+              if (request.type === 'MONTH') doneMonth++;
+              if (request.type === 'QUARTER') doneQuarter++;
+      
+              // 🕒 Delay to respect API limits
+              const delaySeconds = Number(process.env.REQUEST_DELAY_SECONDS) || 30;
+              await DelayHelpers.wait(delaySeconds, 'Between report status checks (rate limiting)');
+      
+              // ✅ Check if all of a type are processed → update pull status
+              if (request.type === 'WEEK' && doneWeek === totalWeek) {
+                await this._checkAndUpdateTypeCompletion(cronDetailRow.ID, 'WEEK');
+              } else if (request.type === 'MONTH' && doneMonth === totalMonth) {
+                await this._checkAndUpdateTypeCompletion(cronDetailRow.ID, 'MONTH');
+              } else if (request.type === 'QUARTER' && doneQuarter === totalQuarter) {
+                await this._checkAndUpdateTypeCompletion(cronDetailRow.ID, 'QUARTER');
+              }
+      
+            } catch (error) {
+              logger.error({
+                cronDetailID: cronDetailRow.ID,
+                reportType: request.type,
+                reportId: request.reportId,
+                range: request.range.range,
+                error: error.message
+              }, 'Failed to check initial pull report status');
+              totalFailed++;
             }
-            
+          }
+      
+          // Final summary update (for all types)
+          await this._updateInitialPullFinalStatus(cronDetailRow.ID, seller.AmazonSellerID, asinList);
+      
         } catch (error) {
-            logger.error({ error: error.message }, 'Error in _checkAllInitialPullStatuses');
+          logger.error({ error: error.message }, 'Error in _checkAllInitialPullStatuses');
         }
     }
+      
+    async _checkAndUpdateTypeCompletion(cronDetailID, type) {
+        const { done, fatal, progress, total } = await this.analyzeReports(cronDetailID, type);
+        let pull = 2; // default in-progress
+      
+        if (done === total) {
+          pull = 1; // ✅ all done
+        } else if (fatal === total) {
+          pull = 3; // ❌ all fatal
+        } else if ((done > 0 && progress > 0) || (progress > 0 && fatal > 0)) {
+          pull = 2; // ⚙️ mixed state (some done + some progress/fatal)
+        } else if(done > 0 && fatal > 0){
+          pull = 3; // ❌ some done and some fatal
+        }
+      
+        await this.updateStatus(cronDetailID, type, pull);
+    }
 
+    // analyze logs and determine counts
+    async analyzeReports(cronDetailID, type) {
+        const SqpCronLogs = getSqpCronLogs();
+        const logs = await SqpCronLogs.findAll({
+            where: { CronJobID: cronDetailID, ReportType: type, iInitialPull: 1, ReportID: { [Op.ne]: null } },
+            attributes: ['ReportID', 'Status', 'Action', 'Message'],
+            order: [['dtUpdatedOn', 'DESC']]
+        });
+        
+        const uniqueIDs = [...new Set(logs.map(l => l.ReportID))];
+        let done = 0, fatal = 0, progress = 0, fatalIDs = [];
+        
+        for (const id of uniqueIDs) {
+            const rLogs = logs.filter(l => l.ReportID === id);
+            const latest = rLogs[0];
+            const isDone = rLogs.some(l => l.Status === 1);
+            const isFatal = rLogs.some(l => /FATAL|CANCELLED/.test(l.Message || ''));
+            const isInProgress = !isDone && !isFatal && (latest.Status === 0 || latest.Status === 2 || /Failure Notification/.test(latest.Message || ''));
+        
+            if (isDone) done++;
+            else if (isFatal) { fatal++; fatalIDs.push(id); }
+            else if (isInProgress) progress++;
+        }
+        
+        return { done, fatal, progress, total: uniqueIDs.length, fatalIDs };
+    }
+    
+    // update status in DB
+    async updateStatus(cronDetailID, type, pull) {
+        const SqpCronDetails = getSqpCronDetails();
+        const prefix = model.mapPrefix(type);
+        await SqpCronDetails.update(
+            { [`${prefix}SQPDataPullStatus`]: pull, [`${prefix}SQPDataPullEndDate`]: new Date() },
+            { where: { ID: cronDetailID } }
+        );
+    }
+    
     /**
-     * Update final status per report type based on all report results
-     * Implements complex logic for determining status based on completion/failure/in-progress counts
-     * Works for both initial pull and retry - automatically fetches all data from logs
+     * Final overall update after all reports processed
      */
     async _updateInitialPullFinalStatus(cronDetailID, amazonSellerID, asinList) {
         try {
-            const SqpCronDetails = getSqpCronDetails();
-            const SqpCronLogs = getSqpCronLogs();
-            
-            // Get all report requests for this cronDetail from logs
-            const allLogs = await SqpCronLogs.findAll({
-                where: {
-                    CronJobID: cronDetailID,
-                    iInitialPull: 1,
-                    ReportID: { [Op.ne]: null }
-                },
-                attributes: ['ReportID', 'ReportType', 'Range'],
-                group: ['ReportID', 'ReportType', 'Range']
-            });
-            
-            // Convert logs to reportRequests format
-            const reportRequests = allLogs.map(log => ({
-                reportId: log.ReportID,
-                type: log.ReportType,
-                range: { range: log.Range }
-            }));
-            let SellerID = '';
-            
-            const cronDetail = await SqpCronDetails.findOne({
-                where: { ID: cronDetailID },
-                attributes: ['ASIN_List', 'AmazonSellerID', 'SellerID']
-            });
-
-            if (cronDetail) {
-                // Get ASIN list if not provided
-                if (!asinList || asinList.length === 0) {
-                    asinList = asinList && asinList.length ? asinList : (cronDetail.ASIN_List?.split(/\s+/).filter(Boolean) || []);
-                }
-                amazonSellerID = amazonSellerID || cronDetail.AmazonSellerID;
-                SellerID = cronDetail.SellerID;
+          const SqpCronDetails = getSqpCronDetails();
+          const SqpCronLogs = getSqpCronLogs();
+      
+          const cronDetail = await SqpCronDetails.findOne({
+            where: { ID: cronDetailID },
+            attributes: ['ASIN_List', 'AmazonSellerID', 'SellerID']
+          });
+          if (!cronDetail) return;
+      
+          asinList = asinList?.length
+            ? asinList
+            : cronDetail.ASIN_List?.split(/\s+/).filter(Boolean) || [];
+          amazonSellerID = amazonSellerID || cronDetail.AmazonSellerID;
+          const SellerID = cronDetail.SellerID;
+      
+          // Fetch all logs
+          const allLogs = await SqpCronLogs.findAll({
+            where: { CronJobID: cronDetailID, iInitialPull: 1, ReportID: { [Op.ne]: null } },
+            attributes: ['ReportID', 'ReportType', 'Range'],
+            group: ['ReportID', 'ReportType', 'Range']
+          });
+      
+          const reportRequests = allLogs.map(l => ({
+            reportId: l.ReportID,
+            type: l.ReportType,
+            range: { range: l.Range }
+          }));
+      
+          const typeGroups = ['WEEK', 'MONTH', 'QUARTER'].reduce((acc, t) => {
+            acc[t] = reportRequests.filter(r => r.type === t);
+            return acc;
+          }, {});
+      
+          let overallAsinStatus = 2;
+      
+          for (const type of Object.keys(typeGroups)) {
+            const requests = typeGroups[type];
+            if (!requests.length) continue;
+      
+            const { done, fatal, progress, total } = await this.analyzeReports(cronDetailID, type);
+            let pull = 2;
+      
+            if (done === total) {
+              pull = 1;
+            } else if (fatal === total) {
+              pull = 3;
+            } else if ((done > 0 && progress > 0) || (progress > 0 && fatal > 0)) {
+              pull = 2;
+            } else if(done > 0 && fatal > 0){
+              pull = 3;
             }
-            // Group requests by type
-            const typeGroups = {
-                WEEK: reportRequests.filter(r => r.type === 'WEEK'),
-                MONTH: reportRequests.filter(r => r.type === 'MONTH'),
-                QUARTER: reportRequests.filter(r => r.type === 'QUARTER')
-            };
-            
-            let overallAsinStatus = 2; // Default to completed
-            
-            // Check each report type
-            for (const [reportType, requests] of Object.entries(typeGroups)) {
-                if (requests.length === 0) continue;
-                
-                const prefix = model.mapPrefix(reportType);
-                
-                // Get all logs for this type to check individual report statuses
-                const logs = await SqpCronLogs.findAll({
-                    where: {
-                        CronJobID: cronDetailID,
-                        ReportType: reportType,
-                        iInitialPull: 1,
-                        ReportID: { [Op.ne]: null }
-                    },
-                    attributes: ['ReportID', 'Status', 'Action', 'Message'],
-                    order: [['dtUpdatedOn', 'DESC']]
-                });
-                
-                // Count statuses
-                let doneCount = 0;
-                let fatalCount = 0;
-                let inProgressCount = 0;
-                
-                // Get unique report IDs
-                const uniqueReportIds = [...new Set(requests.map(r => r.reportId))];
-                
-                for (const reportId of uniqueReportIds) {
-                    if (!reportId) {
-                        inProgressCount++;
-                        continue;
-                    }
-                    
-                    // Find all logs for this reportId
-                    const reportLogs = logs.filter(l => l.ReportID === reportId);
-                    
-                    if (reportLogs.length === 0) {
-                        inProgressCount++;
-                        continue;
-                    }
-                    
-                    // Debug logging
-                    logger.info({
-                        reportId,
-                        reportType,
-                        logCount: reportLogs.length,
-                        actions: reportLogs.map(l => l.Action),
-                        statuses: reportLogs.map(l => l.Status)
-                    }, 'Analyzing report status');
-                    
-                    const latestLog = reportLogs[0];
-                    
-                    // Check if this report completed successfully
-                    // Look for status 1
-                    const isDone = reportLogs.some(l => 
-                        (l.Status === 1)
-                    );
-                    
-                    // Check if this report failed fatally
-                    const isFatal = reportLogs.some(l =>
-                        (l.Message && (l.Message.includes('FATAL') || l.Message.includes('CANCELLED')))
-                    );
-                    
-                    // Check if still in progress (latest status is 0 or 2 and not done/fatal)
-                    const isInProgress = !isDone && !isFatal && (latestLog.Status === 0 || latestLog.Status === 2 || latestLog.Message.includes('Failure Notification'));
-                    
-                    logger.info({
-                        reportId,
-                        isDone,
-                        isFatal,
-                        isInProgress,
-                        latestStatus: latestLog.Status,
-                        latestAction: latestLog.Action
-                    }, 'Report classification');
-                    
-                    if (isDone) {
-                        doneCount++;
-                    } else if (isFatal) {
-                        fatalCount++;
-                    } else if (isInProgress) {
-                        inProgressCount++;
-                    }
-                }
-                
-                const totalReports = uniqueReportIds.length;
-                
-                logger.info({
-                    reportType,
-                    totalReports,
-                    doneCount,
-                    fatalCount,
-                    inProgressCount
-                }, 'Report type status summary');
-                
-                // Determine status for this report type
-                let dataPullStatus;
-                let processRunningStatus;
-                let cronRunningStatus;
-                
-                if (doneCount === totalReports) {
-                    // All reports done
-                    dataPullStatus = 1; // Completed
-                    processRunningStatus = 4; // Import done
-                    cronRunningStatus = 2; // Cron running status completed
-                    logger.info({ reportType }, 'All reports completed successfully');
-                    
-                } else if (fatalCount > 0 && inProgressCount === 0) {
-                    // Some fatal, none in progress, rest done
-                    dataPullStatus = 3; // Failed
-                    processRunningStatus = 2; // Last was status check
-                    overallAsinStatus = 3; // Mark ASIN as failed
-                    cronRunningStatus = 2; // Cron running status completed
-                    logger.warn({ reportType, fatalCount, totalReports }, 'Some reports failed fatally');
-                    
-                } else if (inProgressCount > 0 && fatalCount === 0) {
-                    // Some in progress, none fatal
-                    dataPullStatus = 2; // Error/Stuck
-                    processRunningStatus = 2; // Status check
-                    overallAsinStatus = 3; // Mark ASIN as failed (stuck)
-                    cronRunningStatus = 3; // Cron running retry mark
-                    logger.warn({ reportType, inProgressCount, totalReports }, 'Some reports still in progress');
-                    
-                } else if (fatalCount > 0 && inProgressCount > 0) {
-                    // Mixed: some fatal, some in progress
-                    dataPullStatus = 2; // Error/Stuck
-                    processRunningStatus = 2; // Status check
-                    overallAsinStatus = 3; // Mark ASIN as failed
-                    cronRunningStatus = 3; // Cron running retry mark
-                    logger.warn({ reportType, fatalCount, inProgressCount, totalReports }, 'Mixed status: some fatal, some in progress');
-                    
-                    // Update sqp_cron_logs: FATAL entries get Status = 4
-                    const fatalReportIds = [];
-                    for (const reportId of uniqueReportIds) {
-                        const reportLogs = logs.filter(l => l.ReportID === reportId);
-                        const isFatal = reportLogs.some(l => 
-                            l.Message && (l.Message.includes('FATAL') || l.Message.includes('CANCELLED'))
-                        );
-                        if (isFatal) {
-                            fatalReportIds.push(reportId);
-                        }
-                    }
-                    
-                    if (fatalReportIds.length > 0) {
-                        await SqpCronLogs.update(
-                            { Status: 4 }, // Mark FATAL reports with status 4
-                            { 
-                                where: { 
-                                    CronJobID: cronDetailID,
-                                    ReportType: reportType,
-                                    ReportID: { [Op.in]: fatalReportIds },
-                                    iInitialPull: 1
-                                }
-                            }
-                        );
-                        logger.info({ reportType, fatalReportIds }, 'Marked FATAL report logs with status 4');
-                    }
-                } else {
-                    // Default to error/stuck
-                    dataPullStatus = 2;
-                    processRunningStatus = 2;
-                    overallAsinStatus = 3;
-                    cronRunningStatus = 2;
-                }
-                
-                // Update the report type status in sqp_cron_details
-                await SqpCronDetails.update(
-                    {
-                        [`${prefix}SQPDataPullStatus`]: dataPullStatus,
-                        [`${prefix}ProcessRunningStatus`]: processRunningStatus,
-                        cronRunningStatus: cronRunningStatus
-                    },
-                    { where: { ID: cronDetailID } }
-                );
-                
-                logger.info({
-                    reportType,
-                    dataPullStatus,
-                    processRunningStatus
-                }, 'Updated report type status in sqp_cron_details');
-            }
-            
-            // Update seller_ASIN_list.InitialPullStatus
-            if (overallAsinStatus === 2) {
-                await asinInitialPull.markInitialPullCompleted(amazonSellerID, asinList, SellerID, cronDetailID);
-                logger.info({ amazonSellerID, asinCount: asinList.length }, 'Marked initial pull as completed for ASINs');
-            } else {
-                await asinInitialPull.markInitialPullFailed(amazonSellerID, asinList, SellerID, cronDetailID);
-                logger.warn({ amazonSellerID, asinCount: asinList.length }, 'Marked initial pull as failed for ASINs');
-            }
-            
+      
+            if (pull === 3) overallAsinStatus = 3;
+            await this.updateStatus(cronDetailID, type, pull);
+          }
+      
+          // Update ASIN pull status
+          if (overallAsinStatus === 2)
+            await asinInitialPull.markInitialPullCompleted(amazonSellerID, asinList, SellerID, cronDetailID);
+          else
+            await asinInitialPull.markInitialPullFailed(amazonSellerID, asinList, SellerID, cronDetailID);
+      
+          // Final cronRunningStatus update
+          const row = await SqpCronDetails.findOne({ where: { ID: cronDetailID }, raw: true });
+          if (row) {
+            const statuses = [row.WeeklySQPDataPullStatus, row.MonthlySQPDataPullStatus, row.QuarterlySQPDataPullStatus];
+            const anyFatal = statuses.some(s => s === 3);
+            const allDone = statuses.every(s => s === 1);
+            const needsRetry = statuses.some(s => [0, 2, null].includes(s));
+            const newStatus = needsRetry ? 3 : (allDone || anyFatal ? 2 : row.cronRunningStatus);
+            if (newStatus !== row.cronRunningStatus)
+              await SqpCronDetails.update({ cronRunningStatus: newStatus, dtUpdatedOn: new Date() }, { where: { ID: cronDetailID } });
+          }
+      
         } catch (error) {
-            logger.error({ error: error.message }, 'Error in _updateInitialPullFinalStatus');
-            throw error;
+          logger.error({ error: error.message }, 'Error in _updateInitialPullFinalStatus');
+          throw error;
         }
     }
-
+      
     /**
      * Check initial pull report status (Step 2: Check Status)
      */
@@ -798,10 +701,7 @@ class InitialPullController {
                 const status = res.processingStatus;
                 if (status === 'DONE') {
                     const documentId = res.reportDocumentId || null;
-                    
-                    // Update status to indicate report is ready (status 1)
-                    await model.updateSQPReportStatus(cronDetailID, reportType, 1);
-                    
+
                     // Store for download queue                    
                     await downloadUrls.storeDownloadUrl({
                         CronJobID: cronDetailID,
@@ -861,7 +761,14 @@ class InitialPullController {
                     throw new Error(`Report still ${status} - retrying`);
                     
                 } else if (status === 'FATAL' || status === 'CANCELLED') {
-                    await model.updateSQPReportStatus(cronDetailID, reportType, 3);
+
+                    logger.fatal({ 
+                        cronDetailID: cronDetailID, 
+                        reportType, 
+                        status, 
+                    }, `Initial Pull - Report ${status} - Permanent failure for ${range.range}`);
+                    
+
                     await model.logCronActivity({
                         cronJobID: cronDetailID,
                         reportType,
@@ -1049,8 +956,7 @@ class InitialPullController {
                                 importResult 
                             }, retry ? 'Initial pull import completed successfully (retry)' : 'Initial pull import completed successfully', 'Initial pull import completed successfully');
                             
-                            // Update status to success (1) after successful import
-                            await model.updateSQPReportStatus(cronDetailID, reportType, 1, null, new Date());
+                            //await model.updateSQPReportStatus(cronDetailID, reportType, 0, null, new Date());
                             
                             // Log import success
                             await model.logCronActivity({
@@ -1076,8 +982,7 @@ class InitialPullController {
                                 retry
                             }, retry ? 'Error during initial pull import - file saved but import failed (retry)' : 'Error during initial pull import - file saved but import failed', 'Error during initial pull import - file saved but import failed');
                             
-                            // Update status to failed (3) after import failure
-                            await model.updateSQPReportStatus(cronDetailID, reportType, 3, null, new Date());
+                            //await model.updateSQPReportStatus(cronDetailID, reportType, 0, null, new Date());
                             
                             // Log import failure
                             await model.logCronActivity({
@@ -1144,10 +1049,8 @@ class InitialPullController {
                     }
                     
                     // Set ProcessRunningStatus = 4 (Import) even though no data
-                    await model.setProcessRunningStatus(cronDetailID, reportType, 4);
-                    
-                    // Update cron detail status to success (1) with end date
-                    await model.updateSQPReportStatus(cronDetailID, reportType, 1, null, new Date());
+                    await model.setProcessRunningStatus(cronDetailID, reportType, 4);                    
+                    await model.updateSQPReportStatus(cronDetailID, reportType, 0, null, new Date());
                     
                     // Log import done (nothing to import but process complete)
                     await model.logCronActivity({
@@ -1255,9 +1158,9 @@ class InitialPullController {
     async findFailedInitialPullRecords() {
         const SqpCronDetails = getSqpCronDetails();
         
-        // Calculate time (10 hours ago)
+        // Calculate time (6 hours ago)
         const cutoffTime = new Date();
-        cutoffTime.setHours(cutoffTime.getHours() - 10);
+        cutoffTime.setHours(cutoffTime.getHours() - 6);
         
         logger.info({ cutoffTime: cutoffTime.toISOString() }, 'Scanning for records stuck since cutoff time');
                 
@@ -1707,8 +1610,6 @@ class InitialPullController {
             // If not success, mark as failed
             logger.warn({ cronDetailID, reportType, range, currentStatus: current }, 'Retry completed but status not success');
             
-            await model.updateSQPReportStatus(cronDetailID, reportType, 3);
-            
             return { 
                 success: false, 
                 cronDetailID, 
@@ -1720,9 +1621,6 @@ class InitialPullController {
             
         } catch (e) {
             logger.error({ id: record.ID, reportType, range, error: e.message }, 'Retry failed with exception');
-            
-            // Mark as failed
-            await model.updateSQPReportStatus(cronDetailID, reportType, 3);
             
             return { 
                 success: false, 

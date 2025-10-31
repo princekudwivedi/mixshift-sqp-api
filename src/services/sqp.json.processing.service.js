@@ -78,7 +78,7 @@ async function handleReportCompletion(cronJobID, reportType, amazonSellerID = nu
 
 		// 🧩 Step 3: Update Cron detail process statuses
 		await model.setProcessRunningStatus(cronJobID, reportType, 4);
-		await model.updateSQPReportStatus(cronJobID, reportType, 1, undefined, new Date(), 2);
+		await model.updateSQPReportStatus(cronJobID, reportType, 1, undefined, new Date());
 
 		const SqpModel = reportType === 'WEEK' ? getSqpWeekly()
 			: reportType === 'MONTH' ? getSqpMonthly()
