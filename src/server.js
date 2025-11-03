@@ -63,7 +63,7 @@ function validateEnv() {
     const errors = [];
     if ((process.env.NODE_ENV || '').toLowerCase() === 'production') {
         if (!process.env.DB_HOST || !process.env.DB_USER || !process.env.DB_NAME) errors.push('DB_* env missing');
-        if (!process.env.S3_BUCKET || !process.env.S3_REGION) errors.push('S3_* env missing');
+        //if (!process.env.S3_BUCKET || !process.env.S3_REGION) errors.push('S3_* env missing');
     }
     if (errors.length) {
         logger.error({ errors }, 'Environment validation failed');

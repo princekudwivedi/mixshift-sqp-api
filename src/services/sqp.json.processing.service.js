@@ -227,7 +227,7 @@ async function saveReportJsonFile(download, jsonContent) {
         const safeType = reportType || 'sqp';
         const filename = `${safeType}_${download.ReportID}_${timestamp}.json`;
         
-        if (nodeEnv === 'development' || nodeEnv === 'local') {
+        if (nodeEnv === 'development' || nodeEnv === 'local' || nodeEnv === 'production') {
             // Save locally outside src: ./reports/{seller}/{type}/{date}/{filename}
             const baseDir = path.join(process.cwd(), 'reports', amazonSellerID, reportType, date);
             await fs.mkdir(baseDir, { recursive: true });
