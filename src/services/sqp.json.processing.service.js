@@ -609,10 +609,46 @@ async function __importJson(row, processed = 0, errors = 0, iInitialPull = 0){
 	} catch (e) {
 		console.error('Error processing saved file:', e.message);
 		await downloadUrls.updateProcessStatusById(row.ID, 'FAILED', { lastError: e.message });
+		
 		// Mark cron detail import failed (2) or retry failed (3) if attempts already happened
 		if (row.CronJobID && row.ReportType) {
 			const status = (row.ProcessAttempts && Number(row.ProcessAttempts) > 0) ? 3 : 2;
 			await model.updateSQPReportStatus(row.CronJobID, row.ReportType, status, null, new Date());
+			
+			// ✅ Update ASINs to failed status (3) when import fails
+			try {
+				const SqpCronDetails = getSqpCronDetails();
+				const cronDetail = await SqpCronDetails.findOne({ 
+					where: { ID: row.CronJobID }, 
+					attributes: ['ASIN_List', 'SellerID', 'AmazonSellerID'] 
+				});
+				
+				if (cronDetail && cronDetail.ASIN_List) {
+					const cronAsins = cronDetail.ASIN_List.split(/\s+/).filter(Boolean).map(a => a.trim());
+					const amazonSellerID = cronDetail.AmazonSellerID;
+					const sellerId = cronDetail.SellerID || 0;
+					
+					if (cronAsins.length > 0 && amazonSellerID) {
+						await model.ASINsBySellerUpdated(
+							sellerId,
+							amazonSellerID,
+							cronAsins,
+							3,  // Status 3 = Failed
+							row.ReportType,
+							null,  // startTime already set
+							new Date()  // endTime when failed
+						);
+						
+						console.log(`✅ Updated ${cronAsins.length} ASINs to failed status (3) for ${row.ReportType}`, {
+							cronJobID: row.CronJobID,
+							reportType: row.ReportType,
+							asinCount: cronAsins.length
+						});
+					}
+				}
+			} catch (asinUpdateError) {
+				console.error('Error updating ASIN status to failed:', asinUpdateError.message);
+			}
 		}
 		errors++;
     }

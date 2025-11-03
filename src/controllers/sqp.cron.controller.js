@@ -456,12 +456,37 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 					retryCount: currentRetry,
 					executionTime: (Date.now() - startTime) / 1000 
 				});
+
+				if(attempt >= 3) {
+					// Parse ASINs from the row's ASIN_List
+					const asins = row.ASIN_List ? row.ASIN_List.split(/\s+/).filter(Boolean).map(a => a.trim()) : [];
+        
+					if (asins.length > 0 && row.AmazonSellerID) {
+						await model.ASINsBySellerUpdated(
+							row.SellerID,
+							row.AmazonSellerID,
+							asins,
+							3,           // Status 3 = Failed
+							reportType,  // WEEK/MONTH/QUARTER
+							null,        // startTime already set
+							new Date()      // endTime when failed
+						);
+						
+						logger.info({
+							cronDetailID: row.ID,
+							reportType,
+							asinCount: asins.length,
+							status: 3
+						}, `After 3 attempts Updated ${asins.length} ASINs to failed status (3) for ${reportType}`);
+					}
+				}
 				
 				// Wait before retrying
 				await DelayHelpers.wait(delaySeconds, 'Before retry IN_QUEUE or IN_PROGRESS');
 
 				// Throw error to trigger retry mechanism
 				throw new Error(`Report still ${status.toLowerCase().replace('_',' ')} after ${delaySeconds}s wait - retrying`);
+
 				
 			} else if (status === 'FATAL' || status === 'CANCELLED') {                
 				// Fatal or cancelled status - treat as error
@@ -899,6 +924,7 @@ module.exports = {
 	requestForSeller,
 	checkReportStatuses,
 	sendFailureNotification,
+	finalizeCronRunningStatus,
 };
 
 

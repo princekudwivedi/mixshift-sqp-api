@@ -234,15 +234,16 @@ class RetryHelpers {
                     }, `Max attempts reached for ${action}, marking as failed`);
 
                     // Final failure - set status to error and EndDate, but do NOT clear existing ReportID fields
+                    // DO NOT set cronRunningStatus directly - let finalizeCronRunningStatus decide based on all reports
                     try {
                         const existingReportId = (context && (context.reportId || context.reportID)) || null;
                         await model.updateSQPReportStatus(
                             cronDetailID,
                             reportType,
-                            2, // error
+                            2, // error (needs retry)
                             null, // startDate unchanged
-                            new Date(), // endDate set on failure,
-                            3 // cronRunningStatus set to 3 retry mark
+                            new Date(), // endDate set on failure
+                            null // DO NOT set cronRunningStatus here - will be calculated by finalizeCronRunningStatus
                         );                       
                     } catch (updateErr) {
                         logger.error({ error: updateErr.message, cronDetailID, reportType }, 'Failed to set EndDate on failure');
