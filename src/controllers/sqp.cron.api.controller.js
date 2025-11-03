@@ -16,7 +16,7 @@ const { Op, literal } = require('sequelize');
 const logger = require('../utils/logger.utils');
 const { isUserAllowed, isValidSellerID, sanitizeLogData } = require('../utils/security.utils');
 const env = require('../config/env.config');
-const isDevEnv = ["local", "development"].includes(env.NODE_ENV);
+const isDevEnv = ["local", "development","production"].includes(env.NODE_ENV);
 const asinResetService = require('../services/asin.reset.service');
 const authService = require('../services/auth.service');
 /**

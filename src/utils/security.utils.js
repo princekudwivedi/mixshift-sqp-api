@@ -66,11 +66,25 @@ function isValidSellerID(sellerID) {
  * @returns {Array<number>} - Array of allowed user IDs
  */
 function getAllowedUsers() {
-    const envUsers = process.env.ALLOWED_USER_IDS;
-    if (!envUsers) {
-        throw new Error('ALLOWED_USER_IDS not configured in environment');
+    let envUsers = process.env.ALLOWED_USER_IDS;
+
+    if (!envUsers) return []; // Allow all if not set
+
+    try {
+        // Try to parse as JSON if provided like [8,3]
+        const parsed = JSON.parse(envUsers);
+        if (Array.isArray(parsed)) {
+            return parsed.map(Number).filter(id => !isNaN(id));
+        }
+    } catch {
+        // Fallback: if comma-separated string like "8,3"
+        return envUsers
+            .split(',')
+            .map(id => parseInt(id.trim(), 10))
+            .filter(id => !isNaN(id));
     }
-    return envUsers;
+
+    return [];
 }
 
 /**
@@ -79,15 +93,13 @@ function getAllowedUsers() {
  * @returns {boolean} - True if allowed
  */
 function isUserAllowed(userId) {
-    try {
-        const allowed = getAllowedUsers();
-        return allowed.includes(parseInt(userId, 10));
-    } catch (error) {
-        // In production, deny access if configuration is missing
-        if (process.env.NODE_ENV === 'production') {
-            return false;
-        }
-    }
+    const allowed = getAllowedUsers();
+
+    // ✅ If empty, all users are allowed
+    if (allowed.length === 0) return true;
+
+    // ✅ Otherwise only listed IDs are allowed
+    return allowed.includes(userId);
 }
 
 /**

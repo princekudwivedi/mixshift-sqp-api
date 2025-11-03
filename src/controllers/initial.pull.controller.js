@@ -22,7 +22,7 @@ const asinInitialPull = require('../models/sellerAsinList.initial.pull.model');
 const logger = require('../utils/logger.utils');
 const { isUserAllowed, sanitizeLogData } = require('../utils/security.utils');
 const env = require('../config/env.config');
-const isDevEnv = ["local", "development"].includes(env.NODE_ENV);
+const isDevEnv = ["local", "development","production"].includes(env.NODE_ENV);
 const { getModel: getSqpDownloadUrls } = require('../models/sequelize/sqpDownloadUrls.model');
 const { Op, literal } = require('sequelize');
 
