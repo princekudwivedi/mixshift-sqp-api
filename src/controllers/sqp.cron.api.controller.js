@@ -306,6 +306,84 @@ class SqpCronApiController {
     }
 
     /**
+     * Sync ASINs for all sellers under a specific user
+     * GET: /cron/sqp/cronSyncAllSellerAsins/{userId}
+     */
+    async cronSyncAllSellerAsins(req, res) {
+        return initDatabaseContext(async () => {
+            try {
+                const { userId } = req.params;
+                
+                // Validate parameters
+                const validatedUserId = ValidationHelpers.sanitizeNumber(userId);
+
+                if (!validatedUserId || validatedUserId <= 0) {
+                    return ErrorHandler.sendError(res, 'Invalid userId', 400);
+                }
+
+                // Load tenant database
+                await loadDatabase(validatedUserId);
+
+                // Get all active sellers
+                // Use sellerModel directly for tenant-aware operations
+                const sellers = await sellerModel.getSellersProfilesForCronAdvanced({ pullAll: 0 });
+
+                const results = [];
+                let totalInserted = 0;
+                let totalErrors = 0;
+
+                for (const seller of sellers) {
+                    const sellerID = seller.idSellerAccount;
+
+                    // Use the helper function (set IsActive = 0 for cron sync)
+                    const result = await this._syncSellerAsinsInternal(sellerID);
+
+                    if (result.error) {
+                        totalErrors++;
+                        results.push({
+                            seller_id: sellerID,
+                            status: 'error',
+                            error: result.error,
+                            inserted_asins: 0,
+                            total_seller_asins: 0
+                        });
+                    } else {
+                        totalInserted += result.insertedCount;
+                        results.push({
+                            seller_id: sellerID,
+                            status: 'success',
+                            inserted_asins: result.insertedCount,
+                            total_seller_asins: result.totalCount
+                        });
+                    }
+                }
+
+                const response = {
+                    success: true,
+                    userId: validatedUserId,
+                    sellers_processed: sellers.length,
+                    total_asins_inserted: totalInserted,
+                    total_errors: totalErrors,
+                    summary: results
+                };
+
+                logger.info({
+                    userId: validatedUserId,
+                    sellersProcessed: sellers.length,
+                    totalInserted,
+                    totalErrors
+                }, 'cronSyncAllSellerAsins completed successfully');
+
+                return SuccessHandler.sendSuccess(res, response);
+
+            } catch (error) {
+                logger.error({ error: error.message, userId: req.params.userId }, 'cronSyncAllSellerAsins failed');
+                return ErrorHandler.sendError(res, error, 'Internal server error', 500);
+            }
+        });
+    }
+
+    /**
      * Private helper function to sync ASINs for a seller from mws_items (reusable)
      * @param {number} sellerID
      * @param {number} isActive Default ASIN status (1=Active, 0=Inactive)
@@ -342,7 +420,6 @@ class SqpCronApiController {
                 raw: true,
                 group: ['ASIN']
             });
-
             // Fetch existing ASINs for this seller
             const existingAsinsInDB = await SellerAsinList.findAll({
                 where: { 
