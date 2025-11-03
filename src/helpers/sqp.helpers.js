@@ -95,12 +95,14 @@ class RetryHelpers {
 
         // Check if this report type has already reached max retries
         if (skipIfMaxRetriesReached) {
-            const currentRetryCount = await model.getRetryCount(cronDetailID, reportType, context.reportId);
+            const reportId = (context && (context.reportId || context.reportID)) || null;
+            const currentRetryCount = await model.getRetryCount(cronDetailID, reportType, reportId);
             if (currentRetryCount >= maxRetries) {
                 logger.info({
                     cronDetailID,
                     reportType,
-                    retryCount: currentRetryCount
+                    retryCount: currentRetryCount,
+                    reportId
                 }, `Max retries already reached for ${action}, skipping`);
                 return {
                     success: false,
@@ -220,8 +222,9 @@ class RetryHelpers {
                 }
 
                 // Increment retry count for this attempt
-                await model.incrementRetryCount(cronDetailID, reportType, context.reportId);
-                const newRetryCount = await model.getRetryCount(cronDetailID, reportType, context.reportId);
+                const reportId = (context && (context.reportId || context.reportID)) || null;
+                await model.incrementRetryCount(cronDetailID, reportType, reportId);
+                const newRetryCount = await model.getRetryCount(cronDetailID, reportType, reportId);
 
                 // Check if this was the last attempt
                 if (attempt >= maxRetries) {
