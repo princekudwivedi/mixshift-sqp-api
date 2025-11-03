@@ -17,7 +17,6 @@ class Helpers {
             const largeAgencyFlag = process.env.LARGE_AGENCY_FLAG === 'true';
             // Check active cron sellers for this user
             const activeCRONSellerAry = await model.checkCronDetailsOfSellersByDate(0, '', true, '', false, iInitialPull);            
-            console.log('activeCRONSellerAry', activeCRONSellerAry);
             const activeCronSellers = activeCRONSellerAry.length;
             // Check max user count for cron
             const maxUserForCRON = largeAgencyFlag ? 100 : (process.env.MAX_USER_COUNT_FOR_CRON || 50);
@@ -152,7 +151,7 @@ class RetryHelpers {
                 });
 
                 // Success! Log and return (skip if already logged - e.g., FATAL errors)
-                // FATAL errors are already logged in handleFatalOrUnknownStatus with status: 2
+                // FATAL errors are already logged in handleFatalOrUnknownStatus with status: 3
                 if (!result.skipped) {
                     await model.logCronActivity({
                         cronJobID: cronDetailID,

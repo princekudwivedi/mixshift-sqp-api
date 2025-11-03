@@ -830,37 +830,89 @@ class SqpCronApiController {
 
         // Get the actual retry count for notification
         const actualRetryCount = await model.getRetryCount(record.ID, reportType);
-        await model.logCronActivity({ 
-            cronJobID: record.ID, 
-            reportType, 
-            action: 'Check Status', 
-            status: 2, 
-            message: `Report ${statusField} on attempt ${actualRetryCount + 1}`, 
-            reportID: current === 2 ? await model.getLatestReportId(record.ID, reportType) : null, 
-            retryCount: actualRetryCount,  // Fix: Use actual retry count instead of null
-            executionTime: (Date.now() - new Date(record.dtCreatedOn).getTime()) / 1000 
-        });        
-
-        // Mark failed if still not success
         const latestReportId = await model.getLatestReportId(record.ID, reportType);
-        await model.updateSQPReportStatus(record.ID, reportType, 2, null, null, 3);
-        await model.logCronActivity({
-            cronJobID: record.ID,
-            reportType,
-            action: 'Retry Finalize',
-            status: 2,
-            message: 'Marked as failed after retry of stuck record',
-            reportID: latestReportId,
-            retryCount: actualRetryCount  // Fix: Use actual retry count instead of null
-        });
         
-        // Only send notification if retry count has reached maximum (3)
-        if (actualRetryCount >= 3) {
-            await ctrl.sendFailureNotification(record.ID, record.AmazonSellerID, reportType, 'Retry after 1h failed', actualRetryCount, latestReportId);
+        // Check if it's a fatal error (status 3) or retryable failure (status 2)
+        if (current === 3) {
+            // Fatal Error - no retry, mark as completed with error
+            logger.fatal({ 
+                id: record.ID, 
+                reportType, 
+                currentStatus: current,
+                currentProcessStatus: currentProcess,
+                reportId: latestReportId
+            }, 'Fatal error detected during retry - marking as permanent failure');
+            
+            // Update with cronRunningStatus = 2 (completed with fatal error)
+            await model.updateSQPReportStatus(record.ID, reportType, 3, null, new Date(), 2);
+            
+            await model.logCronActivity({
+                cronJobID: record.ID,
+                reportType,
+                action: 'Fatal Error',
+                status: 3,
+                message: 'Fatal error - permanent failure (no retry)',
+                reportID: latestReportId,
+                retryCount: actualRetryCount,
+                executionTime: (Date.now() - new Date(record.dtCreatedOn).getTime()) / 1000
+            });
+            
+            // Send notification immediately for fatal errors
+            await ctrl.sendFailureNotification(
+                record.ID, 
+                record.AmazonSellerID, 
+                reportType, 
+                'Fatal error during retry - report cannot be recovered', 
+                actualRetryCount, 
+                latestReportId,
+                true  // isFatalError flag
+            );
+            
+            logger.info({ id: record.ID, reportType }, 'Fatal error - notification sent');
+            
+            return { cronDetailID: record.ID, amazonSellerID: record.AmazonSellerID, reportType, retried: true, success: false, fatal: true };
+            
+        } else {
+            // Retryable failure (status 2 or 0) - mark for retry
+            logger.warn({ 
+                id: record.ID, 
+                reportType, 
+                currentStatus: current,
+                currentProcessStatus: currentProcess,
+                reportId: latestReportId,
+                retryCount: actualRetryCount
+            }, 'Retry failed - will retry again later');
+            
+            // Update with cronRunningStatus = 3 (needs retry)
+            await model.updateSQPReportStatus(record.ID, reportType, 2, null, null, 3);
+            
+            await model.logCronActivity({
+                cronJobID: record.ID,
+                reportType,
+                action: 'Retry Failed',
+                status: 2,
+                message: `Retry failed on attempt ${actualRetryCount + 1} - will retry later`,
+                reportID: latestReportId,
+                retryCount: actualRetryCount,
+                executionTime: (Date.now() - new Date(record.dtCreatedOn).getTime()) / 1000
+            });
+            
+            // Only send notification if retry count has reached maximum (3)
+            if (actualRetryCount >= 3) {
+                await ctrl.sendFailureNotification(
+                    record.ID, 
+                    record.AmazonSellerID, 
+                    reportType, 
+                    'Max retry attempts reached after stuck record retry', 
+                    actualRetryCount, 
+                    latestReportId,
+                    false  // Not a fatal error, just max retries
+                );
+            }
+            
+            logger.warn({ id: record.ID, reportType }, 'Retry failed - marked for retry');
+            return { cronDetailID: record.ID, amazonSellerID: record.AmazonSellerID, reportType, retried: true, success: false, fatal: false };
         }
-        
-        logger.warn({ id: record.ID, reportType }, 'Retry failed - marked as failure');
-        return { cronDetailID: record.ID, amazonSellerID: record.AmazonSellerID, reportType, retried: true, success: false };
     }
 }
 

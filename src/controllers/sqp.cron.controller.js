@@ -31,12 +31,12 @@ async function sendFailureNotification(cronDetailID, amazonSellerID, reportType,
 			notificationType
 		}, `SENDING FAILURE NOTIFICATION - ${notificationType}`);
 		
-		// Log the notification
+		// Log the notification (status 3 for fatal, 2 for retryable)
         await model.logCronActivity({
 			cronJobID: cronDetailID,
 			reportType: reportType,
-			action: 'Failure Notification',
-			status: 2,
+			action: isFatalError ? 'Fatal Error' : 'Failure Notification',
+			status: isFatalError ? 3 : 2,
 			message: `NOTIFICATION: Report failed after ${retryCount} attempts. ${notificationReason}. Error: ${errorMessage}`,
             reportID: reportId,
 			retryCount: retryCount,
@@ -463,9 +463,9 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 				// Throw error to trigger retry mechanism
 				throw new Error(`Report still ${status.toLowerCase().replace('_',' ')} after ${delaySeconds}s wait - retrying`);
 				
-            } else if (status === 'FATAL' || status === 'CANCELLED') {                
+			} else if (status === 'FATAL' || status === 'CANCELLED') {                
 				// Fatal or cancelled status - treat as error
-				const res = await handleFatalOrUnknownStatus(row, reportType, status);
+				const res = await handleFatalOrUnknownStatus(row, reportType, status, reportId);
 
 				const requestDelaySeconds = Number(process.env.REQUEST_DELAY_SECONDS) || 30;
 				await DelayHelpers.wait(requestDelaySeconds, 'Between report status checks and fatal/cancelled (rate limiting)');
@@ -476,7 +476,7 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 				if(!status) {
 					status = 'UNKNOWN';
 				}
-				const res = await handleFatalOrUnknownStatus(row, reportType, status);
+				const res = await handleFatalOrUnknownStatus(row, reportType, status, reportId);
 				const requestDelaySeconds = Number(process.env.REQUEST_DELAY_SECONDS) || 30;
 				await DelayHelpers.wait(requestDelaySeconds, 'Between report status checks and unknown status (rate limiting)');
 				return res;
@@ -495,7 +495,6 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 	} else {
 		logger.error({ cronDetailID: row.ID, reportType, error: result.error }, 'Status check failed');
 	}
-	
 	return result;
 }
 
@@ -716,8 +715,12 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 	return result;
 }
 
-async function handleFatalOrUnknownStatus(row, reportType, status) {	
-	const reportId = await model.getLatestReportId(row.ID, reportType);
+async function handleFatalOrUnknownStatus(row, reportType, status, reportId = null) {	
+	// Use provided reportId or fetch from DB as fallback
+	if (!reportId) {
+		reportId = await model.getLatestReportId(row.ID, reportType);
+	}
+	
     const statusToSet = 3; // Failed status
     const endDate = new Date();
     
@@ -727,17 +730,18 @@ async function handleFatalOrUnknownStatus(row, reportType, status) {
     logger.fatal({ 
         cronDetailID: row.ID, 
         reportType, 
-        status, 
+        status,
+        reportId,
         sqpDataPullStatus: statusToSet 
     }, `Report ${status} - Permanent failure`);
     
     await model.logCronActivity({
         cronJobID: row.ID,
         reportType,
-        action: 'Fatal Error',  // Changed from 'Check Status' to 'Fatal Error'
-        status: 3,              // Keep status 3 (error/failed)
+        action: 'Fatal Error',  // Explicit action name for fatal errors
+        status: 3,              // Status 3 = error/failed
         message: `Report ${status} - Permanent failure`,
-        reportID: reportId,
+        reportID: reportId,     // Use the provided reportId
         retryCount: 0,
         executionTime: 0
     });    
@@ -811,22 +815,80 @@ async function finalizeCronRunningStatus(cronDetailID) {
         const monthly = row.MonthlySQPDataPullStatus;
         const quarterly = row.QuarterlySQPDataPullStatus;
 
-        const statuses = [weekly, monthly, quarterly];
-        const anyFatal = statuses.some(s => s === 3);
-        const allDone = statuses.every(s => s === 1);
-        const needsRetry = statuses.some(s => s === 2);
-
-        // Priority: if any retryable exists -> 3; else if all done -> 2; else if only fatal(s) -> 2; else unchanged
-        let newStatus = row.cronRunningStatus;
-        if (needsRetry) {
-            newStatus = 3;
-        } else if (allDone) {
-            newStatus = 2;
-        } else if (anyFatal) {
-            newStatus = 2;
+        // Filter out null/undefined statuses (reports that weren't requested)
+        const statuses = [weekly, monthly, quarterly].filter(s => s !== null && s !== undefined);
+        
+        // If no statuses set yet, keep cronRunningStatus as is (likely 1 = running)
+        if (statuses.length === 0) {
+            logger.info({ cronDetailID }, 'No report statuses set yet, keeping cronRunningStatus unchanged');
+            return;
         }
+
+        const anyInProgress = statuses.some(s => s === 0);
+        const anyRetryNeeded = statuses.some(s => s === 2);
+        const anyFatal = statuses.some(s => s === 3);
+        const allCompleted = statuses.every(s => s === 1);
+        const allFinalizedOrFatal = statuses.every(s => s === 1 || s === 3);
+
+        let newStatus = row.cronRunningStatus;
+        let reason = '';
+
+        /**
+         * Priority logic for cronRunningStatus:
+         * 1. If ANY report needs retry (status 2) → cronRunningStatus = 3 (needs retry)
+         * 2. If ANY report is in progress (status 0) → cronRunningStatus = 1 (running)
+         * 3. If ALL reports are completed successfully (status 1) → cronRunningStatus = 2 (completed)
+         * 4. If ALL reports are finalized (mix of status 1 and 3, no 0 or 2) → cronRunningStatus = 2 (completed with some fatal)
+         * 5. Otherwise → keep current status
+         */
+
+        if (anyRetryNeeded) {
+            // Priority 1: Any report needs retry
+            newStatus = 3;
+            reason = 'Some reports need retry (status 2)';
+        } else if (anyInProgress) {
+            // Priority 2: Any report still in progress
+            newStatus = 1;
+            reason = 'Some reports still in progress (status 0)';
+        } else if (allCompleted) {
+            // Priority 3: All reports completed successfully
+            newStatus = 2;
+            reason = 'All reports completed successfully (status 1)';
+        } else if (allFinalizedOrFatal) {
+            // Priority 4: All reports are either completed or fatal (no in-progress or retry)
+            newStatus = 2;
+            reason = 'All reports finalized (mix of completed and fatal)';
+        } else {
+            // Keep current status
+            reason = 'No status change needed';
+        }
+
         if (newStatus !== row.cronRunningStatus) {
-            await SqpCronDetails.update({ cronRunningStatus: newStatus, dtUpdatedOn: new Date() }, { where: { ID: cronDetailID } });
+            logger.info({ 
+                cronDetailID, 
+                oldStatus: row.cronRunningStatus, 
+                newStatus, 
+                reason,
+                weekly, 
+                monthly, 
+                quarterly 
+            }, 'Updating cronRunningStatus');
+            
+            await SqpCronDetails.update({ 
+                cronRunningStatus: newStatus, 
+                dtUpdatedOn: new Date() 
+            }, { 
+                where: { ID: cronDetailID } 
+            });
+        } else {
+            logger.info({ 
+                cronDetailID, 
+                cronRunningStatus: row.cronRunningStatus, 
+                reason,
+                weekly, 
+                monthly, 
+                quarterly 
+            }, 'cronRunningStatus unchanged');
         }
     } catch (e) {
         logger.error({ cronDetailID, error: e.message }, 'Failed to finalize cronRunningStatus');
