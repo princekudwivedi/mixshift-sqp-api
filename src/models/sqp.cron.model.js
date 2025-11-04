@@ -511,6 +511,8 @@ async function updateSQPReportStatus(cronDetailID, reportType, status, startDate
     }
     if(status){
         data[`${prefix}SQPDataPullStatus`] =  status;
+    } else if(status == 0){
+        data[`${prefix}SQPDataPullStatus`] =  status;
     }
     if (startDate) {
         data[`${prefix}SQPDataPullStartDate`] = new Date(startDate);
