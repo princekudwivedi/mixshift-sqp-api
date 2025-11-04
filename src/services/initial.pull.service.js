@@ -539,6 +539,13 @@ class InitialPullService {
     }
     
     /**
+     * Public method to process retry for failed initial pull
+     */
+    async processRetryFailedInitialPull(validatedUserId, validatedSellerId, validatedCronDetailID) {
+        return this._processRetryFailedInitialPull(validatedUserId, validatedSellerId, validatedCronDetailID);
+    }
+    
+    /**
      * Internal method to process initial pull for users and sellers
      */
     async _processInitialPull(validatedUserId, validatedSellerId, reportType) {
