@@ -1168,10 +1168,10 @@ class InitialPullController {
         const failedRecords = await SqpCronDetails.findAll({
             where: {
                 iInitialPull: 1,                
-                [Op.or]: [
-                    { cronRunningStatus: 3},
+                [Op.or]: [                    
                     {
                         [Op.and]: [
+                            { cronRunningStatus: 3},
                             { WeeklyProcessRunningStatus: { [Op.in]: [1, 2, 3, 4] } },
                             { WeeklySQPDataPullStatus: { [Op.in]: [0, 2] } },
                             {
@@ -1184,6 +1184,7 @@ class InitialPullController {
                     },
                     {
                         [Op.and]: [
+                            { cronRunningStatus: 3},
                             { MonthlyProcessRunningStatus: { [Op.in]: [1, 2, 3, 4] } },
                             { MonthlySQPDataPullStatus: { [Op.in]: [0,2] } },
                             {
@@ -1196,6 +1197,7 @@ class InitialPullController {
                     },
                     {
                         [Op.and]: [
+                            { cronRunningStatus: 3},
                             { QuarterlyProcessRunningStatus: { [Op.in]: [1, 2, 3, 4] } },
                             { QuarterlySQPDataPullStatus: { [Op.in]: [0,2] } },
                             {

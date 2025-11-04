@@ -653,10 +653,10 @@ class SqpCronApiController {
         const stuckRecords = await SqpCronDetails.findAll({
             where: {
                 iInitialPull: 0,
-                [Op.or]: [
-                    { cronRunningStatus: 3},
+                [Op.or]: [                    
                     {
                         [Op.and]: [
+                            { cronRunningStatus: 3},
                             { WeeklyProcessRunningStatus: { [Op.in]: [1, 2, 3, 4] } },
                             { WeeklySQPDataPullStatus: { [Op.in]: [0, 2] } },
                             {
@@ -669,6 +669,7 @@ class SqpCronApiController {
                     },
                     {
                         [Op.and]: [
+                            { cronRunningStatus: 3},
                             { MonthlyProcessRunningStatus: { [Op.in]: [1, 2, 3, 4] } },
                             { MonthlySQPDataPullStatus: { [Op.in]: [0, 2] } },
                             {
@@ -681,6 +682,7 @@ class SqpCronApiController {
                     },
                     {
                         [Op.and]: [
+                            { cronRunningStatus: 3},
                             { QuarterlyProcessRunningStatus: { [Op.in]: [1, 2, 3, 4] } },
                             { QuarterlySQPDataPullStatus: { [Op.in]: [0, 2] } },
                             {
@@ -857,16 +859,16 @@ class SqpCronApiController {
                 executionTime: (Date.now() - new Date(record.dtCreatedOn).getTime()) / 1000
             });
             
-            // Send notification immediately for fatal errors
-            await ctrl.sendFailureNotification(
-                record.ID, 
-                record.AmazonSellerID, 
-                reportType, 
-                'Fatal error during retry - report cannot be recovered', 
-                actualRetryCount, 
-                latestReportId,
-                true  // isFatalError flag
-            );
+            // // Send notification immediately for fatal errors
+            // await ctrl.sendFailureNotification(
+            //     record.ID, 
+            //     record.AmazonSellerID, 
+            //     reportType, 
+            //     'Fatal error during retry - report cannot be recovered', 
+            //     actualRetryCount, 
+            //     latestReportId,
+            //     true  // isFatalError flag
+            // );
             
             logger.info({ id: record.ID, reportType }, 'Fatal error - notification sent');
             
@@ -897,18 +899,18 @@ class SqpCronApiController {
                 executionTime: (Date.now() - new Date(record.dtCreatedOn).getTime()) / 1000
             });
             
-            // Only send notification if retry count has reached maximum (3)
-            if (actualRetryCount >= 3) {
-                await ctrl.sendFailureNotification(
-                    record.ID, 
-                    record.AmazonSellerID, 
-                    reportType, 
-                    'Max retry attempts reached after stuck record retry', 
-                    actualRetryCount, 
-                    latestReportId,
-                    false  // Not a fatal error, just max retries
-                );
-            }
+            // // Only send notification if retry count has reached maximum (3)
+            // if (actualRetryCount >= 3) {
+            //     await ctrl.sendFailureNotification(
+            //         record.ID, 
+            //         record.AmazonSellerID, 
+            //         reportType, 
+            //         'Max retry attempts reached after stuck record retry', 
+            //         actualRetryCount, 
+            //         latestReportId,
+            //         false  // Not a fatal error, just max retries
+            //     );
+            // }
             
             logger.warn({ id: record.ID, reportType }, 'Retry failed - marked for retry');
             return { cronDetailID: record.ID, amazonSellerID: record.AmazonSellerID, reportType, retried: true, success: false, fatal: false };
