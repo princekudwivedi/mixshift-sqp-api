@@ -1,5 +1,5 @@
 const { format, subDays, lastDayOfMonth, startOfMonth } = require('date-fns');
-const { DateTime } = require('luxon');
+
 
 // Denver timezone (Mountain Time)
 const DENVER_TZ = process.env.TZ;
@@ -10,7 +10,6 @@ function fmt(date) {
 
 function getNowDateTimeInUserTimezone(timezone = DENVER_TZ){
     const now = new Date();
-    //const now = DateTime.now().setZone(timezone).toJSDate();
     return now;
 }
 /**
