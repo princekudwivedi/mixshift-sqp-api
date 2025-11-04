@@ -1,12 +1,15 @@
 /**
  * API Logger Utility
- * Creates hierarchical logs organized by user, date, and seller
+ * Creates hierarchical logs organized by user, date, Amazon seller ID, and seller account ID
  * 
- * Structure: logs/api_logs/user__{userId}/{date}/{sellerId}/
+ * Structure: logs/api_logs/user__{userId}/{date}/{amazonSellerID}/{sellerAccountId}/
  * Log Files:
- *  - request_report__{sellerId}.log
- *  - request_status__{sellerId}.log
- *  - download__{sellerId}.log
+ *  - request_report__{reportType}_{date}.log  (e.g., request_report__WEEK_2025-11-04.log)
+ *  - request_status__{reportType}_{date}.log  (e.g., request_status__MONTH_2025-11-04.log)
+ *  - download__{reportType}_{date}.log        (e.g., download__QUARTER_2025-11-04.log)
+ * 
+ * Example Path:
+ *  logs/api_logs/user__8/2025-11-04/A256DU7MGIQT7P/600/request_report__WEEK_2025-11-04.log
  */
 
 const fs = require('fs');
@@ -28,19 +31,37 @@ class APILogger {
     }
 
     /**
-     * Get log file path based on user, date, seller account ID, and Amazon seller ID
+     * Get log file path based on user, date, Amazon seller ID, and seller account ID
+     * Returns null if userId is missing (don't create logs without user context)
+     * 
+     * Structure: api_logs/user__{userId}/{date}/{amazonSellerID}/{sellerAccountId}/
+     * Filename: {logType}__{name}_{date}.log
+     * 
+     * @param {number} userId - User ID
+     * @param {number} sellerAccountId - Internal seller account ID
+     * @param {string} amazonSellerID - Amazon Seller ID
+     * @param {string} logType - Log type (request_report, request_status, download)
+     * @param {string} name - Additional identifier (reportType like WEEK/MONTH/QUARTER, or reportId)
      */
-    getLogFilePath(userId, sellerAccountId, amazonSellerID, logType) {
+    getLogFilePath(userId, sellerAccountId, amazonSellerID, logType, name = null) {
+        // Don't create logs if userId is missing
+        if (!userId || userId === null || userId === undefined) {
+            return null;
+        }
+
         const date = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
         const userFolder = `user__${userId}`;
         const dateFolder = date;
-        const sellerAccountFolder = sellerAccountId.toString();
         const amazonSellerFolder = amazonSellerID;
+        const sellerAccountFolder = sellerAccountId.toString();
 
-        const logDir = path.join(this.baseLogPath, userFolder, dateFolder, sellerAccountFolder, amazonSellerFolder);
+        // New structure: amazonSellerID comes before sellerAccountId
+        const logDir = path.join(this.baseLogPath, userFolder, dateFolder, amazonSellerFolder, sellerAccountFolder);
         this.ensureLogDirectory(logDir);
 
-        const logFileName = `${logType}__${amazonSellerID}.log`;
+        // Add name and date to filename
+        const namePrefix = name ? `${name}_` : '';
+        const logFileName = `${logType}__${namePrefix}${date}.log`;
         return path.join(logDir, logFileName);
     }
 
@@ -64,8 +85,14 @@ class APILogger {
 
     /**
      * Write log entry to file
+     * Skip if filePath is null (no user context)
      */
     writeLog(filePath, logEntry) {
+        if (!filePath) {
+            // Skip logging when there's no valid file path (e.g., no userId)
+            return;
+        }
+        
         try {
             fs.appendFileSync(filePath, logEntry, 'utf8');
         } catch (error) {
@@ -152,9 +179,11 @@ class APILogger {
             } : undefined
         };
 
-        const filePath = this.getLogFilePath(userId, sellerAccountId, sellerId, 'request_report');
-        const logEntry = this.formatLogEntry(logData);
-        this.writeLog(filePath, logEntry);
+        const filePath = this.getLogFilePath(userId, sellerAccountId, sellerId, 'request_report', reportType);
+        if (filePath) {
+            const logEntry = this.formatLogEntry(logData);
+            this.writeLog(filePath, logEntry);
+        }
 
         return logData;
     }
@@ -235,9 +264,11 @@ class APILogger {
             } : undefined
         };
 
-        const filePath = this.getLogFilePath(userId, sellerAccountId, sellerId, 'request_status');
-        const logEntry = this.formatLogEntry(logData);
-        this.writeLog(filePath, logEntry);
+        const filePath = this.getLogFilePath(userId, sellerAccountId, sellerId, 'request_status', reportType);
+        if (filePath) {
+            const logEntry = this.formatLogEntry(logData);
+            this.writeLog(filePath, logEntry);
+        }
 
         return logData;
     }
@@ -324,9 +355,11 @@ class APILogger {
             } : undefined
         };
 
-        const logFilePath = this.getLogFilePath(userId, sellerAccountId, sellerId, 'download');
-        const logEntry = this.formatLogEntry(logData);
-        this.writeLog(logFilePath, logEntry);
+        const logFilePath = this.getLogFilePath(userId, sellerAccountId, sellerId, 'download', reportType);
+        if (logFilePath) {
+            const logEntry = this.formatLogEntry(logData);
+            this.writeLog(logFilePath, logEntry);
+        }
 
         return logData;
     }
