@@ -156,7 +156,7 @@ class SqpCronApiController {
                                     
                                     // Step 1: Request report with circuit breaker protection
                                     const { cronDetailIDs, cronDetailData } = await this.circuitBreaker.execute(
-                                        () => ctrl.requestForSeller(s, authOverrides, env.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT),
+                                        () => ctrl.requestForSeller(s, authOverrides, env.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT, user),
                                         { sellerId: s.idSellerAccount, operation: 'requestForSeller' }
                                     );
                                     
@@ -167,7 +167,7 @@ class SqpCronApiController {
                                         // Step 2: Check status with circuit breaker protection
                                         try {
                                             await this.circuitBreaker.execute(
-                                                () => ctrl.checkReportStatuses(authOverrides, { cronDetailID: cronDetailIDs, cronDetailData: cronDetailData }),
+                                                () => ctrl.checkReportStatuses(authOverrides, { cronDetailID: cronDetailIDs, cronDetailData: cronDetailData, user: user }),
                                                 { sellerId: s.idSellerAccount, operation: 'checkReportStatuses' }
                                             );
                                             totalProcessed++;

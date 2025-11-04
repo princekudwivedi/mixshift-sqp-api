@@ -1,4 +1,5 @@
 const logger = require('../utils/logger.utils');
+const apiLogger = require('../utils/api.logger.utils');
 const dates = require('../utils/dates.utils');
 const model = require('../models/sqp.cron.model');
 const sellerModel = require('../models/sequelize/seller.model');
@@ -81,8 +82,8 @@ async function sendFailureNotification(cronDetailID, amazonSellerID, reportType,
 	}
 }
 
-async function requestForSeller(seller, authOverrides = {}, spReportType = config.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT) {
-	logger.info({ seller: seller.idSellerAccount }, 'Requesting SQP reports for seller');
+async function requestForSeller(seller, authOverrides = {}, spReportType = config.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT, user = null) {
+	logger.info({ seller: seller.idSellerAccount }, 'Requesting SQP reports for seller');	
 	
 	try {
 		const { asins, reportTypes } = await model.getActiveASINsBySeller(seller.idSellerAccount);
@@ -90,15 +91,6 @@ async function requestForSeller(seller, authOverrides = {}, spReportType = confi
 			logger.warn({ sellerId: seller.idSellerAccount }, 'No eligible ASINs for seller (pending or ${env.MAX_DAYS_AGO}+ day old completed)');
 			return [];
 		}
-		// Prepare to mark ASINs as In Progress and set start time
-		const startTime = new Date();				
-		logger.info({ 
-			sellerId: seller.idSellerAccount,
-			amazonSellerID: seller.AmazonSellerID,
-			asinCount: asins.length, 
-			asins: asins.slice(0, 5),
-			startTime: startTime.toISOString()
-		}, 'Found ASINs for seller - will mark as InProgress per chunk');
 		
 		const chunks = model.splitASINsIntoChunks(asins, 200);
 		logger.info({ chunkCount: chunks.length }, 'Split ASINs into chunks');
@@ -122,12 +114,22 @@ async function requestForSeller(seller, authOverrides = {}, spReportType = confi
 			cronDetailIDs.push(cronDetailID);
 			cronDetailData.push(cronDetailObject);
 			for (const type of reportTypes) {
+				// Prepare to mark ASINs as In Progress and set start time
+				const startTime = new Date();
+				logger.info({ 
+					userId: user.ID,
+					sellerAccountId: seller.idSellerAccount,
+					amazonSellerID: seller.AmazonSellerID,
+					asinCount: asins.length, 
+					asins: asins.slice(0, 5),
+					startTime: startTime
+				}, 'Found ASINs for seller - will mark as InProgress per chunk');
 				logger.info({ type }, 'Requesting report for type');
 				await model.ASINsBySellerUpdated(seller.idSellerAccount, seller.AmazonSellerID, chunk.asins, 1, type, startTime); // 1 = InProgress
                 // ProcessRunningStatus = 1 (Request Report)
                 await model.setProcessRunningStatus(cronDetailID, type, 1);
                 await model.logCronActivity({ cronJobID: cronDetailID, reportType: type, action: 'Request Report', status: 1, message: 'Requesting report', Range: chunk.range });
-                await requestSingleReport(chunk, seller, cronDetailID, type, authOverrides, spReportType);
+                await requestSingleReport(chunk, seller, cronDetailID, type, authOverrides, spReportType, user);
 			}
 			logger.info({ 
 				sellerId: seller.idSellerAccount,
@@ -149,7 +151,7 @@ async function requestForSeller(seller, authOverrides = {}, spReportType = confi
 	}
 }
 
-async function requestSingleReport(chunk, seller, cronDetailID, reportType, authOverrides = {}, spReportType = config.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT) {
+async function requestSingleReport(chunk, seller, cronDetailID, reportType, authOverrides = {}, spReportType = config.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT, user = null) {
 	logger.info({ 
 		cronDetailID, 
 		reportType, 
@@ -163,15 +165,15 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 		amazonSellerID: seller.AmazonSellerID,
 		reportType,
 		action: 'Request Report',
-		context: { chunk, seller, authOverrides },
+		context: { chunk, seller, authOverrides, user },
 		model,
 		sendFailureNotification,
 		operation: async ({ attempt, currentRetry, context, startTime }) => {
-			const { chunk, seller, authOverrides } = context;
+			const { chunk, seller, authOverrides, user } = context;
 			
 			// Set start date when beginning the report request
 			const startDate = new Date();
-			logger.info({ cronDetailID, reportType, startDate, attempt }, 'Setting start date for report request');
+			logger.info({ cronDetailID, reportType, startDate: startDate.toISOString(), attempt }, 'Setting start date for report request');
 			await model.updateSQPReportStatus(cronDetailID, reportType, 0, startDate);
 
 			const period = reportType;
@@ -216,15 +218,39 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 			};
 			
 			logger.info({ payload, attempt }, 'Payload created, calling SP-API');
+			const requestStartTime = new Date().toISOString();
 
 			// Ensure access token is present for this seller
 			let currentAuthOverrides = await authService.buildAuthOverrides(seller.AmazonSellerID);
 			if (!currentAuthOverrides.accessToken) {				
 				logger.error({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request');
+				
+				// API Logger - Failed Request (No Token)
+				const userId = user ? user.ID : null;
+				apiLogger.logRequestReport({
+					userId,
+					sellerId: seller.AmazonSellerID,
+					sellerAccountId: seller.idSellerAccount,
+					endpoint: 'SP-API Create Report',
+					requestPayload: payload,
+					response: null,
+					startTime: requestStartTime,
+					endTime: new Date().toISOString(),
+					executionTime: (Date.now() - startTime) / 1000,
+					status: 'failure',
+					reportId: null,
+					reportType,
+					range: `${range.start} to ${range.end}`,
+					error: { message: 'No access token available for report request' },
+					retryCount: currentRetry,
+					attempt
+				});
+				
 				throw new Error('No access token available for report request');
 			}
 
             let resp;
+			let requestError = null;
             try {
                 resp = await sp.createReport(seller, payload, currentAuthOverrides);
             } catch (err) {
@@ -240,12 +266,60 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 					currentAuthOverrides = await authService.buildAuthOverrides(seller.AmazonSellerID, true);
 					if (!currentAuthOverrides.accessToken) {				
 						logger.error({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request');
-						throw new Error('No access token available for report request after forced refresh');
+						requestError = new Error('No access token available for report request after forced refresh');
+						
+						// API Logger - Failed Request (No Token After Refresh)
+						const userId = user ? user.ID : null;
+						apiLogger.logRequestReport({
+							userId,
+							sellerId: seller.AmazonSellerID,
+							sellerAccountId: seller.idSellerAccount,
+							endpoint: 'SP-API Create Report',
+							requestPayload: payload,
+							response: null,
+							startTime: requestStartTime,
+							endTime: new Date().toISOString(),
+							executionTime: (Date.now() - startTime) / 1000,
+							status: 'failure',
+							reportId: null,
+							reportType,
+							range: `${range.start} to ${range.end}`,
+							error: requestError,
+							retryCount: currentRetry,
+							attempt
+						});
+						
+						throw requestError;
 					}
 					resp = await sp.createReport(seller, payload, currentAuthOverrides);
-                }
+                } else {
+					requestError = err;
+					throw err;
+				}
             }
 			const reportId = resp.reportId;
+			const requestEndTime = new Date().toISOString();
+			
+			// API Logger - Successful Request Report
+			const userId = user ? user.ID : null;
+			apiLogger.logRequestReport({
+				userId,
+				sellerId: seller.AmazonSellerID,
+				sellerAccountId: seller.idSellerAccount,
+				endpoint: 'SP-API Create Report',
+				requestPayload: payload,
+				response: resp,
+				startTime: requestStartTime,
+				endTime: requestEndTime,
+				executionTime: (Date.now() - startTime) / 1000,
+				status: reportId ? 'success' : 'failure',
+				reportId,
+				reportType,
+				range: `${range.start} to ${range.end}`,
+				error: requestError,
+				retryCount: currentRetry,
+				attempt
+			});
 			
 			logger.info({ reportId, attempt }, 'Report created successfully');
 			
@@ -293,7 +367,7 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 
 async function checkReportStatuses(authOverrides = {}, filter = {}, retry = false) {
     logger.info('Starting checkReportStatuses');
-    const { cronDetailID, cronDetailData } = filter;
+    const { cronDetailID, cronDetailData, user } = filter;
 	const rows = cronDetailData;
     logger.info({ reportCount: rows.length }, 'Found reports for status check');
     
@@ -332,7 +406,7 @@ async function checkReportStatuses(authOverrides = {}, filter = {}, retry = fals
 
                 logger.info({ type }, 'Checking status for report');
 
-                const result = await checkReportStatusByType(row, type, authOverrides, reportID, retry);
+                const result = await checkReportStatusByType(row, type, authOverrides, reportID, retry, user);
 
                 if (result.success) {
                     res.push(result);
@@ -342,12 +416,12 @@ async function checkReportStatuses(authOverrides = {}, filter = {}, retry = fals
     }
 
     // Finalize cronRunningStatus after status checks
-    try { if (cronDetailID) await finalizeCronRunningStatus(cronDetailID); } catch (_) {}
+    try { if (cronDetailID) await finalizeCronRunningStatus(cronDetailID, user); } catch (_) {}
     return retry ? res : undefined;
 }
 
 
-async function checkReportStatusByType(row, reportType, authOverrides = {}, reportID = null, retry = false) {
+async function checkReportStatusByType(row, reportType, authOverrides = {}, reportID = null, retry = false, user = null) {
     // Find latest ReportID from logs for this CronJobID + ReportType
     const reportId = reportID || await model.getLatestReportId(row.ID, reportType);
     if (!reportId) {
@@ -378,21 +452,44 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 		amazonSellerID: row.AmazonSellerID,
 		reportType,
 		action: 'Check Status',
-		context: { row, reportId, seller, authOverrides, isRetry: retry },
+		context: { row, reportId, seller, authOverrides, isRetry: retry, user },
 		model,
 		sendFailureNotification,
 		operation: async ({ attempt, currentRetry, context, startTime }) => {
-			const { row, reportId, seller, authOverrides, isRetry } = context;
+			const { row, reportId, seller, authOverrides, isRetry, user } = context;
+			const statusStartTime = new Date().toISOString();
 			
 			// Ensure access token for this seller during status checks
 			
 			const currentAuthOverrides = await authService.buildAuthOverrides(seller.AmazonSellerID);
 			if (!currentAuthOverrides.accessToken) {
 				logger.error({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request');
+				
+				// API Logger - Failed Status Check (No Token)
+				const userId = user ? user.ID : null;
+				apiLogger.logRequestStatus({
+					userId,
+					sellerId: seller.AmazonSellerID,
+					sellerAccountId: seller.idSellerAccount,
+					reportId,
+					reportType,
+					range: `${range.start} to ${range.end} (user timezone: ${user.Timezone})`,
+					currentStatus: 'UNKNOWN',
+					response: null,
+					retryCount: currentRetry,
+					attempt,
+					startTime: statusStartTime,
+					endTime: new Date(),
+					executionTime: (Date.now() - startTime) / 1000,
+					status: 'failure',
+					error: { message: 'No access token available for report request' }
+				});
+				
 				throw new Error('No access token available for report request');
 			}
 			
             let res;
+			let statusError = null;
             try {
                 res = await sp.getReportStatus(seller, reportId, currentAuthOverrides);
             } catch (err) {
@@ -401,13 +498,60 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
                     // Force refresh and retry once
                     const refreshed = await authService.buildAuthOverrides(seller.AmazonSellerID, true);
                     if (!refreshed.accessToken) {				
-                        logger.error({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request');
-                        throw new Error('No access token available for report request after forced refresh');
+                        logger.error({ amazonSellerID: seller.AmazonSellerID, attempt, user: user ? user.ID : null }, 'No access token available for request');
+						statusError = new Error('No access token available for report request after forced refresh');
+						
+						// API Logger - Failed Status Check (No Token After Refresh)
+						const userId = user ? user.ID : null;
+						apiLogger.logRequestStatus({
+							userId,
+							sellerId: seller.AmazonSellerID,
+							sellerAccountId: seller.idSellerAccount,
+							reportId,
+							reportType,
+							range: `${range.start} to ${range.end} (user timezone: ${user.Timezone})`,
+							currentStatus: 'UNKNOWN',
+							response: null,
+							retryCount: currentRetry,
+							attempt,
+							startTime: statusStartTime,
+							endTime: new Date(),
+							executionTime: (Date.now() - startTime) / 1000,
+							status: 'failure',
+							error: statusError
+						});
+						
+                        throw statusError;
                     }
                     res = await sp.getReportStatus(seller, reportId, refreshed);
-                } 
+                } else {
+					statusError = err;
+					throw err;
+				}
             }
 			const status = res.processingStatus;
+			const statusEndTime = new Date().toISOString();
+			
+			// API Logger - Status Check
+			const userId = user ? user.ID : null;
+			apiLogger.logRequestStatus({
+				userId,
+				sellerId: seller.AmazonSellerID,
+				sellerAccountId: seller.idSellerAccount,
+				reportId,
+				reportType,
+				range: `${range.start} to ${range.end} (user timezone: ${user.Timezone})`,
+				currentStatus: status,
+				response: res,
+				retryCount: currentRetry,
+				attempt,
+				startTime: statusStartTime,
+				endTime: statusEndTime,
+				executionTime: (Date.now() - startTime) / 1000,
+				status: status ? 'success' : 'failure',
+				error: statusError,
+				reportDocumentId: res.reportDocumentId || null
+			});
 			
             if (status === 'DONE') {
 				// Keep ReportID_* as the original reportId; store documentId separately
@@ -432,7 +576,7 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 				// ProcessRunningStatus = 3 (Download)
                 await model.setProcessRunningStatus(row.ID, reportType, 3);
                 
-				const downloadResult = await downloadReportByType(row, reportType, authOverrides, reportId);
+				const downloadResult = await downloadReportByType(row, reportType, authOverrides, reportId, user);
 				return {
 					message: downloadResult?.message ? downloadResult?.message : `Report ready on attempt ${attempt}. Report ID: ${reportId}${documentId ? ' | Document ID: ' + documentId : ''}`,
 					action: downloadResult?.action ? downloadResult?.action : 'Check Status and Download Report',
@@ -523,7 +667,7 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 	return result;
 }
 
-async function downloadReportByType(row, reportType, authOverrides = {}, reportId = null) {
+async function downloadReportByType(row, reportType, authOverrides = {}, reportId = null, user = null) {
     if (!reportId) {
         reportId = await model.getLatestReportId(row.ID, reportType);
         if (!reportId) {
@@ -545,11 +689,12 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 		amazonSellerID: row.AmazonSellerID,
 		reportType,
 		action: 'Download Report',
-		context: { row, reportId, seller, authOverrides },
+		context: { row, reportId, seller, authOverrides, user },
 		model,
 		sendFailureNotification,
 		operation: async ({ attempt, currentRetry, context, startTime }) => {
-			const { row, reportId, seller, authOverrides } = context;
+			const { row, reportId, seller, authOverrides, user } = context;
+			const downloadStartTime = new Date().toISOString();
 			
 			logger.info({ reportId, reportType, attempt }, 'Starting download for report');
 			
@@ -568,6 +713,31 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 			const currentAuthOverrides = await authService.buildAuthOverrides(seller.AmazonSellerID);
 			if (!currentAuthOverrides.accessToken) {
 				logger.error({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request');
+				
+				// API Logger - Failed Download (No Token)
+				const userId = user ? user.ID : null;
+				apiLogger.logDownload({
+					userId,
+					sellerId: seller.AmazonSellerID,
+					sellerAccountId: seller.idSellerAccount,
+					reportId,
+					reportDocumentId: null,
+					reportType,
+					range: `${range.start} to ${range.end} (user timezone: ${user.Timezone})`,
+					fileUrl: null,
+					filePath: null,
+					fileSize: 0,
+					rowCount: 0,
+					downloadPayload: { documentId: reportId },
+					startTime: downloadStartTime,
+					endTime: new Date(),
+					executionTime: (Date.now() - startTime) / 1000,
+					status: 'failure',
+					error: { message: 'No access token available for report request' },
+					retryCount: currentRetry,
+					attempt
+				});
+				
 				throw new Error('No access token available for report request');
 			}
 			
@@ -583,7 +753,7 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 				if (status === 401 || status === 403) {
 					const refreshed = await authService.buildAuthOverrides(seller.AmazonSellerID, true);
 					if (!refreshed.accessToken) {				
-						logger.error({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request');
+						logger.error({ amazonSellerID: seller.AmazonSellerID, attempt, user: user ? user.ID : null }, 'No access token available for request');
 						throw new Error('No access token available for report request after forced refresh');
 					}
 					statusRes = await sp.getReportStatus(seller, reportId, refreshed);
@@ -602,6 +772,7 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 			
 			// Download the report document
 			let res;
+			let downloadError = null;
 			try {
 				res = await sp.downloadReport(seller, documentId, currentAuthOverrides);
 			} catch (err) {
@@ -610,9 +781,38 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 					const refreshed = await authService.buildAuthOverrides(seller.AmazonSellerID, true);
 					if (!refreshed.accessToken) {				
 						logger.error({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request');
-						throw new Error('No access token available for report request after forced refresh');
+						downloadError = new Error('No access token available for report request after forced refresh');
+						
+						// API Logger - Failed Download (No Token After Refresh)
+						const userId = user ? user.ID : null;
+						apiLogger.logDownload({
+							userId,
+							sellerId: seller.AmazonSellerID,
+							sellerAccountId: seller.idSellerAccount,
+							reportId,
+							reportDocumentId: documentId,
+							reportType,
+							range: `${range.start} to ${range.end} (user timezone: ${user.Timezone})`,
+							fileUrl: null,
+							filePath: null,
+							fileSize: 0,
+							rowCount: 0,
+							downloadPayload: { documentId },
+							startTime: downloadStartTime,
+							endTime: new Date(),
+							executionTime: (Date.now() - startTime) / 1000,
+							status: 'failure',
+							error: downloadError,
+							retryCount: currentRetry,
+							attempt
+						});
+						
+						throw downloadError;
 					}
 					res = await sp.downloadReport(seller, documentId, refreshed);
+				} else {
+					downloadError = err;
+					throw err;
 				}
 			}
 			
@@ -631,6 +831,8 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 				// Save JSON file to disk and record only path into sqp_download_urls
 				const downloadMeta = { AmazonSellerID: row.AmazonSellerID, ReportType: reportType, ReportID: documentId };
 				let filePath = null; let fileSize = 0;
+				const downloadEndTime = new Date().toISOString();
+				
 				try {
 					const saveResult = await jsonSvc.saveReportJsonFile(downloadMeta, data);
 					filePath = saveResult?.path || saveResult?.url || null;
@@ -640,8 +842,57 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 						fileSize = stat ? stat.size : 0;
 						logger.info({ filePath, fileSize, attempt }, 'Report JSON saved to disk');
 					}
+					
+					// API Logger - Successful Download with Data
+					const userId = user ? user.ID : null;
+					apiLogger.logDownload({
+						userId,
+						sellerId: seller.AmazonSellerID,
+						sellerAccountId: seller.idSellerAccount,
+						reportId,
+						reportDocumentId: documentId,
+						reportType,
+						range: `${range.start} to ${range.end} (user timezone: ${user.Timezone})`,
+						fileUrl: res?.url || null,
+						filePath,
+						fileSize,
+						rowCount: data.length,
+						downloadPayload: { documentId },
+						startTime: downloadStartTime,
+						endTime: downloadEndTime,
+						executionTime: (Date.now() - startTime) / 1000,
+						status: 'success',
+						error: downloadError,
+						retryCount: currentRetry,
+						attempt
+					});
+					
 				} catch (fileErr) {
 					logger.warn({ error: fileErr ? (fileErr.message || String(fileErr)) : 'Unknown error', attempt }, 'Failed to save JSON file');
+					
+					// API Logger - Download Success but File Save Failed
+					const userId = user ? user.ID : null;
+					apiLogger.logDownload({
+						userId,
+						sellerId: seller.AmazonSellerID,
+						sellerAccountId: seller.idSellerAccount,
+						reportId,
+						reportDocumentId: documentId,
+						reportType,
+						range: `${range.start} to ${range.end} (user timezone: ${user.Timezone})`,
+						fileUrl: res?.url || null,
+						filePath: null,
+						fileSize: 0,
+						rowCount: data.length,
+						downloadPayload: { documentId },
+						startTime: downloadStartTime,
+						endTime: new Date(),
+						executionTime: (Date.now() - startTime) / 1000,
+						status: 'partial_success',
+						error: fileErr,
+						retryCount: currentRetry,
+						attempt
+					});
 				}
 
 				// Update the existing record in sqp_download_urls with file metadata and set status to COMPLETED
@@ -745,7 +996,7 @@ async function handleFatalOrUnknownStatus(row, reportType, status, reportId = nu
 	if (!reportId) {
 		reportId = await model.getLatestReportId(row.ID, reportType);
 	}
-	
+
     const statusToSet = 3; // Failed status
     const endDate = new Date();
     
@@ -829,7 +1080,7 @@ async function handleFatalOrUnknownStatus(row, reportType, status, reportId = nu
 }
 
 // Finalize cronRunningStatus for a cron detail based on type statuses
-async function finalizeCronRunningStatus(cronDetailID) {
+async function finalizeCronRunningStatus(cronDetailID, user = null) {
     try {
         const { getModel: getSqpCronDetails } = require('../models/sequelize/sqpCronDetails.model');
         const SqpCronDetails = getSqpCronDetails();

@@ -20,6 +20,7 @@ const jsonSvc = require('../services/sqp.json.processing.service');
 const downloadUrls = require('../models/sqp.download.urls.model');
 const asinInitialPull = require('../models/sellerAsinList.initial.pull.model');
 const logger = require('../utils/logger.utils');
+const apiLogger = require('../utils/api.logger.utils');
 const { isUserAllowed, sanitizeLogData } = require('../utils/security.utils');
 const env = require('../config/env.config');
 const isDevEnv = ["local", "development","production"].includes(env.NODE_ENV);
@@ -177,7 +178,7 @@ class InitialPullController {
                                 }
                                 // Start initial pull for seller with circuit breaker protection
                                 await this.circuitBreaker.execute(
-                                    () => this._startInitialPullForSeller(seller, reportType, authOverrides),
+                                    () => this._startInitialPullForSeller(seller, reportType, authOverrides, user),
                                     { sellerId: seller.idSellerAccount, operation: 'startInitialPullForSeller' }
                                 );
                                 break; // done after one seller
@@ -202,7 +203,7 @@ class InitialPullController {
      * Phase 2: Check status for all reports
      * Phase 3: Download and import all completed reports
      */
-    async _startInitialPullForSeller(seller, reportType = null, authOverrides = {}) {
+    async _startInitialPullForSeller(seller, reportType = null, authOverrides = {}, user = null) {
         try {
             const ranges = initialPullService.calculateFullRanges();
             
@@ -267,7 +268,8 @@ class InitialPullController {
                                 asinList,
                                 range,
                                 type,
-                                authOverrides
+                                authOverrides,
+                                user
                             ),
                             { sellerId: seller.idSellerAccount, operation: 'requestInitialPullReport' }
                         );                        
@@ -317,7 +319,7 @@ class InitialPullController {
             await DelayHelpers.wait(initialDelaySeconds, 'Before initial pull status check');
             
             await this.circuitBreaker.execute(
-                () => this._checkAllInitialPullStatuses(cronDetailRow, seller, reportRequests, asinList, authOverrides, false),
+                () => this._checkAllInitialPullStatuses(cronDetailRow, seller, reportRequests, asinList, authOverrides, false, user),
                 { sellerId: seller.idSellerAccount, operation: 'checkAllInitialPullStatuses' }
             );
 
@@ -335,13 +337,13 @@ class InitialPullController {
     /**
      * Request a single initial pull report (Step 1: Create Report)
      */
-    async _requestInitialPullReport(cronDetailID, seller, asinList, range, reportType, authOverrides = {}) {
+    async _requestInitialPullReport(cronDetailID, seller, asinList, range, reportType, authOverrides = {}, user = null) {
         const result = await RetryHelpers.executeWithRetry({
             cronDetailID,
             amazonSellerID: seller.AmazonSellerID,
             reportType,
             action: 'Initial Pull - Request Report',
-            context: { seller, asinList, range, reportType, reportId: null },
+            context: { seller, asinList, range, reportType, reportId: null, user },
             model,
             sendFailureNotification: this._sendInitialPullFailureNotification.bind(this),
             maxRetries: 3, // Strict limit of 3 retries per report
@@ -352,7 +354,8 @@ class InitialPullController {
                 iInitialPull: 1
             },
             operation: async ({ attempt, currentRetry, context, startTime }) => {
-                const { seller, asinList, range, reportType } = context;
+                const { seller, asinList, range, reportType, user } = context;
+                const requestStartTime = new Date();
                 
                 // Set ProcessRunningStatus = 1 (Report Request)
                 await model.setProcessRunningStatus(cronDetailID, reportType, 1);
@@ -370,11 +373,34 @@ class InitialPullController {
                 let currentAuthOverrides = await authService.buildAuthOverrides(seller.AmazonSellerID);
                 if (!currentAuthOverrides.accessToken) {
                     logger.error({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request');
+                    
+                    // API Logger - Failed Request (No Token)
+                    const userId = user ? user.ID : null;
+                    apiLogger.logRequestReport({
+                        userId,
+                        sellerId: seller.AmazonSellerID,
+                        sellerAccountId: seller.idSellerAccount,
+                        endpoint: 'SP-API Create Report',
+                        requestPayload: payload,
+                        response: null,
+                        startTime: requestStartTime,
+                        endTime: new Date(),
+                        executionTime: (Date.now() - startTime) / 1000,
+                        status: 'failure',
+                        reportId: null,
+                        reportType,
+                        range: range.range,
+                        error: { message: 'No access token available for report request' },
+                        retryCount: currentRetry,
+                        attempt
+                    });
+                    
                     throw new Error('No access token available for report request');
                 }
 
                 // Create report via SP-API
                 let resp;
+                let requestError = null;
                 try {
                     resp = await sp.createReport(seller, payload, currentAuthOverrides);
                 } catch (err) {
@@ -383,14 +409,62 @@ class InitialPullController {
                         currentAuthOverrides = await authService.buildAuthOverrides(seller.AmazonSellerID, true);
                         if (!currentAuthOverrides.accessToken) {
                             logger.error({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request after forced refresh');
-                            throw new Error('No access token available for report request after forced refresh');
+                            requestError = new Error('No access token available for report request after forced refresh');
+                            
+                            // API Logger - Failed Request (No Token After Refresh)
+                            const userId = user ? user.ID : null;
+                            apiLogger.logRequestReport({
+                                userId,
+                                sellerId: seller.AmazonSellerID,
+                                sellerAccountId: seller.idSellerAccount,
+                                endpoint: 'SP-API Create Report',
+                                requestPayload: payload,
+                                response: null,
+                                startTime: requestStartTime,
+                                endTime: new Date(),
+                                executionTime: (Date.now() - startTime) / 1000,
+                                status: 'failure',
+                                reportId: null,
+                                reportType,
+                                range: range.range,
+                                error: requestError,
+                                retryCount: currentRetry,
+                                attempt
+                            });
+                            
+                            throw requestError;
                         }
                         resp = await sp.createReport(seller, payload, currentAuthOverrides);
+                    } else {
+                        requestError = err;
+                        throw err;
                     }
                 }
                 const reportId = resp.reportId;
+                const requestEndTime = new Date();
                 
                 logger.info({ reportId, range: range.range, attempt }, 'Initial pull report created');
+                
+                // API Logger - Successful Request Report
+                const userId = user ? user.ID : null;
+                apiLogger.logRequestReport({
+                    userId,
+                    sellerId: seller.AmazonSellerID,
+                    sellerAccountId: seller.idSellerAccount,
+                    endpoint: 'SP-API Create Report',
+                    requestPayload: payload,
+                    response: resp,
+                    startTime: requestStartTime,
+                    endTime: requestEndTime,
+                    executionTime: (Date.now() - startTime) / 1000,
+                    status: reportId ? 'success' : 'failure',
+                    reportId,
+                    reportType,
+                    range: range.range,
+                    error: requestError,
+                    retryCount: currentRetry,
+                    attempt
+                });
                 
                 // Update status column based on report type with start date
                 const startDate = range.startDate;
@@ -430,7 +504,7 @@ class InitialPullController {
         return result;
     }
 
-    async _checkAllInitialPullStatuses(cronDetailRow, seller, reportRequests, asinList = null, authOverrides = {}, retry = false) {
+    async _checkAllInitialPullStatuses(cronDetailRow, seller, reportRequests, asinList = null, authOverrides = {}, retry = false, user = null) {
         try {
           logger.info({
             cronDetailID: cronDetailRow.ID,
@@ -471,7 +545,8 @@ class InitialPullController {
                   request.range,
                   request.type,
                   authOverrides,
-                  retry
+                  retry,
+                  user
                 ),
                 { sellerId: seller.idSellerAccount, operation: 'checkInitialPullReportStatus' }
               );
@@ -489,11 +564,11 @@ class InitialPullController {
       
               // ✅ Check if all of a type are processed → update pull status
               if (request.type === 'WEEK' && doneWeek === totalWeek) {
-                await this._checkAndUpdateTypeCompletion(cronDetailRow.ID, 'WEEK');
+                await this._checkAndUpdateTypeCompletion(cronDetailRow.ID, 'WEEK', user);
               } else if (request.type === 'MONTH' && doneMonth === totalMonth) {
-                await this._checkAndUpdateTypeCompletion(cronDetailRow.ID, 'MONTH');
+                await this._checkAndUpdateTypeCompletion(cronDetailRow.ID, 'MONTH', user);
               } else if (request.type === 'QUARTER' && doneQuarter === totalQuarter) {
-                await this._checkAndUpdateTypeCompletion(cronDetailRow.ID, 'QUARTER');
+                await this._checkAndUpdateTypeCompletion(cronDetailRow.ID, 'QUARTER', user);
               }
       
             } catch (error) {
@@ -509,14 +584,14 @@ class InitialPullController {
           }
       
           // Final summary update (for all types)
-          await this._updateInitialPullFinalStatus(cronDetailRow.ID, seller.AmazonSellerID, asinList);
+          await this._updateInitialPullFinalStatus(cronDetailRow.ID, seller.AmazonSellerID, asinList, user);
       
         } catch (error) {
           logger.error({ error: error.message }, 'Error in _checkAllInitialPullStatuses');
         }
     }
       
-    async _checkAndUpdateTypeCompletion(cronDetailID, type) {
+    async _checkAndUpdateTypeCompletion(cronDetailID, type, user = null) {
         const { done, fatal, progress, total } = await this.analyzeReports(cronDetailID, type);
         let pull = 2; // default in-progress
       
@@ -530,7 +605,7 @@ class InitialPullController {
           pull = 3; // ❌ some done and some fatal
         }
       
-        await this.updateStatus(cronDetailID, type, pull);
+        await this.updateStatus(cronDetailID, type, pull, user);
     }
 
     // analyze logs and determine counts
@@ -561,7 +636,7 @@ class InitialPullController {
     }
     
     // update status in DB
-    async updateStatus(cronDetailID, type, pull) {
+    async updateStatus(cronDetailID, type, pull, user = null) {
         const SqpCronDetails = getSqpCronDetails();
         const prefix = model.mapPrefix(type);
         await SqpCronDetails.update(
@@ -573,7 +648,7 @@ class InitialPullController {
     /**
      * Final overall update after all reports processed
      */
-    async _updateInitialPullFinalStatus(cronDetailID, amazonSellerID, asinList) {
+    async _updateInitialPullFinalStatus(cronDetailID, amazonSellerID, asinList, user = null) {
         try {
           const SqpCronDetails = getSqpCronDetails();
           const SqpCronLogs = getSqpCronLogs();
@@ -628,7 +703,7 @@ class InitialPullController {
             }
       
             if (pull === 3) overallAsinStatus = 3;
-            await this.updateStatus(cronDetailID, type, pull);
+            await this.updateStatus(cronDetailID, type, pull, user);
           }
       
           // Update ASIN pull status
@@ -658,13 +733,13 @@ class InitialPullController {
     /**
      * Check initial pull report status (Step 2: Check Status)
      */
-    async _checkInitialPullReportStatus(cronDetailID, seller, reportId, range, reportType, authOverrides = {}, retry = false) {
+    async _checkInitialPullReportStatus(cronDetailID, seller, reportId, range, reportType, authOverrides = {}, retry = false, user = null) {
         const result = await RetryHelpers.executeWithRetry({
             cronDetailID,
             amazonSellerID: seller.AmazonSellerID,
             reportType,
             action: retry ? 'Initial Pull - Retry Check Status' : 'Initial Pull - Check Status',
-            context: { seller, reportId, range, reportType, retry },
+            context: { seller, reportId, range, reportType, retry, user },
             model,
             sendFailureNotification: this._sendInitialPullFailureNotification.bind(this),
             maxRetries: 3, // Strict limit of 3 retries per report
@@ -674,17 +749,41 @@ class InitialPullController {
                 iInitialPull: 1
             },
             operation: async ({ attempt, currentRetry, context, startTime }) => {
-                const { seller, reportId, range, reportType, retry } = context;
+                const { seller, reportId, range, reportType, retry, user } = context;
+                const statusStartTime = new Date();
+                
                 // Set ProcessRunningStatus = 2 (Status Check)
                 await model.setProcessRunningStatus(cronDetailID, reportType, 2);
                 // Get access token
                 const currentAuthOverrides = await authService.buildAuthOverrides(seller.AmazonSellerID);
                 if (!currentAuthOverrides.accessToken) {				
                     logger.error({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request');
+                    
+                    // API Logger - Failed Status Check (No Token)
+                    const userId = user ? user.ID : null;
+                    apiLogger.logRequestStatus({
+                        userId,
+                        sellerId: seller.AmazonSellerID,
+                        sellerAccountId: seller.idSellerAccount,
+                        reportId,
+                        reportType,
+                        range: range.range,
+                        currentStatus: 'UNKNOWN',
+                        response: null,
+                        retryCount: currentRetry,
+                        attempt,
+                        startTime: statusStartTime,
+                        endTime: new Date(),
+                        executionTime: (Date.now() - startTime) / 1000,
+                        status: 'failure',
+                        error: { message: 'No access token available for report request' }
+                    });
+                    
                     throw new Error('No access token available for report request');
                 }
                 // Check report status with force refresh+retry on 401/403
                 let res;
+                let statusError = null;
                 try {
                     res = await sp.getReportStatus(seller, reportId, currentAuthOverrides);
                 } catch (err) {
@@ -693,12 +792,59 @@ class InitialPullController {
                         const refreshedOverrides = await authService.buildAuthOverrides(seller.AmazonSellerID, true);
                         if(!refreshedOverrides.accessToken) {
                             logger.error({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request after forced refresh');
-                            throw new Error('No access token available for report request after forced refresh');
+                            statusError = new Error('No access token available for report request after forced refresh');
+                            
+                            // API Logger - Failed Status Check (No Token After Refresh)
+                            const userId = user ? user.ID : null;
+                            apiLogger.logRequestStatus({
+                                userId,
+                                sellerId: seller.AmazonSellerID,
+                                sellerAccountId: seller.idSellerAccount,
+                                reportId,
+                                reportType,
+                                range: range.range,
+                                currentStatus: 'UNKNOWN',
+                                response: null,
+                                retryCount: currentRetry,
+                                attempt,
+                                startTime: statusStartTime,
+                                endTime: new Date(),
+                                executionTime: (Date.now() - startTime) / 1000,
+                                status: 'failure',
+                                error: statusError
+                            });
+                            
+                            throw statusError;
                         }
                         res = await sp.getReportStatus(seller, reportId, refreshedOverrides);
+                    } else {
+                        statusError = err;
+                        throw err;
                     }
                 }
                 const status = res.processingStatus;
+                const statusEndTime = new Date();
+                
+                // API Logger - Status Check
+                const userId = user ? user.ID : null;
+                apiLogger.logRequestStatus({
+                    userId,
+                    sellerId: seller.AmazonSellerID,
+                    sellerAccountId: seller.idSellerAccount,
+                    reportId,
+                    reportType,
+                    range: range.range,
+                    currentStatus: status,
+                    response: res,
+                    retryCount: currentRetry,
+                    attempt,
+                    startTime: statusStartTime,
+                    endTime: statusEndTime,
+                    executionTime: (Date.now() - startTime) / 1000,
+                    status: status ? 'success' : 'failure',
+                    error: statusError,
+                    reportDocumentId: res.reportDocumentId || null
+                });
                 if (status === 'DONE') {
                     const documentId = res.reportDocumentId || null;
 
@@ -731,7 +877,7 @@ class InitialPullController {
                     await DelayHelpers.wait(requestDelaySeconds, 'Between report status checks and downloads (rate limiting)');
 
                     const downloadResult = await this.circuitBreaker.execute(
-                        () => this._downloadInitialPullReport(cronDetailID, seller, reportId, documentId, range, reportType, authOverrides, retry),
+                        () => this._downloadInitialPullReport(cronDetailID, seller, reportId, documentId, range, reportType, authOverrides, retry, user),
                         { sellerId: seller.idSellerAccount, operation: 'downloadInitialPullReport' }
                     );
 
@@ -795,13 +941,13 @@ class InitialPullController {
     /**
      * Download initial pull report (Step 3: Download)
      */
-    async _downloadInitialPullReport(cronDetailID, seller, reportId, documentId, range, reportType, authOverrides = {}, retry = false) {
+    async _downloadInitialPullReport(cronDetailID, seller, reportId, documentId, range, reportType, authOverrides = {}, retry = false, user = null) {
         const result = await RetryHelpers.executeWithRetry({
             cronDetailID,
             amazonSellerID: seller.AmazonSellerID,
             reportType,
             action: retry ? 'Initial Pull - Retry Download Report' : 'Initial Pull - Download Report',
-            context: { seller, reportId, documentId, range, reportType },
+            context: { seller, reportId, documentId, range, reportType, user },
             model,
             sendFailureNotification: this._sendInitialPullFailureNotification.bind(this),
             maxRetries: 3, // Strict limit of 3 retries per report
@@ -811,7 +957,8 @@ class InitialPullController {
                 iInitialPull: 1
             },            
             operation: async ({ attempt, currentRetry, context, startTime }) => {
-                const { seller, reportId, documentId, range, reportType, retry } = context;
+                const { seller, reportId, documentId, range, reportType, retry, user } = context;
+                const downloadStartTime = new Date();
                 
                 logger.info({ reportId, documentId, range: range.range, attempt }, 'Starting initial pull download');
                 
@@ -847,11 +994,37 @@ class InitialPullController {
                 const currentAuthOverrides = await authService.buildAuthOverrides(seller.AmazonSellerID);
                 if (!currentAuthOverrides.accessToken) {				
                     logger.error({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request');
+                    
+                    // API Logger - Failed Download (No Token)
+                    const userId = user ? user.ID : null;
+                    apiLogger.logDownload({
+                        userId,
+                        sellerId: seller.AmazonSellerID,
+                        sellerAccountId: seller.idSellerAccount,
+                        reportId,
+                        reportDocumentId: documentId,
+                        reportType,
+                        range: range.range,
+                        fileUrl: null,
+                        filePath: null,
+                        fileSize: 0,
+                        rowCount: 0,
+                        downloadPayload: { documentId: documentId || reportId },
+                        startTime: downloadStartTime,
+                        endTime: new Date(),
+                        executionTime: (Date.now() - startTime) / 1000,
+                        status: 'failure',
+                        error: { message: 'No access token available for report request' },
+                        retryCount: currentRetry,
+                        attempt
+                    });
+                    
                     throw new Error('No access token available for report request');
                 }
                 
                 // Download report with force refresh+retry on 401/403
                 let res;
+                let downloadError = null;
                 try {
                     res = await sp.downloadReport(seller, documentId || reportId, currentAuthOverrides);
                 } catch (err) {
@@ -860,9 +1033,38 @@ class InitialPullController {
                         const refreshedOverrides = await authService.buildAuthOverrides(seller.AmazonSellerID, true);
                         if(!refreshedOverrides.accessToken) {
                             logger.error({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request after forced refresh');
-                            throw new Error('No access token available for report request after forced refresh');
+                            downloadError = new Error('No access token available for report request after forced refresh');
+                            
+                            // API Logger - Failed Download (No Token After Refresh)
+                            const userId = user ? user.ID : null;
+                            apiLogger.logDownload({
+                                userId,
+                                sellerId: seller.AmazonSellerID,
+                                sellerAccountId: seller.idSellerAccount,
+                                reportId,
+                                reportDocumentId: documentId,
+                                reportType,
+                                range: range.range,
+                                fileUrl: null,
+                                filePath: null,
+                                fileSize: 0,
+                                rowCount: 0,
+                                downloadPayload: { documentId: documentId || reportId },
+                                startTime: downloadStartTime,
+                                endTime: new Date(),
+                                executionTime: (Date.now() - startTime) / 1000,
+                                status: 'failure',
+                                error: downloadError,
+                                retryCount: currentRetry,
+                                attempt
+                            });
+                            
+                            throw downloadError;
                         }
                         res = await sp.downloadReport(seller, documentId || reportId, refreshedOverrides);
+                    } else {
+                        downloadError = err;
+                        throw err;
                     }
                 }
                 
@@ -889,6 +1091,7 @@ class InitialPullController {
                     };
                     let filePath = null;
                     let fileSize = 0;
+                    const downloadEndTime = new Date();
                     
                     try {
                         const saveResult = await jsonSvc.saveReportJsonFile(downloadMeta, data);
@@ -899,8 +1102,57 @@ class InitialPullController {
                             fileSize = stat ? stat.size : 0;
                             logger.info({ filePath, fileSize, range: range.range }, 'Initial pull JSON saved');
                         }
+                        
+                        // API Logger - Successful Download with Data
+                        const userId = user ? user.ID : null;
+                        apiLogger.logDownload({
+                            userId,
+                            sellerId: seller.AmazonSellerID,
+                            sellerAccountId: seller.idSellerAccount,
+                            reportId,
+                            reportDocumentId: documentId,
+                            reportType,
+                            range: range.range,
+                            fileUrl: res?.url || null,
+                            filePath,
+                            fileSize,
+                            rowCount: data.length,
+                            downloadPayload: { documentId: documentId || reportId },
+                            startTime: downloadStartTime,
+                            endTime: downloadEndTime,
+                            executionTime: (Date.now() - startTime) / 1000,
+                            status: 'success',
+                            error: downloadError,
+                            retryCount: currentRetry,
+                            attempt
+                        });
+                        
                     } catch (fileErr) {
                         logger.warn({ error: fileErr.message, range: range.range }, 'Failed to save JSON file');
+                        
+                        // API Logger - Download Success but File Save Failed
+                        const userId = user ? user.ID : null;
+                        apiLogger.logDownload({
+                            userId,
+                            sellerId: seller.AmazonSellerID,
+                            sellerAccountId: seller.idSellerAccount,
+                            reportId,
+                            reportDocumentId: documentId,
+                            reportType,
+                            range: range.range,
+                            fileUrl: res?.url || null,
+                            filePath: null,
+                            fileSize: 0,
+                            rowCount: data.length,
+                            downloadPayload: { documentId: documentId || reportId },
+                            startTime: downloadStartTime,
+                            endTime: new Date(),
+                            executionTime: (Date.now() - startTime) / 1000,
+                            status: 'partial_success',
+                            error: fileErr,
+                            retryCount: currentRetry,
+                            attempt
+                        });
                     }
                     
                     // Update download URL record with completed status
@@ -1020,6 +1272,30 @@ class InitialPullController {
                         range: range.range,
                         retry
                     }, 'Report returned 0 rows - no search query data for this period');
+                    
+                    // API Logger - Download with No Data
+                    const userId = user ? user.ID : null;
+                    apiLogger.logDownload({
+                        userId,
+                        sellerId: seller.AmazonSellerID,
+                        sellerAccountId: seller.idSellerAccount,
+                        reportId,
+                        reportDocumentId: documentId,
+                        reportType,
+                        range: range.range,
+                        fileUrl: res?.url || null,
+                        filePath: null,
+                        fileSize: 0,
+                        rowCount: 0,
+                        downloadPayload: { documentId: documentId || reportId },
+                        startTime: downloadStartTime,
+                        endTime: new Date().toISOString(),
+                        executionTime: (Date.now() - startTime) / 1000,
+                        status: 'success',
+                        error: null,
+                        retryCount: currentRetry,
+                        attempt
+                    });
                     
                     // Update download status as completed but with no data
                     await downloadUrls.updateDownloadUrlStatusByCriteria(
@@ -1155,7 +1431,7 @@ class InitialPullController {
      * Find failed initial pull records
      * @returns {Promise<Array>} Failed records that need retry
      */
-    async findFailedInitialPullRecords() {
+    async findFailedInitialPullRecords(user) {
         const SqpCronDetails = getSqpCronDetails();
         
         // Calculate time (6 hours ago)
@@ -1422,7 +1698,7 @@ class InitialPullController {
                                         executionTime: 0
                                     });
                                     
-                                    const result = await this.retryStuckRecord(rec, log.reportType, authOverrides, log);
+                                    const result = await this.retryStuckRecord(rec, log.reportType, authOverrides, log, user);
                                     
                                     if (result.success) {
                                         totalSuccess++;
@@ -1528,7 +1804,7 @@ class InitialPullController {
     /**
      * Retry a stuck record's pipeline for a specific report type, then finalize status.
      */
-    async retryStuckRecord(record, reportType, authOverrides, recordLog) {
+    async retryStuckRecord(record, reportType, authOverrides, recordLog, user = null) {
         // Check memory usage before processing
         const memoryStats = MemoryMonitor.getMemoryStats();
         if (MemoryMonitor.isMemoryUsageHigh(Number(process.env.MAX_MEMORY_USAGE_MB) || 500)) {
@@ -1568,7 +1844,8 @@ class InitialPullController {
                     rangeObj,
                     reportType,
                     authOverrides,
-                    true // retry flag
+                    true, // retry flag
+                    user
                 ),
                 { sellerId: seller.idSellerAccount, operation: 'recheckInitialPullReportStatus' }
             );

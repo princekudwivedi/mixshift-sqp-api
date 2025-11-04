@@ -254,9 +254,7 @@ async function saveReportJsonFile(download, jsonContent) {
 async function parseAndStoreJsonData(download, jsonContent, filePath, reportDateOverride) {
 	try {        
         const { DateHelpers } = require('../helpers/sqp.helpers');
-        // Get the report date based on the report type (fallback)
-        const defaultReportDate = DateHelpers.getReportDateForPeriod(download.ReportType);
-
+        
 		let records = [];
 		
 		// Handle different JSON shapes
@@ -278,7 +276,7 @@ async function parseAndStoreJsonData(download, jsonContent, filePath, reportDate
         let minRange = null;
         let maxRange = null;
 		for (const record of records) {
-			const row = buildMetricsRow(download, defaultReportDate, record, filePath, reportDateOverride);
+			const row = buildMetricsRow(download, record, filePath, reportDateOverride);
 			if (row) rows.push(row);
             const s = record.startDate || null;
             const e = record.endDate || null;
@@ -346,7 +344,7 @@ async function importJsonWithRetry(download, jsonContent, filePath, reportDateOv
 /**
  * Store a single report record in the database
  */
-function buildMetricsRow(download, reportDate, record, filePath, reportDateOverride) {
+function buildMetricsRow(download, record, filePath, reportDateOverride) {
 	try {
 		// SQP structured fields
 		const startDate = record.startDate || null;
@@ -371,7 +369,7 @@ function buildMetricsRow(download, reportDate, record, filePath, reportDateOverr
 		return {
 			AmazonSellerID: amazonSellerID,
 			SellerID: sellerID,
-			ReportDate: reportDateOverride || endDate || reportDate,
+			ReportDate: reportDateOverride || endDate,
 			StartDate: startDate,
 			EndDate: endDate,
 			CurrencyCode: currencyCode,

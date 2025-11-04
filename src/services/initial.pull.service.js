@@ -191,36 +191,6 @@ class InitialPullService {
     }
 
     /**
-     * Get summary of historical ranges
-     * @returns {Object} Summary with counts and date ranges
-     */
-    getHistoricalSummary() {
-        const ranges = this.calculateFullRanges();
-        
-        return {
-            weeks: {
-                count: ranges.weekRanges.length,
-                fullRange: ranges.fullWeekRange,
-                skipLatest: true,
-                ranges: ranges.weekRanges
-            },
-            months: {
-                count: ranges.monthRanges.length,
-                fullRange: ranges.fullMonthRange,
-                skipCurrent: true,
-                ranges: ranges.monthRanges
-            },
-            quarters: {
-                count: ranges.quarterRanges.length,
-                fullRange: ranges.fullQuarterRange,
-                skipCurrent: true,
-                ranges: ranges.quarterRanges
-            },
-            totalRanges: ranges.weekRanges.length + ranges.monthRanges.length + ranges.quarterRanges.length
-        };
-    }
-
-    /**
      * Format date for Amazon SP-API (YYYY-MM-DD)
      * @param {Date} date - Date object
      * @returns {string} Formatted date string
@@ -229,35 +199,6 @@ class InitialPullService {
         return date.toISOString().split('T')[0];
     }
 
-    /**
-     * Get date range for specific index and type
-     * @param {string} type - 'WEEK', 'MONTH', or 'QUARTER'
-     * @param {number} index - Index in the array (0 = most recent)
-     * @returns {Object} Date range object
-     */
-    getDateRangeByIndex(type, index) {
-        let ranges;
-        
-        switch(type) {
-            case 'WEEK':
-                ranges = this.calculateWeekRanges(7, true);
-                break;
-            case 'MONTH':
-                ranges = this.calculateMonthRanges(36, true);
-                break;
-            case 'QUARTER':
-                ranges = this.calculateQuarterRanges(8, true);
-                break;
-            default:
-                throw new Error(`Invalid type: ${type}. Must be WEEK, MONTH, or QUARTER`);
-        }
-        
-        if (index < 0 || index >= ranges.length) {
-            throw new Error(`Invalid index: ${index}. Must be between 0 and ${ranges.length - 1}`);
-        }
-        
-        return ranges[index];
-    }
 }
 
 module.exports = new InitialPullService();
