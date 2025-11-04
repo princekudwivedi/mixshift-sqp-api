@@ -1074,16 +1074,26 @@ async function finalizeCronRunningStatus(cronDetailID, user = null) {
         const weekly = row.WeeklySQPDataPullStatus;
         const monthly = row.MonthlySQPDataPullStatus;
         const quarterly = row.QuarterlySQPDataPullStatus;
-
-        // Filter out null/undefined statuses (reports that weren't requested)
-        const statuses = [weekly, monthly, quarterly].filter(s => s !== null && s !== undefined);
         
-        // If no statuses set yet, keep cronRunningStatus as is (likely 1 = running)
-        if (statuses.length === 0) {
-            logger.info({ cronDetailID }, 'No report statuses set yet, keeping cronRunningStatus unchanged');
+        const weeklyProcess = row.WeeklyProcessRunningStatus;
+        const monthlyProcess = row.MonthlyProcessRunningStatus;
+        const quarterlyProcess = row.QuarterlyProcessRunningStatus;
+
+        // Build list of actively processed report types (ProcessRunningStatus > 0)
+        const activeReports = [];
+        if (weeklyProcess > 0) activeReports.push({ type: 'WEEK', status: weekly, process: weeklyProcess });
+        if (monthlyProcess > 0) activeReports.push({ type: 'MONTH', status: monthly, process: monthlyProcess });
+        if (quarterlyProcess > 0) activeReports.push({ type: 'QUARTER', status: quarterly, process: quarterlyProcess });
+        
+        // If no active reports, keep cronRunningStatus as is
+        if (activeReports.length === 0) {
+            logger.info({ cronDetailID }, 'No active report types being processed, keeping cronRunningStatus unchanged');
             return;
         }
 
+        // Get only statuses for active reports
+        const statuses = activeReports.map(r => r.status);
+        
         const anyInProgress = statuses.some(s => s === 0);
         const anyRetryNeeded = statuses.some(s => s === 2);
         const anyFatal = statuses.some(s => s === 3);
@@ -1129,6 +1139,7 @@ async function finalizeCronRunningStatus(cronDetailID, user = null) {
                 oldStatus: row.cronRunningStatus, 
                 newStatus, 
                 reason,
+                activeReports: activeReports.map(r => `${r.type}(status:${r.status})`).join(', '),
                 weekly, 
                 monthly, 
                 quarterly 
@@ -1145,6 +1156,7 @@ async function finalizeCronRunningStatus(cronDetailID, user = null) {
                 cronDetailID, 
                 cronRunningStatus: row.cronRunningStatus, 
                 reason,
+                activeReports: activeReports.map(r => `${r.type}(status:${r.status})`).join(', '),
                 weekly, 
                 monthly, 
                 quarterly 
