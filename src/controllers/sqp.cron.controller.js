@@ -1,5 +1,6 @@
 const logger = require('../utils/logger.utils');
 const apiLogger = require('../utils/api.logger.utils');
+const { sendFailureNotification, shouldSendNotification, getErrorType } = require('../utils/notification.utils');
 const dates = require('../utils/dates.utils');
 const model = require('../models/sqp.cron.model');
 const sellerModel = require('../models/sequelize/seller.model');
@@ -10,77 +11,6 @@ const downloadUrls = require('../models/sqp.download.urls.model');
 const { NotificationHelpers, RetryHelpers, DelayHelpers, Helpers } = require('../helpers/sqp.helpers');
 const env = require('../config/env.config');
 const authService = require('../services/auth.service');
-
-/**
- * Send failure notification when max retries are reached
- */
-async function sendFailureNotification(cronDetailID, amazonSellerID, reportType, errorMessage, retryCount, reportId = null, isFatalError = false) {
-	try {
-		// Determine notification type and message
-		const notificationType = isFatalError ? 'FATAL ERROR' : 'MAX RETRIES REACHED';
-		const notificationReason = isFatalError 
-			? 'Amazon returned FATAL/CANCELLED status - no retries attempted'
-			: `Max retries (${retryCount}) exhausted`;
-		
-		logger.error({
-			cronDetailID,
-			amazonSellerID,
-			reportType,
-			errorMessage,
-			retryCount,
-			isFatalError,
-			notificationType
-		}, `SENDING FAILURE NOTIFICATION - ${notificationType}`);
-		
-		// Log the notification (status 3 for fatal, 2 for retryable)
-        await model.logCronActivity({
-			cronJobID: cronDetailID,
-			reportType: reportType,
-			action: isFatalError ? 'Fatal Error' : 'Failure Notification',
-			status: isFatalError ? 3 : 2,
-			message: `NOTIFICATION: Report failed after ${retryCount} attempts. ${notificationReason}. Error: ${errorMessage}`,
-            reportID: reportId,
-			retryCount: retryCount,
-			executionTime: 0
-		});
-        
-        // Send actual email notification if SMTP and recipients are configured
-        const to = NotificationHelpers.parseList(process.env.NOTIFY_TO || require('../config/env.config').env.NOTIFY_TO);
-        const cc = NotificationHelpers.parseList(process.env.NOTIFY_CC || require('../config/env.config').env.NOTIFY_CC);
-        const bcc = NotificationHelpers.parseList(process.env.NOTIFY_BCC || require('../config/env.config').env.NOTIFY_BCC);
-        if ((to.length + cc.length + bcc.length) > 0) {
-            // Different subject lines for FATAL vs retry exhaustion
-            const subject = isFatalError 
-                ? `SQP Cron FATAL Error [${reportType}] - No retries`
-                : `SQP Cron Failed after ${retryCount} attempts [${reportType}]`;
-            
-            const html = `
-                <h3>SQP Cron Failure${isFatalError ? ' - FATAL Error' : ''}</h3>
-                <p><strong>Cron Detail ID:</strong> ${cronDetailID}</p>
-                <p><strong>Seller:</strong> ${amazonSellerID}</p>
-                <p><strong>Report Type:</strong> ${reportType}</p>
-                <p><strong>Report ID:</strong> ${reportId || 'N/A'}</p>
-                <p><strong>Retry Count:</strong> ${retryCount}</p>
-                <p><strong>Failure Type:</strong> ${isFatalError ? 'Amazon FATAL/CANCELLED (immediate)' : 'Max retry attempts exhausted'}</p>
-                <p><strong>Error:</strong> ${errorMessage}</p>
-                <p><strong>Time:</strong> ${new Date().toISOString()}</p>
-                ${isFatalError ? '<p><em>Note: This report returned a FATAL/CANCELLED status from Amazon and cannot be recovered. No retry attempts were made.</em></p>' : ''}
-            `;
-            await NotificationHelpers.sendEmail({ subject, html, to, cc, bcc });
-        } else {
-            logger.warn('Notification recipients not configured (NOTIFY_TO/CC/BCC)');
-        }
-		
-	} catch (notificationError) {
-		logger.error({ 
-			notificationError: notificationError ? (notificationError.message || String(notificationError)) : 'Unknown error',
-			errorStack: notificationError?.stack,
-			cronDetailID,
-			amazonSellerID,
-			reportType
-		}, 'Failed to send failure notification');
-	}
-}
 
 async function requestForSeller(seller, authOverrides = {}, spReportType = config.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT, user = null) {
 	logger.info({ seller: seller.idSellerAccount }, 'Requesting SQP reports for seller');	
@@ -167,7 +97,22 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 		action: 'Request Report',
 		context: { chunk, seller, authOverrides, user },
 		model,
-		sendFailureNotification,
+		sendFailureNotification: (cronDetailID, amazonSellerID, reportType, errorMessage, retryCount, reportId, isFatalError, range) => {
+			return sendFailureNotification({
+				cronDetailID,
+				amazonSellerID,
+				reportType,
+				errorMessage,
+				retryCount,
+				reportId,
+				isFatalError,
+				range,
+				model,
+				NotificationHelpers,
+				env,
+				context: 'Cron'
+			});
+		},
 		operation: async ({ attempt, currentRetry, context, startTime }) => {
 			const { chunk, seller, authOverrides, user } = context;
 			
@@ -446,17 +391,35 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 		return;
 	}
 
+	// Calculate date range for the report type
+	const range = dates.getDateRangeForPeriod(reportType);
+
 	// Use the universal retry function
 	const result = await RetryHelpers.executeWithRetry({
 		cronDetailID: row.ID,
 		amazonSellerID: row.AmazonSellerID,
 		reportType,
 		action: 'Check Status',
-		context: { row, reportId, seller, authOverrides, isRetry: retry, user },
+		context: { row, reportId, seller, authOverrides, isRetry: retry, user, range },
 		model,
-		sendFailureNotification,
+		sendFailureNotification: (cronDetailID, amazonSellerID, reportType, errorMessage, retryCount, reportId, isFatalError, range) => {
+			return sendFailureNotification({
+				cronDetailID,
+				amazonSellerID,
+				reportType,
+				errorMessage,
+				retryCount,
+				reportId,
+				isFatalError,
+				range,
+				model,
+				NotificationHelpers,
+				env,
+				context: 'Cron'
+			});
+		},
 		operation: async ({ attempt, currentRetry, context, startTime }) => {
-			const { row, reportId, seller, authOverrides, isRetry, user } = context;
+			const { row, reportId, seller, authOverrides, isRetry, user, range } = context;
 			const statusStartTime = new Date().toISOString();
 			
 			// Ensure access token for this seller during status checks
@@ -473,7 +436,7 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 					sellerAccountId: seller.idSellerAccount,
 					reportId,
 					reportType,
-					range: `${range.start} to ${range.end} (user timezone: ${user.Timezone})`,
+					range: `${range.start} to ${range.end}`,
 					currentStatus: 'UNKNOWN',
 					response: null,
 					retryCount: currentRetry,
@@ -509,7 +472,7 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 							sellerAccountId: seller.idSellerAccount,
 							reportId,
 							reportType,
-							range: `${range.start} to ${range.end} (user timezone: ${user.Timezone})`,
+							range: `${range.start} to ${range.end}`,
 							currentStatus: 'UNKNOWN',
 							response: null,
 							retryCount: currentRetry,
@@ -540,7 +503,7 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 				sellerAccountId: seller.idSellerAccount,
 				reportId,
 				reportType,
-				range: `${range.start} to ${range.end} (user timezone: ${user.Timezone})`,
+				range: `${range.start} to ${range.end}`,
 				currentStatus: status,
 				response: res,
 				retryCount: currentRetry,
@@ -576,7 +539,7 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 				// ProcessRunningStatus = 3 (Download)
                 await model.setProcessRunningStatus(row.ID, reportType, 3);
                 
-				const downloadResult = await downloadReportByType(row, reportType, authOverrides, reportId, user);
+				const downloadResult = await downloadReportByType(row, reportType, authOverrides, reportId, user, range);
 				return {
 					message: downloadResult?.message ? downloadResult?.message : `Report ready on attempt ${attempt}. Report ID: ${reportId}${documentId ? ' | Document ID: ' + documentId : ''}`,
 					action: downloadResult?.action ? downloadResult?.action : 'Check Status and Download Report',
@@ -667,7 +630,7 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 	return result;
 }
 
-async function downloadReportByType(row, reportType, authOverrides = {}, reportId = null, user = null) {
+async function downloadReportByType(row, reportType, authOverrides = {}, reportId = null, user = null, range = null) {
     if (!reportId) {
         reportId = await model.getLatestReportId(row.ID, reportType);
         if (!reportId) {
@@ -675,6 +638,7 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
             return { success: true, skipped: true, reason: 'No ReportID in logs' };
         }
     }
+	
 	
 	// Load seller profile by AmazonSellerID (avoid env defaults)
 	const seller = await sellerModel.getProfileDetailsByAmazonSellerID(row.AmazonSellerID);
@@ -689,11 +653,26 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 		amazonSellerID: row.AmazonSellerID,
 		reportType,
 		action: 'Download Report',
-		context: { row, reportId, seller, authOverrides, user },
+		context: { row, reportId, seller, authOverrides, user, range },
 		model,
-		sendFailureNotification,
+		sendFailureNotification: (cronDetailID, amazonSellerID, reportType, errorMessage, retryCount, reportId, isFatalError, range) => {
+			return sendFailureNotification({
+				cronDetailID,
+				amazonSellerID,
+				reportType,
+				errorMessage,
+				retryCount,
+				reportId,
+				isFatalError,
+				range,
+				model,
+				NotificationHelpers,
+				env,
+				context: 'Cron'
+			});
+		},
 		operation: async ({ attempt, currentRetry, context, startTime }) => {
-			const { row, reportId, seller, authOverrides, user } = context;
+			const { row, reportId, seller, authOverrides, user, range } = context;
 			const downloadStartTime = new Date().toISOString();
 			
 			logger.info({ reportId, reportType, attempt }, 'Starting download for report');
@@ -723,7 +702,7 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 					reportId,
 					reportDocumentId: null,
 					reportType,
-					range: `${range.start} to ${range.end} (user timezone: ${user.Timezone})`,
+					range: `${range.start} to ${range.end}`,
 					fileUrl: null,
 					filePath: null,
 					fileSize: 0,
@@ -792,7 +771,7 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 							reportId,
 							reportDocumentId: documentId,
 							reportType,
-							range: `${range.start} to ${range.end} (user timezone: ${user.Timezone})`,
+							range: `${range.start} to ${range.end}`,
 							fileUrl: null,
 							filePath: null,
 							fileSize: 0,
@@ -852,7 +831,7 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 						reportId,
 						reportDocumentId: documentId,
 						reportType,
-						range: `${range.start} to ${range.end} (user timezone: ${user.Timezone})`,
+						range: `${range.start} to ${range.end}`,
 						fileUrl: res?.url || null,
 						filePath,
 						fileSize,
@@ -879,7 +858,7 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 						reportId,
 						reportDocumentId: documentId,
 						reportType,
-						range: `${range.start} to ${range.end} (user timezone: ${user.Timezone})`,
+						range: `${range.start} to ${range.end}`,
 						fileUrl: res?.url || null,
 						filePath: null,
 						fileSize: 0,
@@ -963,8 +942,8 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 					);
 
 					// Use the unified completion handler for no-data scenario
-					await jsonSvc.handleReportCompletion(row.ID, reportType, row.AmazonSellerID, null, false);
-					
+					await jsonSvc.handleReportCompletion(row.ID, reportType, row.AmazonSellerID, null, false);					
+
 					return {
 						action: 'Download Completed & Import Done - No Data to import',
 						message: `Report downloaded on attempt ${attempt} but contains no data`,
@@ -1054,15 +1033,20 @@ async function handleFatalOrUnknownStatus(row, reportType, status, reportId = nu
     
     // FATAL/CANCELLED = Send notification immediately with 0 attempts
     // This is different from regular failures which notify after 3 retry attempts
-    await sendFailureNotification(
-        row.ID, 
-        row.AmazonSellerID, 
+    await sendFailureNotification({
+        cronDetailID: row.ID, 
+        amazonSellerID: row.AmazonSellerID, 
         reportType, 
-        `Amazon returned ${status} status - report cannot be recovered`, 
-        0,  // 0 attempts for FATAL - sent immediately
+        errorMessage: `Amazon returned ${status} status - report cannot be recovered`, 
+        retryCount: 0,  // 0 attempts for FATAL - sent immediately
         reportId,
-        true  // isFatalError flag
-    );
+        isFatalError: true,  // isFatalError flag
+        range: null,
+        model,
+        NotificationHelpers,
+        env,
+        context: 'Cron'
+    });
     
     logger.info({ 
         cronDetailID: row.ID, 
@@ -1174,7 +1158,6 @@ async function finalizeCronRunningStatus(cronDetailID, user = null) {
 module.exports = {
 	requestForSeller,
 	checkReportStatuses,
-	sendFailureNotification,
 	finalizeCronRunningStatus,
 };
 

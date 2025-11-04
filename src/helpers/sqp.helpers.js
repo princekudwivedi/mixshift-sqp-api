@@ -281,7 +281,16 @@ class RetryHelpers {
                             contextReportId: context?.reportId,
                             contextReportID: context?.reportID
                         }, 'Sending failure notification with reportId and range');
-                        await sendFailureNotification(cronDetailID, amazonSellerID, reportType, errorMsg, newRetryCount, reportId, false, range);
+                        await sendFailureNotification(
+                            cronDetailID, 
+                            amazonSellerID, 
+                            reportType, 
+                            errorMsg, 
+                            newRetryCount, 
+                            reportId, 
+                            false, // isFatalError
+                            range
+                        );
                     }
 
                     return {

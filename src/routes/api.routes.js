@@ -31,25 +31,4 @@ router.get('/cron/sqp/initial/pull', (req, res) => initialPullController.runInit
 // Retry failed initial pull route
 router.get('/cron/sqp/initial/retry', (req, res) => initialPullController.retryFailedInitialPull(req, res));
 
-// Shared error handling middleware for all routes
-router.use((err, req, res, next) => {
-    logger.error({ error: err.message, path: req.path }, 'API route error');
-    res.status(500).json({
-        success: false,
-        message: 'Internal server error',
-        timestamp: new Date().toISOString()
-    });
-});
-
-// 404 handler for undefined routes
-router.use((req, res) => {
-    res.status(404).json({
-        success: false,
-        message: 'API route not found',
-        path: req.originalUrl,
-        method: req.method,
-        timestamp: new Date().toISOString()
-    });
-});
-
 module.exports = router;
