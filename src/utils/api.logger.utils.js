@@ -324,9 +324,9 @@ class APILogger {
             } : undefined
         };
 
-        const filePath = this.getLogFilePath(userId, sellerAccountId, sellerId, 'download');
+        const logFilePath = this.getLogFilePath(userId, sellerAccountId, sellerId, 'download');
         const logEntry = this.formatLogEntry(logData);
-        this.writeLog(filePath, logEntry);
+        this.writeLog(logFilePath, logEntry);
 
         return logData;
     }
