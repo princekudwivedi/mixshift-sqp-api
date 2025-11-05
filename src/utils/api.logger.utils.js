@@ -56,12 +56,12 @@ class APILogger {
         const sellerAccountFolder = sellerAccountId.toString();
 
         // New structure: amazonSellerID comes before sellerAccountId
-        const logDir = path.join(this.baseLogPath, userFolder, dateFolder, amazonSellerFolder, sellerAccountFolder);
+        const logDir = path.join(this.baseLogPath, userFolder, dateFolder, sellerAccountFolder);
         this.ensureLogDirectory(logDir);
 
         // Add name and date to filename
         const namePrefix = name ? `${name}_` : '';
-        const logFileName = `${logType}__${namePrefix}${date}.log`;
+        const logFileName = `${amazonSellerID}__${logType}__${namePrefix}${date}.log`;
         return path.join(logDir, logFileName);
     }
 
