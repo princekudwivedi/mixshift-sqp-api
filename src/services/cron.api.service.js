@@ -244,7 +244,7 @@ class CronApiService {
                                         }, 'High memory usage detected, skipping record processing');
                                         continue;
                                     }
-                                    const rr = await this.retryStuckRecord(rec, type, authOverrides);
+                                    const rr = await this.retryStuckRecord(rec, type, authOverrides, user);
                                     retryResults.push(rr);
                                 } catch (e) {
                                     retryResults.push({
@@ -397,7 +397,7 @@ class CronApiService {
     /**
      * Retry a stuck record's pipeline for a specific report type, then finalize status.
      */
-    async retryStuckRecord(record, reportType, authOverrides) {
+    async retryStuckRecord(record, reportType, authOverrides, user) {
         // Lazy load to avoid circular dependencies
         const { getModel: getSqpCronDetails } = require('../models/sequelize/sqpCronDetails.model');
         const ctrl = require('../controllers/sqp.cron.controller');
@@ -411,10 +411,11 @@ class CronApiService {
             }, 'High memory usage detected, skipping seller processing');            
             return;
         }
+
         await model.updateSQPReportStatus(record.ID, reportType, 2, null, null, 4, true); // 4 is retry mark running status
         let res = null;
         try {
-            res = await ctrl.checkReportStatuses(authOverrides, { cronDetailID: [record.ID], reportType: reportType, cronDetailData: [record] }, true);
+            res = await ctrl.checkReportStatuses(authOverrides, { cronDetailID: [record.ID], reportType: reportType, cronDetailData: [record], user: user }, true);
         } catch (e) {
             logger.error({ id: record.ID, reportType, error: e.message }, 'Retry status check failed');
         }
