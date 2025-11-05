@@ -225,8 +225,14 @@ async function getActiveASINsBySeller(sellerId = null, limit = true, reportType 
         const where = {
             IsActive: 1,
             ...sellerFilter,
-            QuarterlyLastSQPDataPullStatus: 2,
-            MonthlyLastSQPDataPullStatus: 2,
+            [Op.or]: [
+                { QuarterlyLastSQPDataPullStatus: 2 },
+                { QuarterlyLastSQPDataPullStatus: 3 }
+            ],
+            [Op.or]: [
+                { MonthlyLastSQPDataPullStatus: 2 },
+                { MonthlyLastSQPDataPullStatus: 3 }
+            ],
             [Op.and]: [
                 {
                     [Op.or]: [
@@ -249,8 +255,14 @@ async function getActiveASINsBySeller(sellerId = null, limit = true, reportType 
         const where = {
             IsActive: 1,
             ...sellerFilter,
-            QuarterlyLastSQPDataPullStatus: 2,            
-            WeeklyLastSQPDataPullStatus: 2,
+            [Op.or]: [
+                { QuarterlyLastSQPDataPullStatus: 2 },
+                { QuarterlyLastSQPDataPullStatus: 3 }
+            ],
+            [Op.or]: [
+                { WeeklyLastSQPDataPullStatus: 2 },
+                { WeeklyLastSQPDataPullStatus: 3 }
+            ],
             [Op.and]: [
                 {
                     [Op.or]: [
@@ -273,8 +285,14 @@ async function getActiveASINsBySeller(sellerId = null, limit = true, reportType 
         const where = {
             IsActive: 1,
             ...sellerFilter,
-            WeeklyLastSQPDataPullStatus: 2,
-            MonthlyLastSQPDataPullStatus: 2,
+            [Op.or]: [
+                { MonthlyLastSQPDataPullStatus: 2 },
+                { MonthlyLastSQPDataPullStatus: 3 }
+            ],
+            [Op.or]: [
+                { WeeklyLastSQPDataPullStatus: 2 },
+                { WeeklyLastSQPDataPullStatus: 3 }
+            ],
             [Op.and]: [
                 {
                     [Op.or]: [
@@ -301,21 +319,6 @@ async function getActiveASINsBySeller(sellerId = null, limit = true, reportType 
         const filteredReports = reportType ? reportTypes.filter(t => t === reportType) : reportTypes;
         if (filteredReports.length === 0) return { reportTypes: [], asins: [] };
         
-        // // 🔍 DEBUG: Log the where clause with Symbol keys visible
-        // console.log(`\n🔍 [${scenarioName}] Checking ASINs for reports: ${filteredReports.join(', ')}`);
-        // console.log('   WHERE Object Keys:', Object.keys(where));
-        // console.log('   WHERE Symbol Keys:', Object.getOwnPropertySymbols(where).map(s => s.toString()));
-        // console.log('   retryCutoffTime:', retryCutoffTime);
-        // console.log('   sellerId:', sellerId);
-        
-        // // Show actual conditions
-        // if (where[Op.or]) {
-        //     console.log('   ✅ Has [Op.or] conditions:', where[Op.or].length, 'items');
-        // }
-        // if (where[Op.and]) {
-        //     console.log('   ✅ Has [Op.and] conditions:', where[Op.and].length, 'items');
-        // }
-        
         const asins = await SellerAsinList.findAll({
             where,
             attributes: ['ASIN', 'WeeklyLastSQPDataPullStatus', 'WeeklyLastSQPDataPullStartTime',
@@ -323,17 +326,10 @@ async function getActiveASINsBySeller(sellerId = null, limit = true, reportType 
                          'QuarterlyLastSQPDataPullStatus', 'QuarterlyLastSQPDataPullStartTime'],
             ...(limit ? { limit: env.MAX_ASINS_PER_REQUEST } : {}),
             order: [['dtCreatedOn', 'ASC']]
-            //,
-            //logging: (sql) => console.log('   📝 SQL:', sql) // Show actual SQL query
         });
 
-        //console.log(`   📊 Found ${asins.length} ASINs`);
+        
         if (asins.length > 0) {
-            // console.log('   Sample ASIN:', asins[0].ASIN);
-            // console.log('      Weekly Status:', asins[0].WeeklyLastSQPDataPullStatus, 'Start:', asins[0].WeeklyLastSQPDataPullStartTime);
-            // console.log('      Monthly Status:', asins[0].MonthlyLastSQPDataPullStatus, 'Start:', asins[0].MonthlyLastSQPDataPullStartTime);
-            // console.log('      Quarterly Status:', asins[0].QuarterlyLastSQPDataPullStatus, 'Start:', asins[0].QuarterlyLastSQPDataPullStartTime);
-            
             logger.info({ sellerId, count: asins.length }, `Scenario matched: ${filteredReports.join('|')}`);
             return { reportTypes: filteredReports, asins: asins.map(a => a.ASIN) };
         }
