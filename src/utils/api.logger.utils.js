@@ -52,7 +52,6 @@ class APILogger {
         const date = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
         const userFolder = `user__${userId}`;
         const dateFolder = date;
-        const amazonSellerFolder = amazonSellerID;
         const sellerAccountFolder = sellerAccountId.toString();
 
         // New structure: amazonSellerID comes before sellerAccountId
@@ -61,7 +60,7 @@ class APILogger {
 
         // Add name and date to filename
         const namePrefix = name ? `${name}_` : '';
-        const logFileName = `${amazonSellerID}__${logType}__${namePrefix}${date}.log`;
+        const logFileName = `${logType}__${namePrefix}${date}.log`;
         return path.join(logDir, logFileName);
     }
 
