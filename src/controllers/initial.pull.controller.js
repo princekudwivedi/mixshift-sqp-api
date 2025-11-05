@@ -1258,7 +1258,7 @@ class InitialPullController {
                     { Message: { [Op.notLike]: '%CANCELLED%' } }
                   ]
                 },
-                order: [['dtCreatedOn', 'DESC']],
+                order: [['dtCreatedOn', 'ASC']],
                 limit: 70
             });
               
