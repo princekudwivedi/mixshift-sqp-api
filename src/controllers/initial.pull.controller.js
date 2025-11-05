@@ -1,6 +1,6 @@
 /**
  * Initial Pull Controller
- * Handles historical ASIN data pulling (6 weeks, 35 months, 7 quarters)
+ * Handles historical ASIN data pulling
  */
 
 const { SuccessHandler, ErrorHandler } = require('../middleware/response.handlers');
@@ -26,7 +26,6 @@ class InitialPullController {
     
     /**
      * Run initial pull for all users or specific user/seller
-     * Pulls historical data: 6 weeks, 35 months, 7 quarters
      * 
      * Query params:
      * - userId: Process specific user (optional)

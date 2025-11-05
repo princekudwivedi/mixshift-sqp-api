@@ -51,13 +51,13 @@ class InitialPullService {
      * 1. Current incomplete week (e.g., Oct 5-11, 2025)
      * 2. Previous complete week (e.g., Sep 27-Oct 4, 2025) - Latest week
      * 
-     * PULL: 6 weeks starting from 2 weeks ago
+     * PULL: 52 weeks starting from 2 weeks ago
      * 
-     * @param {number} numberOfWeeks - Number of weeks to pull (default 6)
+     * @param {number} numberOfWeeks - Number of weeks to pull (default 52)
      * @param {boolean} skipLatest - Skip current + previous week (default true)
      * @returns {Array} Array of week range objects
      */
-    calculateWeekRanges(numberOfWeeks = 6, skipLatest = true) {
+    calculateWeekRanges(numberOfWeeks = 52, skipLatest = true) {
         const ranges = [];
         const today = new Date();
         
@@ -102,13 +102,12 @@ class InitialPullService {
      * 1. Current incomplete month (e.g., October 2025)
      * 2. Previous complete month (e.g., September 2025) - Latest month
      * 
-     * PULL: 35 months starting from 2 months ago
      * 
-     * @param {number} numberOfMonths - Number of months to pull (default 35)
+     * @param {number} numberOfMonths - Number of months to pull (default 12)
      * @param {boolean} skipCurrent - Skip current + previous month (default true)
      * @returns {Array} Array of month range objects
      */
-    calculateMonthRanges(numberOfMonths = 35, skipCurrent = true) {
+    calculateMonthRanges(numberOfMonths = 12, skipCurrent = true) {
         const ranges = [];
         const today = new Date();
         
@@ -137,13 +136,13 @@ class InitialPullService {
      * 1. Current incomplete quarter (e.g., Q4 2025: Oct-Dec)
      * 2. Previous complete quarter (e.g., Q3 2025: Jul-Sep) - Latest quarter
      * 
-     * PULL: 7 quarters starting from 2 quarters ago
+     * PULL: 4 quarters starting from 2 quarters ago
      * 
      * @param {number} numberOfQuarters - Number of quarters to pull (default 7)
      * @param {boolean} skipCurrent - Skip current + previous quarter (default true)
      * @returns {Array} Array of quarter range objects
      */
-    calculateQuarterRanges(numberOfQuarters = 7, skipCurrent = true) {
+    calculateQuarterRanges(numberOfQuarters = 4, skipCurrent = true) {
         const ranges = [];
         const today = new Date();
         
