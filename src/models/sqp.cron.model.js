@@ -225,14 +225,8 @@ async function getActiveASINsBySeller(sellerId = null, limit = true, reportType 
         const where = {
             IsActive: 1,
             ...sellerFilter,
-            [Op.or]: [
-                { QuarterlyLastSQPDataPullStatus: 2 },
-                { QuarterlyLastSQPDataPullStatus: 3 }
-            ],
-            [Op.or]: [
-                { MonthlyLastSQPDataPullStatus: 2 },
-                { MonthlyLastSQPDataPullStatus: 3 }
-            ],
+            QuarterlyLastSQPDataPullStatus: 2,
+            MonthlyLastSQPDataPullStatus: 2,
             [Op.and]: [
                 {
                     [Op.or]: [
@@ -255,14 +249,8 @@ async function getActiveASINsBySeller(sellerId = null, limit = true, reportType 
         const where = {
             IsActive: 1,
             ...sellerFilter,
-            [Op.or]: [
-                { QuarterlyLastSQPDataPullStatus: 2 },
-                { QuarterlyLastSQPDataPullStatus: 3 }
-            ],
-            [Op.or]: [
-                { WeeklyLastSQPDataPullStatus: 2 },
-                { WeeklyLastSQPDataPullStatus: 3 }
-            ],
+            QuarterlyLastSQPDataPullStatus: 2,
+            WeeklyLastSQPDataPullStatus: 2,
             [Op.and]: [
                 {
                     [Op.or]: [
@@ -285,14 +273,8 @@ async function getActiveASINsBySeller(sellerId = null, limit = true, reportType 
         const where = {
             IsActive: 1,
             ...sellerFilter,
-            [Op.or]: [
-                { MonthlyLastSQPDataPullStatus: 2 },
-                { MonthlyLastSQPDataPullStatus: 3 }
-            ],
-            [Op.or]: [
-                { WeeklyLastSQPDataPullStatus: 2 },
-                { WeeklyLastSQPDataPullStatus: 3 }
-            ],
+            MonthlyLastSQPDataPullStatus: 2,
+            WeeklyLastSQPDataPullStatus: 2,
             [Op.and]: [
                 {
                     [Op.or]: [
