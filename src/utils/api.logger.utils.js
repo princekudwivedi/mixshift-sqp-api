@@ -383,30 +383,180 @@ class APILogger {
      * Clean old logs (optional utility)
      * Remove logs older than specified days
      */
+    /**
+     * Clean old logs (remove logs older than specified days)
+     * Handles both:
+     * - Root date folders: logs/<DD-MM-YYYY>/
+     * - API user logs: logs/api_logs/user_X/<DD-MM-YYYY>/
+     * @param {number} daysToKeep - Number of days to keep (default: 30)
+     */
     cleanOldLogs(daysToKeep = 30) {
         const cutoffDate = new Date();
         cutoffDate.setDate(cutoffDate.getDate() - daysToKeep);
 
-        try {
-            const userFolders = fs.readdirSync(this.baseLogPath);
+        console.log(`\n🧹 Cleaning logs older than ${daysToKeep} days (before ${cutoffDate.toISOString().split('T')[0]})...`);
+
+        // Helper function to parse date from folder name (DD-MM-YYYY or YYYY-MM-DD)
+        const parseDateFolder = (folderName) => {
+            // Format: DD-MM-YYYY (e.g., 07-11-2025)
+            const ddmmyyyyMatch = folderName.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+            if (ddmmyyyyMatch) {
+                const [, day, month, year] = ddmmyyyyMatch;
+                return new Date(year, month - 1, day);
+            }
             
-            userFolders.forEach(userFolder => {
-                const userPath = path.join(this.baseLogPath, userFolder);
-                if (!fs.statSync(userPath).isDirectory()) return;
+            // Format: YYYY-MM-DD (e.g., 2025-11-04)
+            const yyyymmddMatch = folderName.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+            if (yyyymmddMatch) {
+                const [, year, month, day] = yyyymmddMatch;
+                return new Date(year, month - 1, day);
+            }
+            
+            return null;
+        };
 
-                const dateFolders = fs.readdirSync(userPath);
-                
-                dateFolders.forEach(dateFolder => {
-                    const datePath = path.join(userPath, dateFolder);
-                    if (!fs.statSync(datePath).isDirectory()) return;
-
-                    const folderDate = new Date(dateFolder);
-                    if (folderDate < cutoffDate) {
-                        fs.rmSync(datePath, { recursive: true, force: true });
-                        console.log(`Cleaned old logs: ${datePath}`);
+        // Helper function to calculate directory size
+        const getSize = (dir) => {
+            let size = 0;
+            try {
+                const files = fs.readdirSync(dir);
+                files.forEach((file) => {
+                    const filePath = path.join(dir, file);
+                    const stat = fs.statSync(filePath);
+                    if (stat.isDirectory()) {
+                        size += getSize(filePath);
+                    } else {
+                        size += stat.size;
                     }
                 });
+            } catch (error) {
+                console.error(`Error calculating size for ${dir}:`, error.message);
+            }
+            return size;
+        };
+
+        let totalDeletedCount = 0;
+        let totalBytesFreed = 0;
+
+        try {
+            // Get the parent logs directory (one level up from api_logs)
+            const logsRootDir = path.dirname(this.baseLogPath);
+            
+            if (!fs.existsSync(logsRootDir)) {
+                console.log(`Logs directory not found: ${logsRootDir}`);
+                return;
+            }
+
+            // 1. Clean root date folders (logs/<DD-MM-YYYY>/)
+            console.log('\n📂 Cleaning root date folders...');
+            const rootFolders = fs.readdirSync(logsRootDir);
+            
+            rootFolders.forEach(folder => {
+                const folderPath = path.join(logsRootDir, folder);
+                
+                if (!fs.statSync(folderPath).isDirectory()) return;
+
+                // Skip api_logs folder (will be processed separately)
+                if (folder === 'api_logs') return;
+
+                // Parse date from folder name
+                const folderDate = parseDateFolder(folder);
+                if (!folderDate) return; // Not a date folder
+
+                if (folderDate < cutoffDate) {
+                    const folderSize = getSize(folderPath);
+                    
+                    // Remove folder recursively
+                    fs.rmSync(folderPath, { recursive: true, force: true });
+                    
+                    totalDeletedCount++;
+                    totalBytesFreed += folderSize;
+                    console.log(`   ✓ Deleted: ${folder} (${(folderSize / 1024 / 1024).toFixed(2)} MB)`);
+                }
             });
+
+            // 2. Clean API logs (logs/api_logs/user_X/<DD-MM-YYYY>/)
+            if (fs.existsSync(this.baseLogPath)) {
+                console.log('\n📂 Cleaning API user logs...');
+                console.log(`   Path: ${this.baseLogPath}`);
+                
+                const userFolders = fs.readdirSync(this.baseLogPath);
+                console.log(`   Found ${userFolders.length} items in api_logs`);
+                
+                let apiLogsDeleted = 0;
+                
+                userFolders.forEach(userFolder => {
+                    const userPath = path.join(this.baseLogPath, userFolder);
+                    
+                    // Check if it's a directory
+                    try {
+                        if (!fs.statSync(userPath).isDirectory()) {
+                            console.log(`   ⊘ Skipped (not a directory): ${userFolder}`);
+                            return;
+                        }
+                    } catch (err) {
+                        console.log(`   ⊘ Error accessing: ${userFolder} - ${err.message}`);
+                        return;
+                    }
+
+                    // Check if it's a user folder (user_X or user__X pattern)
+                    if (!userFolder.match(/^user_+\d+$/)) {
+                        console.log(`   ⊘ Skipped (not user_X pattern): ${userFolder}`);
+                        return;
+                    }
+
+                    console.log(`   📁 Processing: ${userFolder}`);
+                    const dateFolders = fs.readdirSync(userPath);
+                    console.log(`      Found ${dateFolders.length} date folders`);
+                    
+                    dateFolders.forEach(dateFolder => {
+                        const datePath = path.join(userPath, dateFolder);
+                        
+                        if (!fs.statSync(datePath).isDirectory()) return;
+
+                        // Parse date from folder name (DD-MM-YYYY format)
+                        const folderDate = parseDateFolder(dateFolder);
+                        if (!folderDate) {
+                            console.log(`      ⊘ Invalid date format: ${dateFolder}`);
+                            return; // Not a valid date folder
+                        }
+
+                        if (folderDate < cutoffDate) {
+                            const folderSize = getSize(datePath);
+                            
+                            // Remove folder recursively
+                            fs.rmSync(datePath, { recursive: true, force: true });
+                            
+                            totalDeletedCount++;
+                            totalBytesFreed += folderSize;
+                            apiLogsDeleted++;
+                            console.log(`      ✓ Deleted: ${dateFolder} (${(folderSize / 1024 / 1024).toFixed(2)} MB)`);
+                        } else {
+                            console.log(`      ✓ Keeping (recent): ${dateFolder}`);
+                        }
+                    });
+
+                    // Remove empty user folder if no date folders remain
+                    try {
+                        const remainingItems = fs.readdirSync(userPath);
+                        if (remainingItems.length === 0) {
+                            fs.rmdirSync(userPath);
+                            console.log(`      ✓ Removed empty user folder: ${userFolder}`);
+                        }
+                    } catch (err) {
+                        // Ignore errors for empty folder removal
+                    }
+                });
+
+                if (apiLogsDeleted === 0) {
+                    console.log(`   ℹ️  No old API log folders found to delete`);
+                }
+            } else {
+                console.log('\n📂 API logs directory not found');
+                console.log(`   Expected path: ${this.baseLogPath}`);
+            }
+
+            console.log(`\n✅ Cleanup complete: ${totalDeletedCount} folders deleted, ${(totalBytesFreed / 1024 / 1024).toFixed(2)} MB freed\n`);
         } catch (error) {
             console.error('Error cleaning old logs:', error.message);
         }
