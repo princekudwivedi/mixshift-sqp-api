@@ -32,8 +32,9 @@ class SqpCronCleanupApiController {
         try {
             // Get daysToKeep from env variable default to 30
             const daysToKeep = process.env.DAYS_TO_KEEP || 30;
-            
+            const logCleanupDays = process.env.LOG_CLEANUP_DAYS || 15;
             const daysToKeepNumber = Number(daysToKeep);
+            const logCleanupDaysNumber = Number(logCleanupDays);
             
             // Validate daysToKeep - enforce minimum 30 days for security
             if (isNaN(daysToKeepNumber)) {
@@ -52,17 +53,17 @@ class SqpCronCleanupApiController {
                 logger.warn({ daysToKeep: daysToKeepNumber }, 'Large retention period requested (>1 year)');
             }
             
-            logger.info({ daysToKeep: daysToKeepNumber }, 'Starting cleanup of old records - background process');
+            logger.info({ daysToKeep: daysToKeepNumber, logCleanupDays: logCleanupDaysNumber }, 'Starting cleanup of old records - background process');
        
             this.circuitBreaker.execute(
-                async () => await cleanupService.cleanupAllOldRecords(daysToKeepNumber),
-                { daysToKeep: daysToKeepNumber, operation: 'cleanupAllOldRecords' }
+                async () => await cleanupService.cleanupAllOldRecords(daysToKeepNumber, logCleanupDaysNumber),
+                { daysToKeep: daysToKeepNumber, logCleanupDays: logCleanupDaysNumber, operation: 'cleanupAllOldRecords and cleanup old logs' }
             );
 
             return SuccessHandler.sendSuccess(res, {
                 message: 'Cleanup operation started',
                 processing: 'Background processing initiated',
-                params: { daysToKeep: daysToKeepNumber }
+                params: { daysToKeep: daysToKeepNumber, logCleanupDays: logCleanupDaysNumber, operation: 'cleanupAllOldRecords and cleanup old logs' }
             }, 'Cleanup started successfully');
 
         } catch (error) {

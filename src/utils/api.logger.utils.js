@@ -388,9 +388,9 @@ class APILogger {
      * Handles both:
      * - Root date folders: logs/<DD-MM-YYYY>/
      * - API user logs: logs/api_logs/user_X/<DD-MM-YYYY>/
-     * @param {number} daysToKeep - Number of days to keep (default: 30)
+     * @param {number} daysToKeep - Number of days to keep (default: 15)
      */
-    cleanOldLogs(daysToKeep = 30) {
+    cleanOldLogs(daysToKeep = 15) {
         const cutoffDate = new Date();
         cutoffDate.setDate(cutoffDate.getDate() - daysToKeep);
 

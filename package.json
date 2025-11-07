@@ -12,8 +12,7 @@
     "dev": "nodemon --watch src --ext js,json --exec node src/server.js",
     "serve": "node src/server.js",
     "lint": "eslint src/ tests/",
-    "lint:fix": "eslint src/ tests/ --fix",
-    "cleanup:logs": "node scripts/cleanup-logs-cron.js"
+    "lint:fix": "eslint src/ tests/ --fix"
   },
   "keywords": [],
   "author": "",

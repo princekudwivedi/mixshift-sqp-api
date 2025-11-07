@@ -13,6 +13,7 @@ const env = require('../config/env.config');
 const isDevEnv = ["local", "development","production"].includes(env.NODE_ENV);
 const { getAllAgencyUserList } = require('../models/sequelize/user.model');
 const { isUserAllowed } = require('../utils/security.utils');
+const apiLogger = require('../utils/api.logger.utils');
 
 class CleanupService {
 
@@ -29,7 +30,9 @@ class CleanupService {
         // MemoryMonitor uses static methods, no instance needed
     }
 
-    async cleanupAllOldRecords(daysToKeep = process.env.DAYS_TO_KEEP) {
+    async cleanupAllOldRecords(daysToKeep = process.env.DAYS_TO_KEEP, logCleanupDays = process.env.LOG_CLEANUP_DAYS) {
+        // clean up logs from all users
+        await apiLogger.cleanOldLogs(Number(logCleanupDays));
         return this._cleanupAllOldRecords(Number(daysToKeep));
     }
 
