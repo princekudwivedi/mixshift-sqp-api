@@ -17,9 +17,17 @@ class ConnectionMonitor {
             this.checkConnectionHealth();
         }, 30000);
         
-        // Cleanup on process exit
-        process.on('SIGINT', () => this.cleanup());
-        process.on('SIGTERM', () => this.cleanup());
+        // Register cleanup handlers only once using process.once
+        // Note: Actual database cleanup is handled by sequelize.factory.js
+        process.once('SIGINT', () => {
+            logger.info('Connection monitor received SIGINT');
+            this.cleanup();
+        });
+        
+        process.once('SIGTERM', () => {
+            logger.info('Connection monitor received SIGTERM');
+            this.cleanup();
+        });
     }
     
     async checkConnectionHealth() {

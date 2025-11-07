@@ -5,6 +5,33 @@ const logger = require('../utils/logger.utils');
 // Cache for Sequelize instances to prevent connection leaks
 const sequelizeInstances = new Map();
 
+// Flag to track if cleanup handlers are registered
+let cleanupHandlersRegistered = false;
+
+// Register cleanup handlers once for all instances
+function registerCleanupHandlers() {
+    if (cleanupHandlersRegistered) {
+        return;
+    }
+    
+    cleanupHandlersRegistered = true;
+    
+    // Use process.once to ensure handlers are only registered once
+    process.once('SIGINT', async () => {
+        logger.info('SIGINT received, closing all database connections...');
+        await closeAllSequelizeInstances();
+        process.exit(0);
+    });
+    
+    process.once('SIGTERM', async () => {
+        logger.info('SIGTERM received, closing all database connections...');
+        await closeAllSequelizeInstances();
+        process.exit(0);
+    });
+    
+    logger.info('Database cleanup handlers registered');
+}
+
 function createSequelize({ host, port, user, pass, db }) {
     const key = `${host}:${port}:${user}:${db}`;
     
@@ -12,6 +39,9 @@ function createSequelize({ host, port, user, pass, db }) {
     if (sequelizeInstances.has(key)) {
         return sequelizeInstances.get(key);
     }
+    
+    // Register cleanup handlers once for all instances
+    registerCleanupHandlers();
     
     const sequelize = new Sequelize(db, user, pass, {
         host,
@@ -54,24 +84,7 @@ function createSequelize({ host, port, user, pass, db }) {
     // Cache the instance
     sequelizeInstances.set(key, sequelize);
     
-    // Add cleanup on process exit
-    process.on('SIGINT', async () => {
-        try {
-            await sequelize.close();
-            sequelizeInstances.delete(key);
-        } catch (error) {
-            logger.error({ error: error.message }, 'Error closing Sequelize connection');
-        }
-    });
-    
-    process.on('SIGTERM', async () => {
-        try {
-            await sequelize.close();
-            sequelizeInstances.delete(key);
-        } catch (error) {
-            logger.error({ error: error.message }, 'Error closing Sequelize connection');
-        }
-    });
+    logger.info({ key }, 'New Sequelize instance created');
     
     return sequelize;
 }

@@ -8,6 +8,10 @@ const { AsyncErrorHandler } = require('./middleware/response.handlers');
 const { addConnectionStats, getHealthCheckData } = require('./middleware/connection.monitor');
 const { corsOriginValidator } = require('./utils/security.utils');
 
+// Increase max listeners to prevent warnings (safe for multi-tenant connections)
+// Each tenant database connection may add listeners
+process.setMaxListeners(20);
+
 const app = express();
 
 // Security middleware
