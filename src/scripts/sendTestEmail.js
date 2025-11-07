@@ -28,7 +28,7 @@ const env  = require('../config/env.config');
 			return;
 		}
 
-		const html = `<p>${bodyArg}</p><p>Time: ${new Date().toISOString()}</p>`;
+		const html = `<p>${bodyArg}</p><p>Time: ${dates.getDateTime()}</p>`;
 		const ok = await NotificationHelpers.sendEmail({ subject: subjectArg, html, to, cc, bcc });
 		if (ok) {
 			logger.info({ to: to.join(','), subject: subjectArg }, 'Test email sent successfully');

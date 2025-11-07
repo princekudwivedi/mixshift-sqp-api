@@ -28,6 +28,7 @@ const isDevEnv = ["local", "development","production"].includes(env.NODE_ENV);
 const { getModel: getSqpDownloadUrls } = require('../models/sequelize/sqpDownloadUrls.model');
 const { Op, literal } = require('sequelize');
 const { CircuitBreaker, RateLimiter, MemoryMonitor, DelayHelpers, NotificationHelpers, RetryHelpers, Helpers } = require('../helpers/sqp.helpers');
+const dates = require('../utils/dates.utils');
 
 class InitialPullService {
     
@@ -59,7 +60,7 @@ class InitialPullService {
      */
     calculateWeekRanges(numberOfWeeks = 52, skipLatest = true) {
         const ranges = [];
-        const today = new Date();
+        const today = dates.getDateTime();
         
         // Use UTC to avoid timezone issues - get current date in UTC
         const currentSunday = new Date(Date.UTC(
@@ -109,7 +110,7 @@ class InitialPullService {
      */
     calculateMonthRanges(numberOfMonths = 12, skipCurrent = true) {
         const ranges = [];
-        const today = new Date();
+        const today = dates.getDateTime();
         
         // Skip 2 months: current incomplete + previous complete
         const startMonth = skipCurrent ? -2 : 0;
@@ -144,7 +145,7 @@ class InitialPullService {
      */
     calculateQuarterRanges(numberOfQuarters = 4, skipCurrent = true) {
         const ranges = [];
-        const today = new Date();
+        const today = dates.getDateTime();
         
         // Get current quarter (0-3)
         const currentQuarter = Math.floor(today.getMonth() / 3);
@@ -812,7 +813,7 @@ class InitialPullService {
             },
             operation: async ({ attempt, currentRetry, context, startTime }) => {
                 const { seller, asinList, range, reportType, user } = context;
-                const requestStartTime = new Date();
+                const requestStartTime = dates.getDateTime();
                 
                 // Set ProcessRunningStatus = 1 (Report Request)
                 await model.setProcessRunningStatus(cronDetailID, reportType, 1);
@@ -898,7 +899,7 @@ class InitialPullService {
                     }
                 }
                 const reportId = resp.reportId;
-                const requestEndTime = new Date();
+                const requestEndTime = dates.getDateTime();
                 
                 logger.info({ reportId, range: range.range, attempt }, 'Initial pull report created');
                 
@@ -1222,7 +1223,7 @@ class InitialPullService {
             },
             operation: async ({ attempt, currentRetry, context, startTime }) => {
                 const { seller, reportId, range, reportType, retry, user } = context;
-                const statusStartTime = new Date();
+                const statusStartTime = dates.getDateTime();
                 
                 // Set ProcessRunningStatus = 2 (Status Check)
                 await model.setProcessRunningStatus(cronDetailID, reportType, 2);
@@ -1295,7 +1296,7 @@ class InitialPullService {
                     }
                 }
                 const status = res.processingStatus;
-                const statusEndTime = new Date();
+                const statusEndTime = dates.getDateTime();
                 
                 // API Logger - Status Check
                 const userId = user ? user.ID : null;
@@ -1445,7 +1446,7 @@ class InitialPullService {
             },            
             operation: async ({ attempt, currentRetry, context, startTime }) => {
                 const { seller, reportId, documentId, range, reportType, retry, user } = context;
-                const downloadStartTime = new Date();
+                const downloadStartTime = dates.getDateTime();
                 
                 logger.info({ reportId, documentId, range: range.range, attempt }, 'Starting initial pull download');
                 
@@ -1578,7 +1579,7 @@ class InitialPullService {
                     };
                     let filePath = null;
                     let fileSize = 0;
-                    const downloadEndTime = new Date();
+                    const downloadEndTime = dates.getDateTime();
                     
                     try {
                         const saveResult = await jsonSvc.saveReportJsonFile(downloadMeta, data);
@@ -1686,7 +1687,7 @@ class InitialPullService {
                             }, retry ? 'Starting initial pull import (retry)' : 'Starting initial pull import', 'Starting initial pull import');
                             
                             // Import JSON data into database
-                            const importResult = await jsonSvc.__importJson(enrichedRow, 0, 0, 1);
+                            const importResult = await jsonSvc.__importJson(enrichedRow, 0, 0, 1, user);
                             
                             logger.info({ 
                                 cronDetailID,
@@ -1776,7 +1777,7 @@ class InitialPullService {
                         rowCount: 0,
                         downloadPayload: { documentId: documentId || reportId },
                         startTime: downloadStartTime,
-                        endTime: new Date().toISOString(),
+                        endTime: dates.getDateTime(),
                         executionTime: (Date.now() - startTime) / 1000,
                         status: 'success',
                         error: null,
@@ -1855,7 +1856,7 @@ class InitialPullService {
         const SqpCronDetails = getSqpCronDetails();
         
         // Calculate time (6 hours ago)
-        const cutoffTime = new Date();
+        const cutoffTime = dates.getDateTime();
         cutoffTime.setHours(cutoffTime.getHours() - 6);
         
         logger.info({ cutoffTime: cutoffTime.toISOString() }, 'Scanning for records stuck since cutoff time');

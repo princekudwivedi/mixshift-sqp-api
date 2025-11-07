@@ -5,12 +5,13 @@ const logger = require('../utils/logger.utils');
 const { isUserAllowed, sanitizeLogData } = require('../utils/security.utils');
 const env = require('../config/env.config');
 const isDevEnv = ["local", "development","production"].includes(env.NODE_ENV);
+const dates = require('../utils/dates.utils');
 
 class AsinResetService {
 
     // Check if a period has started
     isNewPeriod(period) {
-        const today = new Date();
+        const today = dates.getDateTime();
         if (period === 'WEEK') return today.getDay() === 2; // Tuesday
         if (period === 'MONTH') return today.getDate() === 3;
         if (period === 'QUARTER') {
@@ -37,7 +38,7 @@ class AsinResetService {
                             await loadDatabase(user.ID);
                             const SellerAsinList = getSellerAsinList();
                             const fields = {};
-                            const dt = new Date();
+                            const dt = dates.getDateTime();
 
                             if (period === 'WEEK') {
                                 Object.assign(fields, {

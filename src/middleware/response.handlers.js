@@ -12,7 +12,7 @@ class SuccessHandler {
         const response = {
             success: true,
             message,
-            timestamp: new Date().toISOString(),
+            timestamp: dates.getDateTime(),
             ...(data && { data })
         };
 
@@ -34,7 +34,7 @@ class SuccessHandler {
             message,
             processed,
             errors,
-            timestamp: new Date().toISOString()
+            timestamp: dates.getDateTime()
         };
 
         logger.info({ 
@@ -54,7 +54,7 @@ class SuccessHandler {
             success: true,
             message,
             stats,
-            timestamp: new Date().toISOString()
+            timestamp: dates.getDateTime()
         };
 
         logger.info({ 
@@ -73,7 +73,7 @@ class SuccessHandler {
             success: true,
             message,
             file: fileInfo,
-            timestamp: new Date().toISOString()
+            timestamp: dates.getDateTime()
         };
 
         logger.info({ 
@@ -97,7 +97,7 @@ class ErrorHandler {
             success: false,
             message,
             error: error.message || error,
-            timestamp: new Date().toISOString()
+            timestamp: dates.getDateTime()
         };
 
         logger.error(sanitizeLogData({ 
@@ -118,7 +118,7 @@ class ErrorHandler {
             success: false,
             message,
             errors: validationErrors,
-            timestamp: new Date().toISOString()
+            timestamp: dates.getDateTime()
         };
 
         logger.warn({ 
@@ -136,7 +136,7 @@ class ErrorHandler {
         const response = {
             success: false,
             message,
-            timestamp: new Date().toISOString()
+            timestamp: dates.getDateTime()
         };
 
         logger.warn({ message }, 'Authentication error response sent');
@@ -151,7 +151,7 @@ class ErrorHandler {
         const response = {
             success: false,
             message,
-            timestamp: new Date().toISOString()
+            timestamp: dates.getDateTime()
         };
 
         logger.warn({ message }, 'Authorization error response sent');
@@ -166,7 +166,7 @@ class ErrorHandler {
         const response = {
             success: false,
             message,
-            timestamp: new Date().toISOString()
+            timestamp: dates.getDateTime()
         };
 
         logger.warn({ message }, 'Not found error response sent');
@@ -184,7 +184,7 @@ class ErrorHandler {
             error: error.message || error,
             processed,
             errors,
-            timestamp: new Date().toISOString()
+            timestamp: dates.getDateTime()
         };
 
         logger.error({ 
@@ -205,7 +205,7 @@ class ErrorHandler {
             success: false,
             message,
             error: 'Database operation failed',
-            timestamp: new Date().toISOString()
+            timestamp: dates.getDateTime()
         };
 
         logger.error(sanitizeLogData({ 
@@ -225,7 +225,7 @@ class ErrorHandler {
             success: false,
             message,
             error: error.message || error,
-            timestamp: new Date().toISOString()
+            timestamp: dates.getDateTime()
         };
 
         logger.error({ 
@@ -243,7 +243,7 @@ class ErrorHandler {
         const response = {
             success: false,
             message,
-            timestamp: new Date().toISOString()
+            timestamp: dates.getDateTime()
         };
 
         logger.warn({ message }, 'Rate limit error response sent');

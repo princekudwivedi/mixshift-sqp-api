@@ -16,6 +16,7 @@ const logger = require('../utils/logger.utils');
 const { Op, literal } = require('sequelize');
 const { FileHelpers, DataProcessingHelpers } = require('../helpers/sqp.helpers');
 
+
 /**
  * Handle report completion - unified function for both data and no-data scenarios
  * This function handles the complete flow for report completion including date ranges
@@ -154,7 +155,7 @@ async function handleReportCompletion(cronJobID, reportType, amazonSellerID = nu
 
 		// 🧩 Step 6: Update ASIN-level completion status
 		const statusForThisReport = 2; // 2 = completed
-		const endTime = new Date();
+		const endTime = dates.getDateTime();
 
 		await model.ASINsBySellerUpdated(
 			sellerId,
@@ -220,11 +221,11 @@ async function downloadJsonFromUrl(url) {
 async function saveReportJsonFile(download, jsonContent) {
     try {
         const amazonSellerID = download.AmazonSellerID;
-        const date = new Date().toISOString().split('T')[0];
+        const date = dates.getDateTime().split('T')[0];
         const reportType = (download.ReportType || download.reportType || '').toString().toLowerCase();
 
         // Generate filename: {reportType}_{reportID}_{timestamp}.json
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        const timestamp = dates.getDateTime().replace(/[:.]/g, '-').slice(0, 19);
         const safeType = reportType || 'sqp';
         const filename = `${safeType}_${download.ReportID}_${timestamp}.json`;
         
@@ -252,7 +253,7 @@ async function saveReportJsonFile(download, jsonContent) {
 /**
  * Parse JSON content and store in database
  */
-async function parseAndStoreJsonData(download, jsonContent, filePath, reportDateOverride) {
+async function parseAndStoreJsonData(download, jsonContent, filePath, reportDateOverride, user = null) {
 	try {        
         const { DateHelpers } = require('../helpers/sqp.helpers');
         
@@ -322,11 +323,11 @@ async function parseAndStoreJsonData(download, jsonContent, filePath, reportDate
 /**
  * Import with up to 3 retries. On interim failures, set status 3 (retry failed). On final failure, set 2.
  */
-async function importJsonWithRetry(download, jsonContent, filePath, reportDateOverride, maxAttempts = 3) {
+async function importJsonWithRetry(download, jsonContent, filePath, reportDateOverride, maxAttempts = 3, user = null) {
     let lastError = null;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
-            const stats = await parseAndStoreJsonData(download, jsonContent, filePath, reportDateOverride);
+            const stats = await parseAndStoreJsonData(download, jsonContent, filePath, reportDateOverride, user);
             return stats;
         } catch (e) {
             lastError = e;
@@ -534,7 +535,7 @@ async function updateSellerAsinLatestRanges({
 }
 
 
-async function __importJson(row, processed = 0, errors = 0, iInitialPull = 0){
+async function __importJson(row, processed = 0, errors = 0, iInitialPull = 0, user = null){
     let jsonContent = null;
     try {
         await downloadUrls.updateProcessStatusById(row.ID, 'PROCESSING', { incrementAttempts: true });
@@ -601,7 +602,7 @@ async function __importJson(row, processed = 0, errors = 0, iInitialPull = 0){
 			SellerID: row.SellerID || cronSellerID || 0,
 			ReportType: row.ReportType,
 			CronJobID: row.CronJobID,
-        }, jsonContent, filePath, reportDateOverride);
+        }, jsonContent, filePath, reportDateOverride, user);
 
 		await downloadUrls.updateProcessStatusById(row.ID, 'SUCCESS', {
 			fullyImported: 1,

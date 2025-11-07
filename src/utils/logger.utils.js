@@ -5,12 +5,13 @@ const { LOG_LEVEL } = require('../config/env.config');
 
 const LOG_TO_FILE = process.env.LOG_TO_FILE === 'true';
 const LOG_DIR = process.env.LOG_DIR || path.join(process.cwd(), 'logs');
+const dates = require('./dates.utils');
 
 /**
  * Get current date folder (DD-MM-YYYY)
  */
 function getDateFolder() {
-	const now = new Date();
+	const now = dates.getDateTime();
 	const day = String(now.getDate()).padStart(2, '0');
 	const month = String(now.getMonth() + 1).padStart(2, '0');
 	const year = now.getFullYear();

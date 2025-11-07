@@ -53,7 +53,7 @@ class ConnectionMonitor {
                     activeConnections: active,
                     idleConnections: idle,
                     queuedConnections: 0, // Sequelize doesn't expose queue length directly
-                    lastChecked: new Date().toISOString()
+                    lastChecked: dates.getDateTime()
                 };
                 
                 // Log warning if connections are high
@@ -118,7 +118,7 @@ function getHealthCheckData() {
     
     return {
         status: 'healthy',
-        timestamp: new Date().toISOString(),
+        timestamp: dates.getDateTime(),
         database: {
             connected: sequelize ? true : false,
             connectionStats: stats,

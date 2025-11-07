@@ -903,7 +903,7 @@ class NotificationHelpers {
             <p><strong>Attempts:</strong> ${attempts}</p>
             <p><strong>Last Error:</strong> ${result?.lastError || 'N/A'}</p>
             <p><strong>Totals:</strong> total=${result?.total || 0}, success=${result?.success || 0}, failed=${result?.failed || 0}</p>
-            <p>Time: ${new Date().toISOString()}</p>
+            <p>Time: ${dates.getDateTime()}</p>
         `;
 
         return this.sendEmail({ subject, html, to, cc, bcc });

@@ -7,7 +7,7 @@ const apiRoutes = require('./routes/api.routes');
 const { AsyncErrorHandler } = require('./middleware/response.handlers');
 const { addConnectionStats, getHealthCheckData } = require('./middleware/connection.monitor');
 const { corsOriginValidator } = require('./utils/security.utils');
-
+const dates = require('./utils/dates.utils');
 const app = express();
 
 // Security middleware
@@ -32,7 +32,7 @@ app.set('trust proxy', 1);
 app.use(addConnectionStats);
 
 app.get('/', (req, res) => {
-    res.status(200).json({ status: 'ok', time: new Date().toISOString() });
+    res.status(200).json({ status: 'ok', time: dates.getDateTime() });
 });
 
 // Health check endpoint
@@ -54,7 +54,7 @@ app.use((req, res) => {
         message: 'Route not found',
         path: req.originalUrl,
         method: req.method,
-        timestamp: new Date().toISOString()
+        timestamp: dates.getDateTime()
     });
 });
 

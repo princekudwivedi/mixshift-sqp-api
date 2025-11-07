@@ -17,7 +17,7 @@ const { isUserAllowed, isValidSellerID, sanitizeLogData } = require('../utils/se
 const env = require('../config/env.config');
 const isDevEnv = ["local", "development","production"].includes(env.NODE_ENV);
 const authService = require('../services/auth.service');
-
+const dates = require('../utils/dates.utils');
 class CronApiService {
     constructor() {
         // Initialize efficiency helpers
@@ -297,7 +297,7 @@ class CronApiService {
         const SqpCronDetails = getSqpCronDetails();
         
         // Calculate time (1 hour ago)
-        const cutoffTime = new Date();
+        const cutoffTime = dates.getDateTime();
         cutoffTime.setHours(cutoffTime.getHours() - 1);
         
         logger.info({ cutoffTime: cutoffTime.toISOString() }, 'Scanning for records stuck since cutoff time');

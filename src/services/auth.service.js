@@ -2,7 +2,7 @@ const AuthToken = require('../models/authToken.model');
 const axios = require('axios');
 const config = require('../config/env.config');
 const logger = require('../utils/logger.utils');
-
+const dates = require('../utils/dates.utils');
 // Amazon LWA token endpoint
 const LWA_TOKEN_URL = 'https://api.amazon.com/auth/o2/token';
 
@@ -54,7 +54,7 @@ function isTokenExpired(tokenRow) {
 	}
 	// Compare current time with expires_in datetime
 	const expiryTime = new Date(tokenRow.expires_in);
-	const currentTime = new Date();
+	const currentTime = dates.getDateTime();
 	
 	// Token is expired if current time >= expiry time
 	return currentTime >= expiryTime;
@@ -94,7 +94,7 @@ async function refreshAccessToken(amazonSellerID, refreshToken) {
 		if (response.data && response.data.access_token) {
 			// Calculate expires_in as DATETIME (JS: +5 MINUTES from now)
 			// Stores as datetime, not seconds: date('Y-m-d H:i:s', strtotime("+5 MINUTES"))
-			const expiresInDate = new Date();
+			const expiresInDate = dates.getDateTime();
 			expiresInDate.setMinutes(expiresInDate.getMinutes() + 5);
 			
 			logger.info({ 

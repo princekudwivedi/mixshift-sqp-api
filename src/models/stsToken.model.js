@@ -1,5 +1,6 @@
 const { getModel: getSpApiSts } = require('./sequelize/spApiSts.model');
 const logger = require('../utils/logger.utils');
+const dates = require('../utils/dates.utils');
 
 /**
  * StsToken Model
@@ -103,7 +104,7 @@ class StsToken {
      */
     async getActiveTokens() {
         try {
-            const now = new Date();
+            const now = dates.getDateTime();
             const SpApiSts = getSpApiSts();
             const { Op } = require('sequelize');
             const tokens = await SpApiSts.findAll({ where: { expire_at: { [Op.gt]: now } }, order: [['id','DESC']] });
@@ -129,7 +130,7 @@ class StsToken {
                 return true; // Token not found, consider expired
             }
 
-            const now = new Date();
+            const now = dates.getDateTime();
             const expireAt = new Date(token.expire_at);
             const isExpired = now >= expireAt;
 

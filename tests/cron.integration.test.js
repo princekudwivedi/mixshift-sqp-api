@@ -8,6 +8,7 @@ const {
     RateLimiter,
     MemoryMonitor
 } = require('../src/helpers/sqp.helpers');
+const dates = require('../src/utils/dates.utils');
 
 describe('Cron Integration Tests', () => {
     
@@ -214,7 +215,7 @@ describe('Cron Integration Tests', () => {
             await fs.mkdir(testDir, { recursive: true });
             await fs.writeFile(testFile, JSON.stringify({ 
                 test: 'integration data',
-                timestamp: new Date().toISOString()
+                timestamp: dates.getDateTime()
             }));
         });
         

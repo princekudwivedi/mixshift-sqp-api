@@ -86,7 +86,7 @@ class AuthMiddleware {
             ip: req.ip,
             userAgent: req.get('User-Agent'),
             hasToken: !!req.authToken,
-            timestamp: new Date().toISOString()
+            timestamp: dates.getDateTime()
         }, 'Incoming request');
 
         // Override res.end to log response
@@ -100,7 +100,7 @@ class AuthMiddleware {
                 statusCode: res.statusCode,
                 duration: `${duration}ms`,
                 ip: req.ip,
-                timestamp: new Date().toISOString()
+                timestamp: dates.getDateTime()
             }, 'Request completed');
 
             originalEnd.call(this, chunk, encoding);

@@ -4,6 +4,7 @@ const { getModel: getSellerAsinList } = require('./sequelize/sellerAsinList.mode
 const { Op, literal } = require('sequelize');
 const logger = require('../utils/logger.utils');
 const env = require('../config/env.config');
+const dates = require('../utils/dates.utils');
 
 function splitASINsIntoChunks(asins, maxChars = 200) {
     // Split ASINs into space-separated chunks where each concatenated string <= maxChars
@@ -53,8 +54,8 @@ async function getReportsForStatusType(row, retry = false) {
 async function getActiveASINsBySeller(sellerId = null, limit = true, reportType = null) {
     const SellerAsinList = getSellerAsinList();
     const sellerFilter = sellerId ? { SellerID: sellerId } : {};
-    const currentDay = new Date();
-    const retryCutoffTime = new Date();
+    const currentDay = dates.getDateTime();
+    const retryCutoffTime = dates.getDateTime();
     retryCutoffTime.setDate(currentDay.getDate() - env.MAX_DAYS_AGO);
 
     // Determine report-specific fields
@@ -485,7 +486,7 @@ async function updateSQPReportStatus(cronDetailID, reportType, status, startDate
         dtUpdatedOn: new Date()
     };
     if(cronStartDate){
-        data.dtCronStartDate = new Date();
+        data.dtCronStartDate = dates.getDateTime();
     }
     if(status){
         data[`${prefix}SQPDataPullStatus`] =  status;
@@ -624,7 +625,7 @@ async function checkCronDetailsOfSellersByDate(
             ]
         };
     } else {
-        const today = new Date();
+        const today = dates.getDateTime();
         const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0);
         const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59);
         dateFilter = {

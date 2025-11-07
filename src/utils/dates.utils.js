@@ -1,5 +1,5 @@
 const { format, subDays, lastDayOfMonth, startOfMonth } = require('date-fns');
-
+const { DateTime } = require('luxon');
 
 // Denver timezone (Mountain Time)
 const DENVER_TZ = process.env.TZ;
@@ -8,9 +8,15 @@ function fmt(date) {
     return format(date, 'yyyy-MM-dd');
 }
 
+function getDateTime(timezone = null){
+    if(timezone == null){
+        return new Date().toISOString();
+    }
+    return getNowDateTimeInUserTimezone(timezone);
+}
 function getNowDateTimeInUserTimezone(timezone = DENVER_TZ){
-    const now = new Date();
-    return now;
+    const now = DateTime.now().setZone(timezone);
+    return now.toISOString();
 }
 /**
  * Get current date/time in Denver timezone using native JavaScript Intl API
@@ -103,7 +109,8 @@ function getDateRangeForPeriod(period, timezone = DENVER_TZ) {
 module.exports = { 
     getDateRangeForPeriod,
     getNowDateTimeInUserTimezone,
-    getNowRangeForPeriodInUserTimezone
+    getNowRangeForPeriodInUserTimezone,
+    getDateTime
 };
 
 

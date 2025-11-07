@@ -1,6 +1,7 @@
 const { Op, literal } = require('sequelize');
 const { getModel: getSqpDownloadUrls } = require('./sequelize/sqpDownloadUrls.model');
 const logger = require('../utils/logger.utils');
+const dates = require('../utils/dates.utils');
 
 async function getCompletedDownloadsWithFiles(filter = {}) {
 	const SqpDownloadUrls = getSqpDownloadUrls();
@@ -43,10 +44,10 @@ async function updateDownloadStatus(selector, { status, errorMessage = null, fil
 	if (errorMessage !== null) data.ErrorMessage = errorMessage;
 	if (filePath !== null) data.FilePath = filePath;
 	if (fileSize !== null) data.FileSize = fileSize;
-	if (status === 'DOWNLOADING') data.DownloadStartTime = new Date();
-	if (status === 'COMPLETED' || status === 'FAILED') data.DownloadEndTime = new Date();
+	if (status === 'DOWNLOADING') data.DownloadStartTime = dates.getDateTime();
+	if (status === 'COMPLETED' || status === 'FAILED') data.DownloadEndTime = dates.getDateTime();
 	if (incrementAttempts) data.DownloadAttempts = literal('COALESCE(DownloadAttempts, 0) + 1');
-	data.dtUpdatedOn = new Date();
+	data.dtUpdatedOn = dates.getDateTime();
 
 	const where = selector?.id ? { ID: selector.id } : selector?.criteria || null;
 	if (!where) throw new Error('updateDownloadStatus requires either id or criteria');
