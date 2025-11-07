@@ -11,23 +11,32 @@ class ConnectionMonitor {
             queuedConnections: 0,
             lastChecked: null
         };
-        
-        // Monitor connections every 30 seconds
-        this.monitorInterval = setInterval(() => {
-            this.checkConnectionHealth();
-        }, 30000);
-        
-        // Register cleanup handlers only once using process.once
-        // Note: Actual database cleanup is handled by sequelize.factory.js
-        process.once('SIGINT', () => {
-            logger.info('Connection monitor received SIGINT');
-            this.cleanup();
-        });
-        
-        process.once('SIGTERM', () => {
-            logger.info('Connection monitor received SIGTERM');
-            this.cleanup();
-        });
+
+        // Start monitoring only once
+        if (!ConnectionMonitor.monitorInterval) {
+            ConnectionMonitor.monitorInterval = setInterval(() => {
+                this.checkConnectionHealth();
+            }, 30000);
+        }
+
+        // Register shutdown handlers only once
+        if (!ConnectionMonitor.handlersRegistered) {
+            ConnectionMonitor.handlersRegistered = true;
+
+            const handleSignal = async (signal) => {
+                try {
+                    logger.info({ signal }, 'Shutdown signal received - cleaning up connection monitor');
+                    await ConnectionMonitor.cleanupAll();
+                    process.exit(0);
+                } catch (error) {
+                    logger.error({ error: error.message }, 'Error during shutdown cleanup');
+                    process.exit(1);
+                }
+            };
+
+            process.once('SIGINT', handleSignal);
+            process.once('SIGTERM', handleSignal);
+        }
     }
     
     async checkConnectionHealth() {
@@ -71,20 +80,27 @@ class ConnectionMonitor {
     }
     
     async cleanup() {
+        await ConnectionMonitor.cleanupAll();
+    }
+
+    static async cleanupAll() {
         try {
-            if (this.monitorInterval) {
-                clearInterval(this.monitorInterval);
+            if (ConnectionMonitor.monitorInterval) {
+                clearInterval(ConnectionMonitor.monitorInterval);
+                ConnectionMonitor.monitorInterval = null;
             }
-            
-            // Close all Sequelize instances
+
             await closeAllSequelizeInstances();
-            
+
             logger.info('Connection monitor cleanup completed');
         } catch (error) {
             logger.error({ error: error.message }, 'Error during connection monitor cleanup');
         }
     }
 }
+
+ConnectionMonitor.monitorInterval = null;
+ConnectionMonitor.handlersRegistered = false;
 
 // Create singleton instance
 const connectionMonitor = new ConnectionMonitor();

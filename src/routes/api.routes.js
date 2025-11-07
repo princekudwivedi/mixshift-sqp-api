@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const logger = require('../utils/logger.utils');
 const sqpCronApiController = require('../controllers/sqp.cron.api.controller');
+const sqpCronCleanupApiController = require('../controllers/sqp.cron.cleanup.api.controller');
 const initialPullController = require('../controllers/initial.pull.controller');
 const AuthMiddleware = require('../middleware/auth.middleware');
 
@@ -30,5 +31,8 @@ router.get('/cron/sqp/initial/pull', (req, res) => initialPullController.runInit
 
 // Retry failed initial pull route
 router.get('/cron/sqp/initial/retry', (req, res) => initialPullController.retryFailedInitialPull(req, res));
+
+// Cleanup old records route
+router.get('/cron/sqp/cleanup', (req, res) => sqpCronCleanupApiController.cleanupOldRecords(req, res));
 
 module.exports = router;
