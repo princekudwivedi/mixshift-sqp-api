@@ -1,5 +1,6 @@
 const path = require('path');
 require('dotenv').config({ path: path.resolve(process.cwd(), '.env') });
+const { getSecret } = require('./secrets.manager');
 
 /**
  * Environment Configuration
@@ -10,6 +11,10 @@ function env(name, defaultValue = null) {
         return process.env[name];
     }
     return defaultValue;
+}
+
+function secret(name, defaultValue = null) {
+    return getSecret(name, env(name, defaultValue));
 }
 
 // Safe parsers
@@ -26,16 +31,16 @@ const config = {
     // Database
     DB_HOST: env('DB_HOST', 'localhost'),
     DB_PORT: toInt(env('DB_PORT', '3306'), 3306),
-    DB_USER: env('DB_USER', 'root'),
-    DB_PASS: env('DB_PASS', ''),
+    DB_USER: secret('DB_USER', env('DB_USER', 'root')),
+    DB_PASS: secret('DB_PASS', env('DB_PASS', '')),
     DB_NAME: env('DB_NAME', 'sqp_database'),
         
     // CORS
     ALLOWED_ORIGINS: env('ALLOWED_ORIGINS', ''),
     
     // AWS Configuration
-    AWS_ACCESS_KEY_ID: env('AWS_ACCESS_KEY_ID'),
-    AWS_SECRET_ACCESS_KEY: env('AWS_SECRET_ACCESS_KEY'),
+    AWS_ACCESS_KEY_ID: secret('AWS_ACCESS_KEY_ID', env('AWS_ACCESS_KEY_ID')),
+    AWS_SECRET_ACCESS_KEY: secret('AWS_SECRET_ACCESS_KEY', env('AWS_SECRET_ACCESS_KEY')),
     AWS_ROLE_ARN: env('AWS_ROLE_ARN'),
     AWS_STS_REGION: env('AWS_STS_REGION', 'us-east-1'),
     
@@ -43,8 +48,8 @@ const config = {
     AMAZON_SP_API_BASE_URL: env('AMAZON_SP_API_BASE_URL', ''),
     AMAZON_SP_API_ASIA_BASE_URL: env('AMAZON_SP_API_ASIA_BASE_URL', ''),
     AMAZON_SP_API_EUROPE_BASE_URL: env('AMAZON_SP_API_EUROPE_BASE_URL', ''),
-    LWA_CLIENT_ID: env('LWA_CLIENT_ID'),
-    LWA_CLIENT_SECRET: env('LWA_CLIENT_SECRET'),
+    LWA_CLIENT_ID: secret('LWA_CLIENT_ID', env('LWA_CLIENT_ID')),
+    LWA_CLIENT_SECRET: secret('LWA_CLIENT_SECRET', env('LWA_CLIENT_SECRET')),
     
     // Table Names
     TBL_USERS: env('TBL_USERS', 'users'),
@@ -74,8 +79,8 @@ const config = {
     // Email (if needed)
     SMTP_HOST: env('SMTP_HOST'),
     SMTP_PORT: toInt(env('SMTP_PORT', '587'), 587),
-    SMTP_USER: env('SMTP_USER'),
-    SMTP_PASS: env('SMTP_PASS'),
+    SMTP_USER: secret('SMTP_USER', env('SMTP_USER')),
+    SMTP_PASS: secret('SMTP_PASS', env('SMTP_PASS')),
     FROM_EMAIL: env('FROM_EMAIL'),
     NOTIFY_TO: env('NOTIFY_TO'),
     NOTIFY_CC: env('NOTIFY_CC'),
@@ -83,9 +88,10 @@ const config = {
 
     
     // Redis (if needed for caching)
+    REDIS_URL: env('REDIS_URL'),
     REDIS_HOST: env('REDIS_HOST', 'localhost'),
     REDIS_PORT: toInt(env('REDIS_PORT', '6379'), 6379),
-    REDIS_PASSWORD: env('REDIS_PASSWORD'),
+    REDIS_PASSWORD: secret('REDIS_PASSWORD', env('REDIS_PASSWORD')),
     
     // Rate Limiting
     RATE_LIMIT_WINDOW_MS: toInt(env('RATE_LIMIT_WINDOW_MS', '900000'), 900000), // 15 minutes
@@ -93,6 +99,9 @@ const config = {
     
     // Security
     BCRYPT_ROUNDS: toInt(env('BCRYPT_ROUNDS', '12'), 12),
+    CSRF_COOKIE_NAME: env('CSRF_COOKIE_NAME', 'csrf_token'),
+    CSRF_HEADER_NAME: env('CSRF_HEADER_NAME', 'x-csrf-token'),
+    CSRF_COOKIE_SECRET: secret('CSRF_COOKIE_SECRET', env('CSRF_COOKIE_SECRET', 'csrf-default-secret')),
     
     // report Types
     GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT: env('GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT', 'GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT'),
@@ -107,7 +116,7 @@ const config = {
     // Memory limits
     MAX_FILE_SIZE_MB: toInt(env('MAX_FILE_SIZE_MB', '100'), 100),
     MAX_MEMORY_USAGE_MB: toInt(env('MAX_MEMORY_USAGE_MB', '500'), 500),
-    MAX_JSON_SIZE_MB: toInt(env('MAX_JSON_SIZE_MB', '50'), 50),
+    MAX_JSON_SIZE_MB: toInt(env('MAX_JSON_SIZE_MB', '100'), 100),
     
     // Retry settings    
     INITIAL_DELAY_SECONDS: toInt(env('INITIAL_DELAY_SECONDS', '30'), 30),

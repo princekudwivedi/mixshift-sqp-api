@@ -4,14 +4,15 @@ const logger = require('../utils/logger.utils');
 const sqpCronApiController = require('../controllers/sqp.cron.api.controller');
 const initialPullController = require('../controllers/initial.pull.controller');
 const AuthMiddleware = require('../middleware/auth.middleware');
+const { rateLimitMiddleware } = require('../middleware/rateLimiter.middleware');
 
 // Apply shared middleware to all routes
 // router.use(AuthMiddleware.requestLogger);
 router.use(AuthMiddleware.securityHeaders);
 router.use(AuthMiddleware.sanitizeInput);
 
-// Cron routes - Lower rate limit for cron operations
-router.use('/cron/sqp', AuthMiddleware.rateLimit(50, 15 * 60 * 1000)); // 50 requests per 15 minutes for cron endpoints
+// Cron routes - distributed rate limiting
+router.use('/cron/sqp', rateLimitMiddleware);
 router.get('/cron/sqp/all', (req, res) => sqpCronApiController.runAllCronOperations(req, res));
 
 // Notification retry cron route

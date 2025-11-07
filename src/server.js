@@ -2,11 +2,14 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const compression = require('compression');
+const cookieParser = require('cookie-parser');
 const logger = require('./utils/logger.utils');
 const apiRoutes = require('./routes/api.routes');
 const { AsyncErrorHandler } = require('./middleware/response.handlers');
 const { addConnectionStats, getHealthCheckData } = require('./middleware/connection.monitor');
 const { corsOriginValidator } = require('./utils/security.utils');
+const env = require('./config/env.config');
+const { csrfProtection } = require('./middleware/csrf.middleware');
 
 const app = express();
 
@@ -25,11 +28,17 @@ app.use(compression());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+// Cookie parsing for CSRF (double submit pattern)
+app.use(cookieParser(env.CSRF_COOKIE_SECRET || 'csrf-secret'));
+
 // Trust proxy for accurate IP addresses
 app.set('trust proxy', 1);
 
 // Add connection monitoring middleware
 app.use(addConnectionStats);
+
+// CSRF protection middleware (issues token for safe methods, validates unsafe methods)
+app.use(csrfProtection);
 
 app.get('/', (req, res) => {
     res.status(200).json({ status: 'ok', time: new Date().toISOString() });
