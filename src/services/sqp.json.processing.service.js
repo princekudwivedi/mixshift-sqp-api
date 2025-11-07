@@ -14,6 +14,7 @@ const { getModel: getSqpDownloadUrls } = require('../models/sequelize/sqpDownloa
 const dates = require('../utils/dates.utils');
 const logger = require('../utils/logger.utils');
 const { Op, literal } = require('sequelize');
+const { FileHelpers, DataProcessingHelpers } = require('../helpers/sqp.helpers');
 
 /**
  * Handle report completion - unified function for both data and no-data scenarios
@@ -534,32 +535,41 @@ async function updateSellerAsinLatestRanges({
 
 
 async function __importJson(row, processed = 0, errors = 0, iInitialPull = 0){
-	try {
-		await downloadUrls.updateProcessStatusById(row.ID, 'PROCESSING', { incrementAttempts: true });
+    let jsonContent = null;
+    try {
+        await downloadUrls.updateProcessStatusById(row.ID, 'PROCESSING', { incrementAttempts: true });
 
-		// Read file from disk
-		const filePath = row.FilePath;
-		const content = await fs.readFile(filePath, 'utf-8');
-		const json = JSON.parse(content);
+        const filePath = row.FilePath;
 
-		// Check if JSON contains no data
-		if (!Array.isArray(json) || json.length === 0) {
-			console.log(`JSON file contains no data for ${row.ReportType}`, { 
-				cronJobID: row.CronJobID, 
-				reportType: row.ReportType,
-				filePath 
-			});
-			
-			if(iInitialPull === 0){
-				// Use the unified completion handler for no-data scenario
-				await handleReportCompletion(row.CronJobID, row.ReportType, row.AmazonSellerID, null, false);
-			}			
-			processed++;
-			return { processed, errors };
-		}
+        if (!filePath) {
+            throw new Error('File path missing for download row');
+        }
 
-		// ReportDate from request start time
-		const reportDateOverride = await getRequestStartDate(row.CronJobID, row.ReportType);
+        // Validate and read JSON file with size limits
+        FileHelpers.validateFilePath(filePath);
+        const maxSizeMb = Number(env.MAX_JSON_SIZE_MB) || 100;
+        jsonContent = await FileHelpers.readJsonFile(filePath, maxSizeMb);
+
+        const records = DataProcessingHelpers.extractRecords(jsonContent);
+
+        // Check if JSON contains no data
+        if (!records || records.length === 0) {
+            logger.info({
+                cronJobID: row.CronJobID,
+                reportType: row.ReportType,
+                filePath
+            }, 'JSON file contains no data for report');
+
+            if (iInitialPull === 0) {
+                await handleReportCompletion(row.CronJobID, row.ReportType, row.AmazonSellerID, null, false);
+            }
+
+            processed++;
+            return { processed, errors };
+        }
+
+        // ReportDate from request start time
+        const reportDateOverride = await getRequestStartDate(row.CronJobID, row.ReportType);
 
 		// Parse and store
 		// ProcessRunningStatus = 4 (Process Import) and mark cron detail as import in-progress (4)
@@ -585,13 +595,13 @@ async function __importJson(row, processed = 0, errors = 0, iInitialPull = 0){
 			cronAmazonSellerID,
 			cronSellerID,
 		});
-		const stats = await importJsonWithRetry({
+        const stats = await importJsonWithRetry({
 			ReportID: row.ReportID,
 			AmazonSellerID: row.AmazonSellerID || cronAmazonSellerID || '',
 			SellerID: row.SellerID || cronSellerID || 0,
 			ReportType: row.ReportType,
 			CronJobID: row.CronJobID,
-		}, json, filePath, reportDateOverride);
+        }, jsonContent, filePath, reportDateOverride);
 
 		await downloadUrls.updateProcessStatusById(row.ID, 'SUCCESS', {
 			fullyImported: 1,
@@ -599,9 +609,9 @@ async function __importJson(row, processed = 0, errors = 0, iInitialPull = 0){
 			successCount: stats.success,
 			failCount: stats.failed
 		});
-		if(iInitialPull === 0){
+        if(iInitialPull === 0){
 			// Use the unified completion handler for data scenario
-			await handleReportCompletion(row.CronJobID, row.ReportType, row.AmazonSellerID, json, true);
+            await handleReportCompletion(row.CronJobID, row.ReportType, row.AmazonSellerID, records, true);
 		}
 		processed++;
 	} catch (e) {
@@ -649,6 +659,19 @@ async function __importJson(row, processed = 0, errors = 0, iInitialPull = 0){
 			}
 		}
 		errors++;
+    } finally {
+        // Help garbage collector release large JSON payloads
+        if (jsonContent) {
+            jsonContent = null;
+        }
+
+        if (global.gc) {
+            try {
+                global.gc();
+            } catch (_) {
+                // ignore if GC not exposed
+            }
+        }
     }
     return { processed, errors };
 }

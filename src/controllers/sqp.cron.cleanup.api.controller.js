@@ -33,6 +33,8 @@ class SqpCronCleanupApiController {
             // Get daysToKeep from env variable default to 30
             const daysToKeep = process.env.DAYS_TO_KEEP || 30;
             const logCleanupDays = process.env.LOG_CLEANUP_DAYS || 15;
+            const daysToKeepMin = Number(process.env.DAYS_TO_KEEP_MIN) || 25;
+            const logCleanupDaysMin = Number(process.env.LOG_CLEANUP_DAYS_MIN) || 7;
             const daysToKeepNumber = Number(daysToKeep);
             const logCleanupDaysNumber = Number(logCleanupDays);
             
@@ -40,12 +42,24 @@ class SqpCronCleanupApiController {
             if (isNaN(daysToKeepNumber)) {
                 return ErrorHandler.sendValidationError(res, ['Invalid daysToKeep parameter. Must be a valid number.']);
             }
+
+            if (isNaN(logCleanupDaysNumber)) {
+                return ErrorHandler.sendValidationError(res, ['Invalid logCleanupDays parameter. Must be a valid number.']);
+            }
             
-            if (daysToKeepNumber < 30) {
+            if (daysToKeepNumber < daysToKeepMin) {
                 return ErrorHandler.sendValidationError(res, [
-                    'Security Error: daysToKeep must be at least 30 days to prevent accidental deletion of recent critical data.',
+                    `Security Error: daysToKeep must be at least ${daysToKeepMin} days to prevent accidental deletion of recent critical data.`,
                     `Requested: ${daysToKeepNumber} days`,
-                    'Minimum allowed: 30 days'
+                    `Minimum allowed: ${daysToKeepMin} days`
+                ]);
+            }
+
+            if (logCleanupDaysNumber < logCleanupDaysMin) {
+                return ErrorHandler.sendValidationError(res, [
+                    `Security Error: logCleanupDays must be at least ${logCleanupDaysMin} days to prevent accidental deletion of recent critical data.`,
+                    `Requested: ${logCleanupDaysNumber} days`,
+                    `Minimum allowed: ${logCleanupDaysMin} days`
                 ]);
             }
             
