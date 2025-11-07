@@ -5,6 +5,40 @@ const logger = require('../utils/logger.utils');
 // Cache for Sequelize instances to prevent connection leaks
 const sequelizeInstances = new Map();
 
+// Flag to track if signal handlers have been registered
+let signalHandlersRegistered = false;
+
+// Register signal handlers only once for all instances
+function registerSignalHandlers() {
+    if (signalHandlersRegistered) {
+        return;
+    }
+    
+    signalHandlersRegistered = true;
+    
+    // Single SIGINT handler for all instances
+    process.on('SIGINT', async () => {
+        try {
+            await closeAllSequelizeInstances();
+            process.exit(0);
+        } catch (error) {
+            logger.error({ error: error.message }, 'Error closing Sequelize connections on SIGINT');
+            process.exit(1);
+        }
+    });
+    
+    // Single SIGTERM handler for all instances
+    process.on('SIGTERM', async () => {
+        try {
+            await closeAllSequelizeInstances();
+            process.exit(0);
+        } catch (error) {
+            logger.error({ error: error.message }, 'Error closing Sequelize connections on SIGTERM');
+            process.exit(1);
+        }
+    });
+}
+
 function createSequelize({ host, port, user, pass, db }) {
     const key = `${host}:${port}:${user}:${db}`;
     
@@ -12,6 +46,9 @@ function createSequelize({ host, port, user, pass, db }) {
     if (sequelizeInstances.has(key)) {
         return sequelizeInstances.get(key);
     }
+    
+    // Register signal handlers on first instance creation
+    registerSignalHandlers();
     
     const sequelize = new Sequelize(db, user, pass, {
         host,
@@ -53,25 +90,6 @@ function createSequelize({ host, port, user, pass, db }) {
     
     // Cache the instance
     sequelizeInstances.set(key, sequelize);
-    
-    // Add cleanup on process exit
-    process.on('SIGINT', async () => {
-        try {
-            await sequelize.close();
-            sequelizeInstances.delete(key);
-        } catch (error) {
-            logger.error({ error: error.message }, 'Error closing Sequelize connection');
-        }
-    });
-    
-    process.on('SIGTERM', async () => {
-        try {
-            await sequelize.close();
-            sequelizeInstances.delete(key);
-        } catch (error) {
-            logger.error({ error: error.message }, 'Error closing Sequelize connection');
-        }
-    });
     
     return sequelize;
 }
