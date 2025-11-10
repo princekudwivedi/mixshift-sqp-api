@@ -28,6 +28,7 @@ const isDevEnv = ["local", "development","production"].includes(env.NODE_ENV);
 const { getModel: getSqpDownloadUrls } = require('../models/sequelize/sqpDownloadUrls.model');
 const { Op, literal } = require('sequelize');
 const { CircuitBreaker, RateLimiter, MemoryMonitor, DelayHelpers, NotificationHelpers, RetryHelpers, Helpers } = require('../helpers/sqp.helpers');
+const datesUtils = require('../utils/dates.utils');
 
 class InitialPullService {
     
@@ -464,7 +465,7 @@ class InitialPullService {
     async _startInitialPullForSeller(seller, reportType = null, authOverrides = {}, user = null) {
         try {
             const timezone = await model.getUserTimezone(user);
-            const ranges = this.calculateFullRanges(timezone);
+            const ranges = datesUtils.calculateFullRanges(timezone);
             
             const { asins } = await model.getActiveASINsBySellerInitialPull(seller.idSellerAccount, true);            
             if (asins.length === 0) return;
