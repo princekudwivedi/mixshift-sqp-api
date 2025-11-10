@@ -43,190 +43,6 @@ class InitialPullService {
         );
         // MemoryMonitor uses static methods, no instance needed
     }
-    
-    /**
-     * Calculate historical week ranges (Sunday to Saturday)
-     * 
-     * SKIP LOGIC:
-     * 1. Current incomplete week (e.g., Oct 5-11, 2025)
-     * 2. Previous complete week (e.g., Sep 27-Oct 4, 2025) - Latest week
-     * 
-     * PULL: 52 weeks starting from 2 weeks ago
-     * 
-     * @param {number} numberOfWeeks - Number of weeks to pull (default 52)
-     * @param {boolean} skipLatest - Skip current + previous week (default true)
-     * @returns {Array} Array of week range objects
-     */
-    calculateWeekRanges(numberOfWeeks = 52, skipLatest = true) {
-        const ranges = [];
-        const today = new Date();
-        
-        // Use UTC to avoid timezone issues - get current date in UTC
-        const currentSunday = new Date(Date.UTC(
-            today.getFullYear(), 
-            today.getMonth(), 
-            today.getDate()
-        ));
-        
-        // Get day of week in UTC (0 = Sunday, 1 = Monday, ..., 6 = Saturday)
-        const dayOfWeek = currentSunday.getUTCDay();
-        
-        // Set to Sunday of current week in UTC
-        currentSunday.setUTCDate(currentSunday.getUTCDate() - dayOfWeek);
-        
-        // Skip 2 weeks: current incomplete + previous complete
-        const startWeek = skipLatest ? -2 : 0;
-        
-        for (let i = startWeek; i >= startWeek - (numberOfWeeks - 1); i--) {
-            const weekStart = new Date(currentSunday);
-            weekStart.setUTCDate(currentSunday.getUTCDate() + (i * 7)); // Sunday
-            
-            const weekEnd = new Date(weekStart);
-            weekEnd.setUTCDate(weekStart.getUTCDate() + 6); // Saturday
-            
-            ranges.push({
-                startDate: weekStart.toISOString().split('T')[0],
-                endDate: weekEnd.toISOString().split('T')[0],
-                range: `${weekStart.toISOString().split('T')[0]} to ${weekEnd.toISOString().split('T')[0]}`,
-                type: 'WEEK'
-            });
-        }
-        
-        return ranges;
-    }
-
-    /**
-     * Calculate historical month ranges
-     * 
-     * SKIP LOGIC:
-     * 1. Current incomplete month (e.g., October 2025)
-     * 2. Previous complete month (e.g., September 2025) - Latest month
-     * 
-     * 
-     * @param {number} numberOfMonths - Number of months to pull (default 12)
-     * @param {boolean} skipCurrent - Skip current + previous month (default true)
-     * @returns {Array} Array of month range objects
-     */
-    calculateMonthRanges(numberOfMonths = 12, skipCurrent = true) {
-        const ranges = [];
-        const today = new Date();
-        
-        // Skip 2 months: current incomplete + previous complete
-        const startMonth = skipCurrent ? -2 : 0;
-        
-        for (let i = startMonth; i >= startMonth - (numberOfMonths - 1); i--) {
-            const monthStart = new Date(today.getFullYear(), today.getMonth() + i, 1);
-            const monthEnd = new Date(today.getFullYear(), today.getMonth() + i + 1, 0); // Last day of month
-            
-            ranges.push({
-                startDate: monthStart.toISOString().split('T')[0],
-                endDate: monthEnd.toISOString().split('T')[0],
-                range: `${monthStart.toISOString().split('T')[0]} to ${monthEnd.toISOString().split('T')[0]}`,
-                type: 'MONTH'
-            });
-        }
-        
-        return ranges;
-    }
-
-    /**
-     * Calculate historical quarter ranges
-     * 
-     * SKIP LOGIC:
-     * 1. Current incomplete quarter (e.g., Q4 2025: Oct-Dec)
-     * 2. Previous complete quarter (e.g., Q3 2025: Jul-Sep) - Latest quarter
-     * 
-     * PULL: 4 quarters starting from 2 quarters ago
-     * 
-     * @param {number} numberOfQuarters - Number of quarters to pull (default 7)
-     * @param {boolean} skipCurrent - Skip current + previous quarter (default true)
-     * @returns {Array} Array of quarter range objects
-     */
-    calculateQuarterRanges(numberOfQuarters = 4, skipCurrent = true) {
-        const ranges = [];
-        const today = new Date();
-        
-        // Get current quarter (0-3)
-        const currentQuarter = Math.floor(today.getMonth() / 3);
-        const currentYear = today.getFullYear();
-        
-        // Skip 2 quarters: current incomplete + previous complete
-        const startQuarter = skipCurrent ? -2 : 0;
-        
-        for (let i = startQuarter; i >= startQuarter - (numberOfQuarters - 1); i--) {
-            // Calculate which quarter and year
-            let quarter = currentQuarter + i;
-            let year = currentYear;
-            
-            while (quarter < 0) {
-                quarter += 4;
-                year -= 1;
-            }
-            
-            // Quarter start months: 0 (Jan), 3 (Apr), 6 (Jul), 9 (Oct)
-            const quarterStartMonth = quarter * 3;
-            const quarterStart = new Date(year, quarterStartMonth, 1);
-            const quarterEnd = new Date(year, quarterStartMonth + 3, 0); // Last day of 3rd month
-            
-            ranges.push({
-                startDate: quarterStart.toISOString().split('T')[0],
-                endDate: quarterEnd.toISOString().split('T')[0],
-                range: `${quarterStart.toISOString().split('T')[0]} to ${quarterEnd.toISOString().split('T')[0]}`,
-                type: 'QUARTER',
-                quarter: quarter + 1,
-                year
-            });
-        }
-        
-        return ranges;
-    }
-
-    /**
-     * Calculate full range string for all periods
-     * @returns {Object} Full ranges for week, month, quarter
-     */
-    calculateFullRanges() {
-        // Configurable via environment variables
-        const weeksToPull = env.WEEKS_TO_PULL;
-        const monthsToPull = env.MONTHS_TO_PULL;
-        const quartersToPull = env.QUARTERS_TO_PULL;
-        
-        logger.info({ weeksToPull, monthsToPull, quartersToPull }, 'Initial pull configuration');
-        
-        const weekRanges = this.calculateWeekRanges(weeksToPull, true);
-        const monthRanges = this.calculateMonthRanges(monthsToPull, true);
-        const quarterRanges = this.calculateQuarterRanges(quartersToPull, true);
-        
-        const fullWeekRange = weekRanges.length > 0 
-            ? `${weekRanges[weekRanges.length - 1].startDate} to ${weekRanges[0].endDate}`
-            : null;
-            
-        const fullMonthRange = monthRanges.length > 0
-            ? `${monthRanges[monthRanges.length - 1].startDate} to ${monthRanges[0].endDate}`
-            : null;
-            
-        const fullQuarterRange = quarterRanges.length > 0
-            ? `${quarterRanges[quarterRanges.length - 1].startDate} to ${quarterRanges[0].endDate}`
-            : null;
-        
-        return {
-            fullWeekRange,
-            fullMonthRange,
-            fullQuarterRange,
-            weekRanges,
-            monthRanges,
-            quarterRanges
-        };
-    }
-
-    /**
-     * Format date for Amazon SP-API (YYYY-MM-DD)
-     * @param {Date} date - Date object
-     * @returns {string} Formatted date string
-     */
-    formatDate(date) {
-        return date.toISOString().split('T')[0];
-    }
 
     /**
      * Internal method to process retry for failed initial pull
@@ -250,7 +66,7 @@ class InitialPullService {
                         }
                         
                         await loadDatabase(user.ID);
-                        
+
                         // Find failed records
                         let failedRecords = await this.findFailedInitialPullRecords(user);
                         logger.info({ failedRecordsCount: failedRecords.length }, 'Found failed initial pull records to retry');
@@ -647,7 +463,8 @@ class InitialPullService {
      */
     async _startInitialPullForSeller(seller, reportType = null, authOverrides = {}, user = null) {
         try {
-            const ranges = this.calculateFullRanges();
+            const timezone = await model.getUserTimezone(user);
+            const ranges = this.calculateFullRanges(timezone);
             
             const { asins } = await model.getActiveASINsBySellerInitialPull(seller.idSellerAccount, true);            
             if (asins.length === 0) return;
@@ -674,7 +491,8 @@ class InitialPullService {
                     seller.AmazonSellerID,
                     asinList,
                     seller.idSellerAccount,
-                    cronDetailRow.ID
+                    cronDetailRow.ID,
+                    timezone
                 );
                 
                 logger.info({
@@ -1109,6 +927,7 @@ class InitialPullService {
         try {
           const SqpCronDetails = getSqpCronDetails();
           const SqpCronLogs = getSqpCronLogs();
+          const timezone = await model.getUserTimezone(user);
       
           const cronDetail = await SqpCronDetails.findOne({
             where: { ID: cronDetailID },
@@ -1165,9 +984,9 @@ class InitialPullService {
       
           // Update ASIN pull status
           if (overallAsinStatus === 2)
-            await asinInitialPull.markInitialPullCompleted(amazonSellerID, asinList, SellerID, cronDetailID);
+            await asinInitialPull.markInitialPullCompleted(amazonSellerID, asinList, SellerID, cronDetailID, timezone);
           else
-            await asinInitialPull.markInitialPullFailed(amazonSellerID, asinList, SellerID, cronDetailID);
+            await asinInitialPull.markInitialPullFailed(amazonSellerID, asinList, SellerID, cronDetailID, timezone);
       
           // Final cronRunningStatus update
           const row = await SqpCronDetails.findOne({ where: { ID: cronDetailID }, raw: true });
@@ -1446,8 +1265,8 @@ class InitialPullService {
             operation: async ({ attempt, currentRetry, context, startTime }) => {
                 const { seller, reportId, documentId, range, reportType, retry, user } = context;
                 const downloadStartTime = new Date();
-                
-                logger.info({ reportId, documentId, range: range.range, attempt }, 'Starting initial pull download');
+                const timezone = await model.getUserTimezone(user);
+                logger.info({ reportId, documentId, range: range.range, attempt, timezone }, 'Starting initial pull download');
                 
                 // Set ProcessRunningStatus = 3 (Download) and update start date
                 await model.setProcessRunningStatus(cronDetailID, reportType, 3);
@@ -1480,7 +1299,7 @@ class InitialPullService {
                 // Get access token
                 const currentAuthOverrides = await authService.buildAuthOverrides(seller.AmazonSellerID);
                 if (!currentAuthOverrides.accessToken) {				
-                    logger.error({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request');
+                    logger.error({ amazonSellerID: seller.AmazonSellerID, attempt, timezone }, 'No access token available for request');
                     
                     // API Logger - Failed Download (No Token)
                     const userId = user ? user.ID : null;
@@ -1686,7 +1505,7 @@ class InitialPullService {
                             }, retry ? 'Starting initial pull import (retry)' : 'Starting initial pull import', 'Starting initial pull import');
                             
                             // Import JSON data into database
-                            const importResult = await jsonSvc.__importJson(enrichedRow, 0, 0, 1);
+                            const importResult = await jsonSvc.__importJson(enrichedRow, 0, 0, 1, timezone);
                             
                             logger.info({ 
                                 cronDetailID,

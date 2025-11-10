@@ -1,109 +1,201 @@
-const { format, subDays, lastDayOfMonth, startOfMonth } = require('date-fns');
-
-
-// Denver timezone (Mountain Time)
-const DENVER_TZ = process.env.TZ;
-
-function fmt(date) {
-    return format(date, 'yyyy-MM-dd');
-}
-
-function getNowDateTimeInUserTimezone(timezone = DENVER_TZ){
-    const now = new Date();
-    return now;
-}
 /**
- * Get current date/time in Denver timezone using native JavaScript Intl API
- * Denver uses Mountain Time (MT): UTC-7 (MST) or UTC-6 (MDT during daylight saving)
+ * Utility functions for calculating historical date ranges
+ * (Week, Month, Quarter) — all timezone-aware and ISO date formatted.
  */
-function getNowRangeForPeriodInUserTimezone(timezone = DENVER_TZ) {
-    const now = getNowDateTimeInUserTimezone(timezone);
-    const formatter = new Intl.DateTimeFormat('en-US', {
-        timeZone: timezone,
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-        hour12: false
-    });
-    
-    const parts = formatter.formatToParts(now);
-    const getValue = (type) => parts.find(p => p.type === type)?.value;
-    
-    // Create a new Date object with Denver timezone values
-    return new Date(
-        parseInt(getValue('year')),
-        parseInt(getValue('month')) - 1,
-        parseInt(getValue('day')),
-        parseInt(getValue('hour')),
-        parseInt(getValue('minute')),
-        parseInt(getValue('second'))
-    );
+
+const { subDays } = require('date-fns');
+const { DateTime } = require('luxon');
+const logger = require('../utils/logger.utils'); // adjust path if needed
+
+// Default timezone (e.g., 'America/Denver')
+const DEFAULT_TZ = process.env.TZ || 'America/Denver';
+
+/**
+ * Format a Luxon DateTime or JS Date to 'YYYY-MM-DD'
+ */
+function fmt(date) {
+    if (!date) return null;
+    if (DateTime.isDateTime(date)) {
+        return date.toISODate();
+    }
+    return DateTime.fromJSDate(date).toISODate();
 }
 
-function getDateRangeForPeriod(period, timezone = DENVER_TZ) {
-    const now = getNowRangeForPeriodInUserTimezone(timezone);
+/**
+ * Get current DateTime object in user's timezone
+ * @param {string|null} timezone
+ */
+function getNowDateTimeInUserTimezone(timezone) {
+    const tz = timezone ?? DEFAULT_TZ;
+    return DateTime.now().setZone(tz);
+}
+
+/**
+ * Return JS Date for the current time in user's timezone
+ * (optional, rarely needed)
+ */
+function getNowRangeForPeriodInUserTimezone(timezone) {
+    return getNowDateTimeInUserTimezone(timezone).toJSDate();
+}
+
+/**
+ * Calculate historical week ranges (Sunday–Saturday)
+ */
+function calculateWeekRanges(numberOfWeeks = 52, skipLatest = true, timezone) {
+    const ranges = [];
+    const today = getNowDateTimeInUserTimezone(timezone);
+    const currentSunday = today.startOf('week'); // Sunday
+
+    const startWeek = skipLatest ? -2 : 0;
+
+    for (let i = startWeek; i >= startWeek - (numberOfWeeks - 1); i--) {
+        const weekStart = currentSunday.plus({ weeks: i });
+        const weekEnd = weekStart.plus({ days: 6 });
+
+        ranges.push({
+            startDate: fmt(weekStart),
+            endDate: fmt(weekEnd),
+            range: `${fmt(weekStart)} to ${fmt(weekEnd)}`,
+            type: 'WEEK'
+        });
+    }
+
+    return ranges;
+}
+
+/**
+ * Calculate historical month ranges
+ */
+function calculateMonthRanges(numberOfMonths = 12, skipCurrent = true, timezone) {
+    const ranges = [];
+    const today = getNowDateTimeInUserTimezone(timezone);
+    const startMonthIndex = skipCurrent ? -2 : 0;
+
+    for (let i = startMonthIndex; i >= startMonthIndex - (numberOfMonths - 1); i--) {
+        const monthStart = today.plus({ months: i }).startOf('month');
+        const monthEnd = monthStart.endOf('month');
+
+        ranges.push({
+            startDate: fmt(monthStart),
+            endDate: fmt(monthEnd),
+            range: `${fmt(monthStart)} to ${fmt(monthEnd)}`,
+            type: 'MONTH'
+        });
+    }
+
+    return ranges;
+}
+
+/**
+ * Calculate historical quarter ranges
+ */
+function calculateQuarterRanges(numberOfQuarters = 4, skipCurrent = true, timezone) {
+    const ranges = [];
+    const today = getNowDateTimeInUserTimezone(timezone);
+    const startQuarterIndex = skipCurrent ? -2 : 0;
+
+    for (let i = startQuarterIndex; i >= startQuarterIndex - (numberOfQuarters - 1); i--) {
+        const qStart = today.plus({ months: i * 3 }).startOf('quarter');
+        const qEnd = qStart.endOf('quarter');
+
+        ranges.push({
+            startDate: fmt(qStart),
+            endDate: fmt(qEnd),
+            range: `${fmt(qStart)} to ${fmt(qEnd)}`,
+            type: 'QUARTER',
+            quarter: qStart.quarter,
+            year: qStart.year
+        });
+    }
+
+    return ranges;
+}
+
+/**
+ * Calculate combined full ranges for week, month, quarter
+ */
+function calculateFullRanges(timezone) {
+    const weeksToPull = parseInt(process.env.WEEKS_TO_PULL || 52);
+    const monthsToPull = parseInt(process.env.MONTHS_TO_PULL || 12);
+    const quartersToPull = parseInt(process.env.QUARTERS_TO_PULL || 4);
+
+    logger.info({ weeksToPull, monthsToPull, quartersToPull }, 'Initial pull configuration');
+
+    const weekRanges = calculateWeekRanges(weeksToPull, true, timezone);
+    const monthRanges = calculateMonthRanges(monthsToPull, true, timezone);
+    const quarterRanges = calculateQuarterRanges(quartersToPull, true, timezone);
+
+    const fullWeekRange = weekRanges.length
+        ? `${weekRanges[weekRanges.length - 1].startDate} to ${weekRanges[0].endDate}`
+        : null;
+
+    const fullMonthRange = monthRanges.length
+        ? `${monthRanges[monthRanges.length - 1].startDate} to ${monthRanges[0].endDate}`
+        : null;
+
+    const fullQuarterRange = quarterRanges.length
+        ? `${quarterRanges[quarterRanges.length - 1].startDate} to ${quarterRanges[0].endDate}`
+        : null;
+
+    return {
+        fullWeekRange,
+        fullMonthRange,
+        fullQuarterRange,
+        weekRanges,
+        monthRanges,
+        quarterRanges
+    };
+}
+
+/**
+ * Return start/end for the latest completed WEEK, MONTH, or QUARTER
+ */
+function getDateRangeForPeriod(period, timezone) {
+    const now = getNowDateTimeInUserTimezone(timezone);
     switch (period) {
         case 'WEEK': {
-            // last completed Sunday-Saturday
-            const todayDow = now.getDay();
-            const daysSinceSaturday = (todayDow + 1) % 7; // 0 if Sunday -> 1, Saturday -> 0
-            const end = subDays(now, daysSinceSaturday || 7);
-            const start = subDays(end, 6);
-            return { start: fmt(start), end: fmt(end) };
+            // Last completed week Sunday-Saturday
+            const lastSaturday = now.startOf('week').minus({ days: 1 }); // last Saturday
+            const lastSunday = lastSaturday.minus({ days: 6 });          // previous Sunday
+            return { start: fmt(lastSunday), end: fmt(lastSaturday) };
         }
+
         case 'MONTH': {
-            // if it's the 1st of the month → return the month before last (because last month not yet available)
-            const day = now.getDate();
-            let target = startOfMonth(now);
-            if (day <= 1) {
-                // too early → go back 2 months
-                target = subDays(target, 1); // go to last month
-                target = subDays(startOfMonth(target), 1); // go to month before last
-            } else {
-                // safe to use last month
-                target = subDays(target, 1); // last day of last month
-            }
-            const lastMonthLastDay = lastDayOfMonth(target);
-            const lastMonthFirstDay = startOfMonth(lastMonthLastDay);
-            return { start: fmt(lastMonthFirstDay), end: fmt(lastMonthLastDay) };
+            // Last completed month
+            const firstDayOfCurrentMonth = now.startOf('month');
+            const lastMonthEnd = firstDayOfCurrentMonth.minus({ days: 1 });
+            const lastMonthStart = lastMonthEnd.startOf('month');
+            return { start: fmt(lastMonthStart), end: fmt(lastMonthEnd) };
         }
+
         case 'QUARTER': {
-            const month = now.getMonth() + 1;
-            const day = now.getDate();
-
-            // Determine last completed quarter
-            let q = Math.ceil(month / 3) - 1;
-            if (q < 1) q = 4;
-            let year = now.getFullYear();
-            if (Math.ceil(month / 3) === 1) year -= 1;
-
-            // If it's the 1st of a new quarter → still fetch the previous quarter (not yet available)
-            if (day <= 1 && (month === 1 || month === 4 || month === 7 || month === 10)) {
-                q -= 1;
-                if (q < 1) {
-                    q = 4;
-                    year -= 1;
-                }
-            }
-
-            const firstMonth = (q - 1) * 3 + 1;
-            const lastMonth = q * 3;
-            const first = new Date(year, firstMonth - 1, 1);
-            const last = lastDayOfMonth(new Date(year, lastMonth - 1, 1));
-            return { start: fmt(first), end: fmt(last) };
+            // Last completed quarter
+            const currentQuarterStart = now.startOf('quarter');
+            const lastQuarterEnd = currentQuarterStart.minus({ days: 1 });
+            const lastQuarterStart = lastQuarterEnd.startOf('quarter');
+            return { start: fmt(lastQuarterStart), end: fmt(lastQuarterEnd) };
         }
+
         default:
             return null;
     }
 }
 
-module.exports = { 
+
+/**
+ * Format a Date or Luxon DateTime to YYYY-MM-DD
+ */
+function formatDate(date) {
+    return fmt(date);
+}
+
+module.exports = {
+    calculateWeekRanges,
+    calculateMonthRanges,
+    calculateQuarterRanges,
+    calculateFullRanges,
     getDateRangeForPeriod,
     getNowDateTimeInUserTimezone,
-    getNowRangeForPeriodInUserTimezone
+    getNowRangeForPeriodInUserTimezone,
+    formatDate
 };
-
-

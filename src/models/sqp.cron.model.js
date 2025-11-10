@@ -727,6 +727,15 @@ async function incrementRetryCount(cronJobID, reportType, reportId) {
     }
 }
 
+async function getUserTimezone(user = null) {
+    let timezone;
+    if(user && user.Timezone){
+        timezone = user.Timezone;
+    } else {
+        timezone = null;
+    }
+    return timezone;
+}
 
 module.exports = {
     splitASINsIntoChunks,
@@ -744,7 +753,8 @@ module.exports = {
     ASINsBySellerUpdated,
     hasEligibleASINs,
     hasEligibleASINsInitialPull,
-    getReportsForStatusType
+    getReportsForStatusType,
+    getUserTimezone
 };
 
 

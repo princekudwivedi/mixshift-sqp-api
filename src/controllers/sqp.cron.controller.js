@@ -25,14 +25,14 @@ async function requestForSeller(seller, authOverrides = {}, spReportType = confi
 		const chunks = model.splitASINsIntoChunks(asins, 200);
 		logger.info({ chunkCount: chunks.length }, 'Split ASINs into chunks');
 		let cronDetailIDs = [];
-		let cronDetailData = [];
-		
+		let cronDetailData = [];		
 		for (let i = 0; i < chunks.length; i++) {
 			const chunk = chunks[i];
-			logger.info({ chunkIndex: i, asinCount: chunk.asins.length }, 'Processing chunk');
-			const weekRange = dates.getDateRangeForPeriod('WEEK');
-			const monthRange = dates.getDateRangeForPeriod('MONTH');
-			const quarterRange = dates.getDateRangeForPeriod('QUARTER');
+			logger.info({ chunkIndex: i, asinCount: chunk.asins.length }, 'Processing chunk');			
+			const timezone = await model.getUserTimezone(user);
+			const weekRange = dates.getDateRangeForPeriod('WEEK', timezone);
+			const monthRange = dates.getDateRangeForPeriod('MONTH', timezone);
+			const quarterRange = dates.getDateRangeForPeriod('QUARTER', timezone);
 			const FullWeekRange = `${weekRange.start} to ${weekRange.end}`;
 			const FullMonthRange = `${monthRange.start} to ${monthRange.end}`;
 			const FullQuarterRange = `${quarterRange.start} to ${quarterRange.end}`;
@@ -122,7 +122,8 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 			await model.updateSQPReportStatus(cronDetailID, reportType, 0, startDate);
 
 			const period = reportType;
-			const range = dates.getDateRangeForPeriod(period);
+			const timezone = await model.getUserTimezone(user);
+			const range = dates.getDateRangeForPeriod(period, timezone);
 			logger.info({ period, range, attempt }, 'Date range calculated');
 			
 			// Resolve marketplace id (required by SP-API). If unavailable, skip this request gracefully.
@@ -392,7 +393,8 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 	}
 
 	// Calculate date range for the report type
-	const range = dates.getDateRangeForPeriod(reportType);
+	const timezone = await model.getUserTimezone(user);
+	const range = dates.getDateRangeForPeriod(reportType, timezone);
 
 	// Use the universal retry function
 	const result = await RetryHelpers.executeWithRetry({
@@ -674,7 +676,7 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 		operation: async ({ attempt, currentRetry, context, startTime }) => {
 			const { row, reportId, seller, authOverrides, user, range } = context;
 			const downloadStartTime = new Date().toISOString();
-			
+			const timezone = await model.getUserTimezone(user);
 			logger.info({ reportId, reportType, attempt }, 'Starting download for report');
 			
 			// Update download status to DOWNLOADING and increment attempts
@@ -895,7 +897,7 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 						// Convert Sequelize instance to plain object
 						const plainRow = newRow[0].toJSON ? newRow[0].toJSON() : newRow[0];
 						const enrichedRow = { ...plainRow, AmazonSellerID: row.AmazonSellerID, ReportID: reportId, SellerID: row.SellerID };					
-						const importResult = await jsonSvc.__importJson(enrichedRow, 0, 0);
+						const importResult = await jsonSvc.__importJson(enrichedRow, 0, 0, 0, timezone);
 						logger.info({ 
 								action: 'Download Completed - Import Done',
 								cronDetailID: row.ID, 
@@ -942,7 +944,7 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 					);
 
 					// Use the unified completion handler for no-data scenario
-					await jsonSvc.handleReportCompletion(row.ID, reportType, row.AmazonSellerID, null, false);					
+					await jsonSvc.handleReportCompletion(row.ID, reportType, row.AmazonSellerID, null, false, timezone);
 
 					return {
 						action: 'Download Completed & Import Done - No Data to import',

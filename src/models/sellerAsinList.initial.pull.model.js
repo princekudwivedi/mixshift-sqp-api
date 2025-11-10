@@ -24,7 +24,7 @@ const { updateSellerAsinLatestRanges } = require('../services/sqp.json.processin
  * @param {Date} startTime - Start time (optional)
  * @param {Date} endTime - End time (optional)
  */
-async function updateInitialPullStatus(cronDetailID, SellerID, amazonSellerID, asinList, status, startTime = null, endTime = null) {
+async function updateInitialPullStatus(cronDetailID, SellerID, amazonSellerID, asinList, status, startTime = null, endTime = null, timezone = null) {
     try {
         const SellerAsinList = getSellerAsinList();
         
@@ -40,7 +40,7 @@ async function updateInitialPullStatus(cronDetailID, SellerID, amazonSellerID, a
         
         if (endTime) {
             updateData.InitialPullEndTime = endTime;
-        }        
+        }
         
         // Build where clause
         const where = { AmazonSellerID: amazonSellerID };
@@ -96,7 +96,7 @@ async function updateInitialPullStatus(cronDetailID, SellerID, amazonSellerID, a
                                 
                                 // Get current date range for this report type
                                 const datesUtils = require('../utils/dates.utils');
-                                const currentRange = datesUtils.getDateRangeForPeriod(reportType);
+                                const currentRange = datesUtils.getDateRangeForPeriod(reportType, timezone);
                                 
                                 // Check if data is for current period
                                 const isCurrentPeriod = 
@@ -157,7 +157,7 @@ async function updateInitialPullStatus(cronDetailID, SellerID, amazonSellerID, a
 /**
  * Mark initial pull as started (status = 1)
  */
-async function markInitialPullStarted(amazonSellerID, asinList, SellerID, cronDetailID) {
+async function markInitialPullStarted(amazonSellerID, asinList, SellerID, cronDetailID, timezone = null) {
     return updateInitialPullStatus(
         '',
         SellerID,
@@ -165,14 +165,15 @@ async function markInitialPullStarted(amazonSellerID, asinList, SellerID, cronDe
         asinList,
         1, // In Progress
         new Date(), // Start time
-        null
+        null,
+        timezone
     );
 }
 
 /**
  * Mark initial pull as completed (status = 2)
  */
-async function markInitialPullCompleted(amazonSellerID, asinList, SellerID, cronDetailID) {
+async function markInitialPullCompleted(amazonSellerID, asinList, SellerID, cronDetailID, timezone = null) {
     return updateInitialPullStatus(
         cronDetailID,
         SellerID,
@@ -180,14 +181,15 @@ async function markInitialPullCompleted(amazonSellerID, asinList, SellerID, cron
         asinList,
         2, // Completed
         null,
-        new Date() // End time
+        new Date(), // End time
+        timezone
     );
 }
 
 /**
  * Mark initial pull as failed (status = 3)
  */
-async function markInitialPullFailed(amazonSellerID, asinList, SellerID, cronDetailID) {
+async function markInitialPullFailed(amazonSellerID, asinList, SellerID, cronDetailID, timezone = null) {
     return updateInitialPullStatus(
         cronDetailID,
         SellerID,
@@ -195,7 +197,8 @@ async function markInitialPullFailed(amazonSellerID, asinList, SellerID, cronDet
         asinList,
         3, // Failed
         null,
-        new Date() // End time
+        new Date(), // End time
+        timezone
     );
 }
 

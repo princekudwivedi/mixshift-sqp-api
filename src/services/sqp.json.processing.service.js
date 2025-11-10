@@ -20,7 +20,7 @@ const { FileHelpers, DataProcessingHelpers } = require('../helpers/sqp.helpers')
  * Handle report completion - unified function for both data and no-data scenarios
  * This function handles the complete flow for report completion including date ranges
  */
-async function handleReportCompletion(cronJobID, reportType, amazonSellerID = null, jsonData = null, hasData = true) {
+async function handleReportCompletion(cronJobID, reportType, amazonSellerID = null, jsonData = null, hasData = true, timezone = null) {
 	try {
 		console.log(`📘 Handling report completion for ${reportType}`, { 
 			cronJobID, 
@@ -114,7 +114,7 @@ async function handleReportCompletion(cronJobID, reportType, amazonSellerID = nu
 					
 					// Get current date range for this report type
 					const datesUtils = require('../utils/dates.utils');
-					const currentRange = datesUtils.getDateRangeForPeriod(reportType);
+					const currentRange = datesUtils.getDateRangeForPeriod(reportType, timezone);
 					
 					// Check if data is for current period
 					const isCurrentPeriod = 
@@ -534,12 +534,11 @@ async function updateSellerAsinLatestRanges({
 }
 
 
-async function __importJson(row, processed = 0, errors = 0, iInitialPull = 0){
+async function __importJson(row, processed = 0, errors = 0, iInitialPull = 0, timezone = null){
     let jsonContent = null;
     try {
         await downloadUrls.updateProcessStatusById(row.ID, 'PROCESSING', { incrementAttempts: true });
-
-        const filePath = row.FilePath;
+		const filePath = row.FilePath;
 
         if (!filePath) {
             throw new Error('File path missing for download row');
@@ -561,7 +560,7 @@ async function __importJson(row, processed = 0, errors = 0, iInitialPull = 0){
             }, 'JSON file contains no data for report');
 
             if (iInitialPull === 0) {
-                await handleReportCompletion(row.CronJobID, row.ReportType, row.AmazonSellerID, null, false);
+                await handleReportCompletion(row.CronJobID, row.ReportType, row.AmazonSellerID, null, false, timezone);
             }
 
             processed++;
@@ -611,7 +610,7 @@ async function __importJson(row, processed = 0, errors = 0, iInitialPull = 0){
 		});
         if(iInitialPull === 0){
 			// Use the unified completion handler for data scenario
-            await handleReportCompletion(row.CronJobID, row.ReportType, row.AmazonSellerID, records, true);
+            await handleReportCompletion(row.CronJobID, row.ReportType, row.AmazonSellerID, records, true, timezone);
 		}
 		processed++;
 	} catch (e) {
