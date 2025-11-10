@@ -252,7 +252,7 @@ class InitialPullService {
                         await loadDatabase(user.ID);
                         
                         // Find failed records
-                        let failedRecords = await this.findFailedInitialPullRecords();
+                        let failedRecords = await this.findFailedInitialPullRecords(user);
                         logger.info({ failedRecordsCount: failedRecords.length }, 'Found failed initial pull records to retry');
                         
                         // Filter by cronDetailID if specified
@@ -1851,7 +1851,7 @@ class InitialPullService {
      * Find failed initial pull records
      * @returns {Promise<Array>} Failed records that need retry
      */
-    async findFailedInitialPullRecords(user) {
+    async findFailedInitialPullRecords(user = null) {
         const SqpCronDetails = getSqpCronDetails();
         
         // Calculate time (6 hours ago)
