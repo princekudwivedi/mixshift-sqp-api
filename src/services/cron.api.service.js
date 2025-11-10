@@ -310,7 +310,7 @@ class CronApiService {
                 [Op.or]: [                    
                     {
                         [Op.and]: [
-                            { cronRunningStatus: 3},
+                            { cronRunningStatus: { [Op.in]: [1, 3, 4] } },
                             { WeeklyProcessRunningStatus: { [Op.in]: [1, 2, 3, 4] } },
                             { WeeklySQPDataPullStatus: { [Op.in]: [0, 2] } },
                             {
@@ -323,7 +323,7 @@ class CronApiService {
                     },
                     {
                         [Op.and]: [
-                            { cronRunningStatus: 3},
+                            { cronRunningStatus: { [Op.in]: [1, 3, 4] } },
                             { MonthlyProcessRunningStatus: { [Op.in]: [1, 2, 3, 4] } },
                             { MonthlySQPDataPullStatus: { [Op.in]: [0, 2] } },
                             {
@@ -336,7 +336,7 @@ class CronApiService {
                     },
                     {
                         [Op.and]: [
-                            { cronRunningStatus: 3},
+                            { cronRunningStatus: { [Op.in]: [1, 3, 4] } },
                             { QuarterlyProcessRunningStatus: { [Op.in]: [1, 2, 3, 4] } },
                             { QuarterlySQPDataPullStatus: { [Op.in]: [0, 2] } },
                             {
