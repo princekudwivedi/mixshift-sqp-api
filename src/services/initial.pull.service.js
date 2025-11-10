@@ -833,11 +833,11 @@ class InitialPullService {
               if (request.type === 'MONTH') doneMonth++;
               if (request.type === 'QUARTER') doneQuarter++;
       
-              // ðŸ•’ Delay to respect API limits
+              // 🕒 Delay to respect API limits
               const delaySeconds = Number(process.env.REQUEST_DELAY_SECONDS) || 30;
               await DelayHelpers.wait(delaySeconds, 'Between report status checks (rate limiting)');
       
-              // âœ… Check if all of a type are processed â†’ update pull status
+              // ✅ Check if all of a type are processed → update pull status
               if (request.type === 'WEEK' && doneWeek === totalWeek) {
                 await this._checkAndUpdateTypeCompletion(cronDetailRow.ID, 'WEEK', user);
               } else if (request.type === 'MONTH' && doneMonth === totalMonth) {
@@ -871,13 +871,13 @@ class InitialPullService {
         let pull = 2; // default in-progress
       
         if (done === total) {
-          pull = 1; // âœ… all done
+          pull = 1; // ✅ all done
         } else if (fatal === total) {
-          pull = 3; // âŒ all fatal
+          pull = 3; // ❌ all fatal
         } else if ((done > 0 && progress > 0) || (progress > 0 && fatal > 0)) {
-          pull = 2; // âš™ï¸ mixed state (some done + some progress/fatal)
+          pull = 2; // ⚙️ mixed state (some done + some progress/fatal)
         } else if(done > 0 && fatal > 0){
-          pull = 3; // âŒ some done and some fatal
+          pull = 3; // ❌ some done and some fatal
         }
       
         await this.updateStatus(cronDetailID, type, pull, user);
@@ -982,6 +982,7 @@ class InitialPullService {
             if (pull === 3) overallAsinStatus = 3;
             await this.updateStatus(cronDetailID, type, pull, user);
           }
+          
           logger.info({ overallAsinStatus }, 'Overall ASIN pull status');
           // Update ASIN pull status
           if (overallAsinStatus === 2)
@@ -990,8 +991,8 @@ class InitialPullService {
             await asinInitialPull.markInitialPullFailed(amazonSellerID, asinList, SellerID, cronDetailID, timezone);
       
           // Final cronRunningStatus update
-          const row = await SqpCronDetails.findOne({ where: { ID: cronDetailID }, raw: true });
-          if (row) {
+          const row = await SqpCronDetails.findOne({ where: { ID: cronDetailID }, raw: true });          
+          if (row) {            
             const statuses = [row.WeeklySQPDataPullStatus, row.MonthlySQPDataPullStatus, row.QuarterlySQPDataPullStatus];
             const anyFatal = statuses.some(s => s === 3);
             const allDone = statuses.every(s => s === 1);
@@ -1004,12 +1005,11 @@ class InitialPullService {
             logger.info({ overallAsinStatus }, 'Overall ASIN pull status');
             // Update ASIN pull status
             if (newStatus == 2){
-                await asinInitialPull.markInitialPullCompleted(amazonSellerID, asinList, SellerID, cronDetailID);
+                await asinInitialPull.markInitialPullCompleted(amazonSellerID, asinList, SellerID, cronDetailID, timezone);
             } else {
-                await asinInitialPull.markInitialPullFailed(amazonSellerID, asinList, SellerID, cronDetailID);
+                await asinInitialPull.markInitialPullFailed(amazonSellerID, asinList, SellerID, cronDetailID, timezone);
             }
           }
-      
         } catch (error) {
           logger.error({ error: error.message }, 'Error in _updateInitialPullFinalStatus');
           throw error;
@@ -1772,7 +1772,7 @@ class InitialPullService {
                     {
                       [Op.or]: [
                         {
-                          Status: { [Op.in]: [0, 2] },
+                          Status: { [Op.in]: [0, 2, 3] },
                         },
                         {
                           Status: 1,
