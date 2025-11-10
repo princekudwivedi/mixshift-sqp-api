@@ -1015,11 +1015,11 @@ class InitialPullService {
               if (request.type === 'MONTH') doneMonth++;
               if (request.type === 'QUARTER') doneQuarter++;
       
-              // 🕒 Delay to respect API limits
+              // ðŸ•’ Delay to respect API limits
               const delaySeconds = Number(process.env.REQUEST_DELAY_SECONDS) || 30;
               await DelayHelpers.wait(delaySeconds, 'Between report status checks (rate limiting)');
       
-              // ✅ Check if all of a type are processed → update pull status
+              // âœ… Check if all of a type are processed â†’ update pull status
               if (request.type === 'WEEK' && doneWeek === totalWeek) {
                 await this._checkAndUpdateTypeCompletion(cronDetailRow.ID, 'WEEK', user);
               } else if (request.type === 'MONTH' && doneMonth === totalMonth) {
@@ -1053,13 +1053,13 @@ class InitialPullService {
         let pull = 2; // default in-progress
       
         if (done === total) {
-          pull = 1; // ✅ all done
+          pull = 1; // âœ… all done
         } else if (fatal === total) {
-          pull = 3; // ❌ all fatal
+          pull = 3; // âŒ all fatal
         } else if ((done > 0 && progress > 0) || (progress > 0 && fatal > 0)) {
-          pull = 2; // ⚙️ mixed state (some done + some progress/fatal)
+          pull = 2; // âš™ï¸ mixed state (some done + some progress/fatal)
         } else if(done > 0 && fatal > 0){
-          pull = 3; // ❌ some done and some fatal
+          pull = 3; // âŒ some done and some fatal
         }
       
         await this.updateStatus(cronDetailID, type, pull, user);
@@ -1178,8 +1178,17 @@ class InitialPullService {
             const allDone = statuses.every(s => s === 1);
             const needsRetry = statuses.some(s => [0, 2, null].includes(s));
             const newStatus = needsRetry ? 3 : (allDone || anyFatal ? 2 : row.cronRunningStatus);
-            if (newStatus !== row.cronRunningStatus)
+            if (newStatus !== row.cronRunningStatus){
               await SqpCronDetails.update({ cronRunningStatus: newStatus, dtUpdatedOn: new Date() }, { where: { ID: cronDetailID } });
+            }
+
+            logger.info({ overallAsinStatus }, 'Overall ASIN pull status');
+            // Update ASIN pull status
+            if (newStatus == 2){
+                await asinInitialPull.markInitialPullCompleted(amazonSellerID, asinList, SellerID, cronDetailID);
+            } else {
+                await asinInitialPull.markInitialPullFailed(amazonSellerID, asinList, SellerID, cronDetailID);
+            }
           }
       
         } catch (error) {
