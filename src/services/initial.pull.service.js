@@ -1249,10 +1249,10 @@ class InitialPullService {
                         endTime: new Date(),
                         executionTime: (Date.now() - startTime) / 1000,
                         status: 'failure',
-                        error: { message: 'No access token available for report request' }
+                        error: { message: 'No access token available for report request but retry again on catch block' }
                     });
                     
-                    throw new Error('No access token available for report request');
+                    throw new Error('No access token available for report request but retry again on catch block');
                 }
                 // Check report status with force refresh+retry on 401/403
                 let res;
@@ -1502,12 +1502,12 @@ class InitialPullService {
                         endTime: new Date(),
                         executionTime: (Date.now() - startTime) / 1000,
                         status: 'failure',
-                        error: { message: 'No access token available for report request' },
+                        error: { message: 'No access token available for report request but retry again on catch block' },
                         retryCount: currentRetry,
                         attempt
                     });
                     
-                    throw new Error('No access token available for report request');
+                    throw new Error('No access token available for report request but retry again on catch block');
                 }
                 
                 // Download report with force refresh+retry on 401/403

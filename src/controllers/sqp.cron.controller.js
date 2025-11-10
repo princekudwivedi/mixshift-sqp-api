@@ -712,12 +712,12 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 					endTime: new Date(),
 					executionTime: (Date.now() - startTime) / 1000,
 					status: 'failure',
-					error: { message: 'No access token available for report request' },
+					error: { message: 'No access token available for report request but retry again on catch block' },
 					retryCount: currentRetry,
 					attempt
 				});
 				
-				throw new Error('No access token available for report request');
+				throw new Error('No access token available for report request but retry again on catch block');
 			}
 			
 			const requestDelaySeconds = Number(process.env.REQUEST_DELAY_SECONDS) || 30;
