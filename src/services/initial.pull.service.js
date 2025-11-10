@@ -974,6 +974,7 @@ class InitialPullService {
               pull = 3;
             } else if ((done > 0 && progress > 0) || (progress > 0 && fatal > 0)) {
               pull = 2;
+              overallAsinStatus = 3;
             } else if(done > 0 && fatal > 0){
               pull = 3;
             }
