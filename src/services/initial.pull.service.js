@@ -982,7 +982,7 @@ class InitialPullService {
             if (pull === 3) overallAsinStatus = 3;
             await this.updateStatus(cronDetailID, type, pull, user);
           }
-      
+          logger.info({ overallAsinStatus }, 'Overall ASIN pull status');
           // Update ASIN pull status
           if (overallAsinStatus === 2)
             await asinInitialPull.markInitialPullCompleted(amazonSellerID, asinList, SellerID, cronDetailID, timezone);
@@ -1068,10 +1068,10 @@ class InitialPullService {
                         endTime: new Date(),
                         executionTime: (Date.now() - startTime) / 1000,
                         status: 'failure',
-                        error: { message: 'No access token available for report request' }
+                        error: { message: 'No access token available for report request but retry again on catch block' }
                     });
                     
-                    throw new Error('No access token available for report request');
+                    throw new Error('No access token available for report request but retry again on catch block');
                 }
                 // Check report status with force refresh+retry on 401/403
                 let res;
@@ -1321,12 +1321,12 @@ class InitialPullService {
                         endTime: new Date(),
                         executionTime: (Date.now() - startTime) / 1000,
                         status: 'failure',
-                        error: { message: 'No access token available for report request' },
+                        error: { message: 'No access token available for report request but retry again on catch block' },
                         retryCount: currentRetry,
                         attempt
                     });
                     
-                    throw new Error('No access token available for report request');
+                    throw new Error('No access token available for report request but retry again on catch block');
                 }
                 
                 // Download report with force refresh+retry on 401/403
