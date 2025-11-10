@@ -1163,7 +1163,7 @@ class InitialPullService {
             if (pull === 3) overallAsinStatus = 3;
             await this.updateStatus(cronDetailID, type, pull, user);
           }
-      
+          logger.info({ overallAsinStatus }, 'Overall ASIN pull status');
           // Update ASIN pull status
           if (overallAsinStatus === 2)
             await asinInitialPull.markInitialPullCompleted(amazonSellerID, asinList, SellerID, cronDetailID);
