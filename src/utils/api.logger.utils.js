@@ -393,8 +393,9 @@ class APILogger {
      * @param {number} daysToKeep - Number of days to keep (default: 15)
      */
     cleanOldLogs(daysToKeep = 15) {
-        const cutoffDate = dates.getNowDateTimeInUserTimezoneAgo(new Date(), { days: 15 });
-        logger.info(`\n🧹 Cleaning logs older than ${daysToKeep} days (before ${cutoffDate.toISOString().split('T')[0]})...`);
+        const cutoffDate = dates.getNowDateTimeInUserTimezoneAgoDate(new Date(), { days: daysToKeep });
+        const cutoffDateLog = dates.getNowDateTimeInUserTimezoneAgo(new Date(), { days: daysToKeep });
+        logger.info(`\n🧹 Cleaning logs older than ${daysToKeep} days (before ${cutoffDateLog})...`);
 
         // Helper function to parse date from folder name (DD-MM-YYYY or YYYY-MM-DD)
         const parseDateFolder = (folderName) => {
@@ -556,7 +557,7 @@ class APILogger {
             }
 
             // 3. Clean API report exports (reports/<date>/<user>/<seller>/<amazon>/)
-            const reportsBasePath = path.join(process.cwd(), 'logs', 'reports');
+            const reportsBasePath = path.join(process.cwd(), 'reports');
             if (fs.existsSync(reportsBasePath)) {
                 logger.info('\n📂 Cleaning API report exports...');
 
