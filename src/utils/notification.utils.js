@@ -133,7 +133,7 @@ async function sendFailureNotification(params) {
                 <p><strong>Error Type:</strong> ${getErrorType(errorMessage)}</p>
                 <p><strong>Failure Type:</strong> ${isFatalError ? 'Amazon FATAL/CANCELLED (immediate)' : 'Critical error - requires attention'}</p>
                 <p><strong>Error:</strong> ${errorMessage}</p>
-                <p><strong>Time:</strong> ${dates.getNowDateTimeInUserTimezone().toISOString()}</p>
+                <p><strong>Time:</strong> ${dates.getNowDateTimeInUserTimezone().log}</p>
                 ${isFatalError ? '<p><em>Note: This report returned a FATAL/CANCELLED status from Amazon and cannot be recovered. No retry attempts were made.</em></p>' : ''}
                 <hr>
                 <p><small>This notification is sent only for critical errors. Normal retries (IN_QUEUE, IN_PROGRESS) do not trigger notifications.</small></p>

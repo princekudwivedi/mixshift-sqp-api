@@ -245,7 +245,7 @@ class RetryHelpers {
                             reportType,
                             2, // error (needs retry)
                             null, // startDate unchanged
-                             dates.getNowDateTimeInUserTimezone(), // endDate set on failure
+                             dates.getNowDateTimeInUserTimezone().db, // endDate set on failure
                             null // DO NOT set cronRunningStatus here - will be calculated by finalizeCronRunningStatus
                         );                       
                     } catch (updateErr) {

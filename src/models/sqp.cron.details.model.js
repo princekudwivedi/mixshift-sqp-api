@@ -16,15 +16,15 @@ class SqpCronDetailsModel extends BaseModel {
     }
 
     async markStarted(id) {
-        return this.update(id, { Status: 'STARTED', StartedAt: dates.getNowDateTimeInUserTimezone() });
+        return this.update(id, { Status: 'STARTED', StartedAt: dates.getNowDateTimeInUserTimezone().db });
     }
 
     async markCompleted(id, extra = {}) {
-        return this.update(id, { Status: 'COMPLETED', CompletedAt: dates.getNowDateTimeInUserTimezone(), ...extra });
+        return this.update(id, { Status: 'COMPLETED', CompletedAt: dates.getNowDateTimeInUserTimezone().db, ...extra });
     }
 
     async markFailed(id, message) {
-        return this.update(id, { Status: 'FAILED', ErrorMessage: message, CompletedAt: dates.getNowDateTimeInUserTimezone() });
+        return this.update(id, { Status: 'FAILED', ErrorMessage: message, CompletedAt: dates.getNowDateTimeInUserTimezone().db });
     }
 }
 

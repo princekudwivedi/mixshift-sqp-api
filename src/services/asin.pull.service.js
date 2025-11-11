@@ -138,7 +138,7 @@ class AsinPullService {
                     ItemName: item.ItemName || '',
                     SKU: item.SKU || '',
                     IsActive: isActive || 0,
-                    dtCreatedOn: dates.getNowDateTimeInUserTimezone()
+                    dtCreatedOn: dates.getNowDateTimeInUserTimezone().db
                 }));
 
             let insertedCount = 0;

@@ -376,7 +376,7 @@ async function ASINsBySellerUpdated(SellerID, amazonSellerID, asinList, status, 
         
         const data = { 
             [`${prefix}LastSQPDataPullStatus`]: status,
-            dtUpdatedOn: dates.getNowDateTimeInUserTimezone() 
+            dtUpdatedOn: dates.getNowDateTimeInUserTimezone().db 
         };
         
         if (startTime) {
@@ -462,9 +462,9 @@ async function createSQPCronDetail(amazonSellerID, asinString, sellerID, options
         AmazonSellerID: amazonSellerID,
         SellerID: sellerID,
         ASIN_List: asinString,
-        dtCreatedOn: dates.getNowDateTimeInUserTimezone(),
-        dtCronStartDate: dates.getNowDateTimeInUserTimezone(),
-        dtUpdatedOn: dates.getNowDateTimeInUserTimezone()
+        dtCreatedOn: dates.getNowDateTimeInUserTimezone().db,
+        dtCronStartDate: dates.getNowDateTimeInUserTimezone().db,
+        dtUpdatedOn: dates.getNowDateTimeInUserTimezone().db
     };
     
     // Add optional fields for initial pull
@@ -495,10 +495,10 @@ async function updateSQPReportStatus(cronDetailID, reportType, status, startDate
     const SqpCronDetails = getSqpCronDetails();
     const prefix = mapPrefix(reportType);
     const data = {
-        dtUpdatedOn: dates.getNowDateTimeInUserTimezone()
+        dtUpdatedOn: dates.getNowDateTimeInUserTimezone().db
     };
     if(cronStartDate){
-        data.dtCronStartDate = dates.getNowDateTimeInUserTimezone();
+        data.dtCronStartDate = dates.getNowDateTimeInUserTimezone().db;
     }
     if(status){
         data[`${prefix}SQPDataPullStatus`] =  status;
@@ -540,7 +540,7 @@ async function logCronActivity({ cronJobID, reportType, action, status, message,
         ReportID: reportID,
         RetryCount: retryCount,
         ExecutionTime: executionTime != null ? Number(executionTime) : undefined,
-        dtUpdatedOn: dates.getNowDateTimeInUserTimezone()
+        dtUpdatedOn: dates.getNowDateTimeInUserTimezone().db
     };      
     
     if (reportDocumentID != null) {
@@ -562,7 +562,7 @@ async function logCronActivity({ cronJobID, reportType, action, status, message,
         await SqpCronLogs.create({
             ...where,
             ...payload,
-            dtCreatedOn: dates.getNowDateTimeInUserTimezone()
+            dtCreatedOn: dates.getNowDateTimeInUserTimezone().db
         });
     }
 }
@@ -592,7 +592,7 @@ async function getLatestReportId(cronJobID, reportType, reportID = null, range =
 async function setProcessRunningStatus(cronDetailID, reportType, status) {
     const prefix = mapPrefix(reportType);
     const SqpCronDetails = getSqpCronDetails();
-    await SqpCronDetails.update({ [`${prefix}ProcessRunningStatus`]: Number(status), dtUpdatedOn: dates.getNowDateTimeInUserTimezone() }, { where: { ID: cronDetailID } });
+    await SqpCronDetails.update({ [`${prefix}ProcessRunningStatus`]: Number(status), dtUpdatedOn: dates.getNowDateTimeInUserTimezone().db }, { where: { ID: cronDetailID } });
 }
 
 /**
@@ -639,7 +639,7 @@ async function checkCronDetailsOfSellersByDate(
             ]
         };
     } else {
-        const todayValue = dates.getNowDateTimeInUserTimezone();
+        const todayValue = dates.getNowDateTimeInUserTimezone().log;
         const today = todayValue instanceof Date ? todayValue : new Date(String(todayValue).replace(' ', 'T'));
         const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0);
         const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59);
@@ -734,10 +734,10 @@ async function incrementRetryCount(cronJobID, reportType, reportId) {
     const existing = await SqpCronLogs.findOne({ where });
     if (existing) {
         const next = (typeof existing.RetryCount === 'number' ? existing.RetryCount : 0) + 1;
-        await existing.update({ RetryCount: next, dtUpdatedOn: dates.getNowDateTimeInUserTimezone() });
+        await existing.update({ RetryCount: next, dtUpdatedOn: dates.getNowDateTimeInUserTimezone().db });
         return next;
     } else {
-        await SqpCronLogs.create({ ...where, RetryCount: 1, Action: 'Retry', Status: 3, Message: 'Increment retry', dtCreatedOn: dates.getNowDateTimeInUserTimezone(), dtUpdatedOn: dates.getNowDateTimeInUserTimezone() });
+        await SqpCronLogs.create({ ...where, RetryCount: 1, Action: 'Retry', Status: 3, Message: 'Increment retry', dtCreatedOn: dates.getNowDateTimeInUserTimezone().db, dtUpdatedOn: dates.getNowDateTimeInUserTimezone().db });
         return 1;
     }
 }

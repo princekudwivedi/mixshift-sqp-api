@@ -118,11 +118,7 @@ class CleanupService {
     async _cleanupOldCronDetails(userID, daysToKeep = process.env.DAYS_TO_KEEP) {
         try {
             const SqpCronDetails = getSqpCronDetails();
-            const cutoffDate = dates.getNowDateTimeInUserTimezone();
-            cutoffDate.setDate(cutoffDate.getDate() - daysToKeep);
-                        
-            
-            // Uncomment to actually delete:
+            const cutoffDate = dates.getNowDateTimeInUserTimezoneAgo(new Date(), { days: daysToKeep });
             const deletedCount = await SqpCronDetails.destroy({
                 where: {
                     dtCreatedOn: { [Op.lt]: cutoffDate }
@@ -156,8 +152,8 @@ class CleanupService {
     async _cleanupOldCronLogs(userID, daysToKeep = process.env.DAYS_TO_KEEP) {
         try {
             const SqpCronLogs = getSqpCronLogs();
-            const cutoffDate = dates.getNowDateTimeInUserTimezone();
-            cutoffDate.setDate(cutoffDate.getDate() - daysToKeep);
+
+            const cutoffDate = dates.getNowDateTimeInUserTimezoneAgo(new Date(), { days: daysToKeep });
             
             // Uncomment to actually delete:
             const deletedCount = await SqpCronLogs.destroy({
@@ -194,8 +190,7 @@ class CleanupService {
     async _cleanupOldDownloadUrls(userID, daysToKeep = process.env.DAYS_TO_KEEP) {
         try {
             const SqpDownloadUrls = getSqpDownloadUrls();
-            const cutoffDate = dates.getNowDateTimeInUserTimezone();
-            cutoffDate.setDate(cutoffDate.getDate() - daysToKeep);
+            const cutoffDate = dates.getNowDateTimeInUserTimezoneAgo(new Date(), { days: daysToKeep });
             
             // Uncomment to actually delete:
             const deletedCount = await SqpDownloadUrls.destroy({

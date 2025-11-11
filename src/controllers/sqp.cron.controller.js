@@ -52,10 +52,10 @@ async function requestForSeller(seller, authOverrides = {}, spReportType = confi
 					amazonSellerID: seller.AmazonSellerID,
 					asinCount: asins.length, 
 					asins: asins.slice(0, 5),
-					startTime: startTime
+					startTime: startTime.log
 				}, 'Found ASINs for seller - will mark as InProgress per chunk');
 				logger.info({ type }, 'Requesting report for type');
-				await model.ASINsBySellerUpdated(seller.idSellerAccount, seller.AmazonSellerID, chunk.asins, 1, type, startTime); // 1 = InProgress
+				await model.ASINsBySellerUpdated(seller.idSellerAccount, seller.AmazonSellerID, chunk.asins, 1, type, startTime.db); // 1 = InProgress
                 // ProcessRunningStatus = 1 (Request Report)
                 await model.setProcessRunningStatus(cronDetailID, type, 1);
                 await model.logCronActivity({ cronJobID: cronDetailID, reportType: type, action: 'Request Report', status: 1, message: 'Requesting report', Range: chunk.range });
@@ -118,8 +118,8 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 			
 			// Set start date when beginning the report request
 			const startDate =  dates.getNowDateTimeInUserTimezone();
-			logger.info({ cronDetailID, reportType, startDate: startDate, attempt }, 'Setting start date for report request');
-			await model.updateSQPReportStatus(cronDetailID, reportType, 0, startDate);
+			logger.info({ cronDetailID, reportType, startDate: startDate.log, attempt }, 'Setting start date for report request');
+			await model.updateSQPReportStatus(cronDetailID, reportType, 0, startDate.db);
 
 			const period = reportType;
 			const timezone = await model.getUserTimezone(user);
@@ -180,8 +180,8 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 					endpoint: 'SP-API Create Report',
 					requestPayload: payload,
 					response: null,
-					startTime: requestStartTime,
-					endTime:  dates.getNowDateTimeInUserTimezone(),
+					startTime: requestStartTime.log,
+					endTime:  dates.getNowDateTimeInUserTimezone().log,
 					executionTime: (Date.now() - startTime) / 1000,
 					status: 'failure',
 					reportId: null,
@@ -223,8 +223,8 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 							endpoint: 'SP-API Create Report',
 							requestPayload: payload,
 							response: null,
-							startTime: requestStartTime,
-							endTime:  dates.getNowDateTimeInUserTimezone(),
+							startTime: requestStartTime.log,
+							endTime:  dates.getNowDateTimeInUserTimezone().log,
 							executionTime: (Date.now() - startTime) / 1000,
 							status: 'failure',
 							reportId: null,
@@ -255,8 +255,8 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 				endpoint: 'SP-API Create Report',
 				requestPayload: payload,
 				response: resp,
-				startTime: requestStartTime,
-				endTime: requestEndTime,
+				startTime: requestStartTime.log,
+				endTime: requestEndTime.log,
 				executionTime: (Date.now() - startTime) / 1000,
 				status: reportId ? 'success' : 'failure',
 				reportId,
@@ -295,7 +295,7 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 			return {
 				message: `Report requested successfully on attempt ${attempt}. Report ID: ${reportId}. Waited ${initialDelaySeconds}s before status checks.`,
 				reportID: reportId,
-				data: { reportId, startDate, initialDelay: initialDelaySeconds }
+				data: { reportId, startDate: startDate.log, initialDelay: initialDelaySeconds }
 			};
 		}
 	});
@@ -443,8 +443,8 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 					response: null,
 					retryCount: currentRetry,
 					attempt,
-					startTime: statusStartTime,
-					endTime:  dates.getNowDateTimeInUserTimezone(),
+					startTime: statusStartTime.log,
+					endTime:  dates.getNowDateTimeInUserTimezone().log,
 					executionTime: (Date.now() - startTime) / 1000,
 					status: 'failure',
 					error: { message: 'No access token available for report request' }
@@ -479,8 +479,8 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 							response: null,
 							retryCount: currentRetry,
 							attempt,
-							startTime: statusStartTime,
-							endTime:  dates.getNowDateTimeInUserTimezone(),
+							startTime: statusStartTime.log,
+							endTime:  dates.getNowDateTimeInUserTimezone().log,
 							executionTime: (Date.now() - startTime) / 1000,
 							status: 'failure',
 							error: statusError
@@ -510,8 +510,8 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 				response: res,
 				retryCount: currentRetry,
 				attempt,
-				startTime: statusStartTime,
-				endTime: statusEndTime,
+				startTime: statusStartTime.log,
+				endTime: statusEndTime.log,
 				executionTime: (Date.now() - startTime) / 1000,
 				status: status ? 'success' : 'failure',
 				error: statusError,
@@ -578,7 +578,7 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 							3,           // Status 3 = Failed
 							reportType,  // WEEK/MONTH/QUARTER
 							null,        // startTime already set
-							 dates.getNowDateTimeInUserTimezone()      // endTime when failed
+							 dates.getNowDateTimeInUserTimezone().db      // endTime when failed
 						);
 						
 						logger.info({
@@ -710,8 +710,8 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 					fileSize: 0,
 					rowCount: 0,
 					downloadPayload: { documentId: reportId },
-					startTime: downloadStartTime,
-					endTime:  dates.getNowDateTimeInUserTimezone(),
+					startTime: downloadStartTime.log,
+					endTime:  dates.getNowDateTimeInUserTimezone().log,
 					executionTime: (Date.now() - startTime) / 1000,
 					status: 'failure',
 					error: { message: 'No access token available for report request but retry again on catch block' },
@@ -779,8 +779,8 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 							fileSize: 0,
 							rowCount: 0,
 							downloadPayload: { documentId },
-							startTime: downloadStartTime,
-							endTime:  dates.getNowDateTimeInUserTimezone(),
+							startTime: downloadStartTime.log,
+							endTime:  dates.getNowDateTimeInUserTimezone().log,
 							executionTime: (Date.now() - startTime) / 1000,
 							status: 'failure',
 							error: downloadError,
@@ -839,8 +839,8 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 						fileSize,
 						rowCount: data.length,
 						downloadPayload: { documentId },
-						startTime: downloadStartTime,
-						endTime: downloadEndTime,
+						startTime: downloadStartTime.log,
+						endTime: downloadEndTime.log,
 						executionTime: (Date.now() - startTime) / 1000,
 						status: 'success',
 						error: downloadError,
@@ -866,8 +866,8 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 						fileSize: 0,
 						rowCount: data.length,
 						downloadPayload: { documentId },
-						startTime: downloadStartTime,
-						endTime:  dates.getNowDateTimeInUserTimezone(),
+						startTime: downloadStartTime.log,
+						endTime:  dates.getNowDateTimeInUserTimezone().log,
 						executionTime: (Date.now() - startTime) / 1000,
 						status: 'partial_success',
 						error: fileErr,
@@ -979,7 +979,7 @@ async function handleFatalOrUnknownStatus(row, reportType, status, reportId = nu
 	}
 
     const statusToSet = 3; // Failed status
-    const endDate =  dates.getNowDateTimeInUserTimezone();
+    const endDate =  dates.getNowDateTimeInUserTimezone().db;
     
     // Fatal should mark cron as completed (2) with failed SQP status (3); no retry
     await model.updateSQPReportStatus(row.ID, reportType, statusToSet, null, endDate, 2);
@@ -1149,7 +1149,7 @@ async function finalizeCronRunningStatus(cronDetailID, user = null) {
             
             await SqpCronDetails.update({ 
                 cronRunningStatus: newStatus, 
-                dtUpdatedOn:  dates.getNowDateTimeInUserTimezone() 
+                dtUpdatedOn:  dates.getNowDateTimeInUserTimezone().db 
             }, { 
                 where: { ID: cronDetailID } 
             });

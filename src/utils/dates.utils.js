@@ -1,7 +1,7 @@
 const { format, addDays, subDays, startOfWeek, startOfMonth, startOfQuarter, lastDayOfMonth, lastDayOfQuarter } = require('date-fns');
 const logger = require('../utils/logger.utils'); // adjust path if needed
 const { getCurrentTimezone } = require('../db/tenant.db');
-
+const { Op, literal } = require('sequelize');
 // Default timezone (e.g., 'America/Denver')
 const DEFAULT_TZ = process.env.TZ;
 
@@ -115,7 +115,8 @@ function formatTimestamp(timestamp, timeZone = DEFAULT_TZ, options = {}) {
 
 function getNowDateTimeInUserTimezone(date = new Date(), timezone = null) {
     const zone = resolveTimezone(timezone ?? getCurrentTimezone());
-    return formatTimestamp(date, zone);
+    const formatted = formatTimestamp(date, zone);
+    return { db: literal(`'${formatted}'`), log: formatted };
 }
 
 function getNowDateTimeInUserTimezoneDate(date = new Date(), timezone = null) {

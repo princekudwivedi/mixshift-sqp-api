@@ -72,7 +72,7 @@ async function handleReportCompletion(cronJobID, reportType, amazonSellerID = nu
 		if (latest && !hasData) {
 			await downloadUrls.updateProcessStatusById(latest.ID, 'SUCCESS', {
 				ProcessAttempts: 1,
-				LastProcessAt: dates.getNowDateTimeInUserTimezone(),
+				LastProcessAt: dates.getNowDateTimeInUserTimezone().db,
 				fullyImported: 1
 			});
 			console.log(`✅ Marked download URL as SUCCESS (no data)`);
@@ -80,7 +80,7 @@ async function handleReportCompletion(cronJobID, reportType, amazonSellerID = nu
 
 		// 🧩 Step 3: Update Cron detail process statuses
 		await model.setProcessRunningStatus(cronJobID, reportType, 4);
-		await model.updateSQPReportStatus(cronJobID, reportType, 1, undefined, dates.getNowDateTimeInUserTimezone());
+		await model.updateSQPReportStatus(cronJobID, reportType, 1, undefined, dates.getNowDateTimeInUserTimezone().db);
 
 		const SqpModel = reportType === 'WEEK' ? getSqpWeekly()
 			: reportType === 'MONTH' ? getSqpMonthly()
@@ -164,7 +164,7 @@ async function handleReportCompletion(cronJobID, reportType, amazonSellerID = nu
 			statusForThisReport, 
 			reportType,  
 			null,        // startTime already set earlier
-			endTime
+			endTime.db
 		);
 
 		console.log(`✅ Updated ${reportType} ASIN status`, {
@@ -172,7 +172,7 @@ async function handleReportCompletion(cronJobID, reportType, amazonSellerID = nu
 			reportType,
 			asinCount: cronAsins.length,
 			status: statusForThisReport,
-			endTime: endTime
+			endTime: endTime.log
 		});
 
 		console.log(`🎯 Successfully handled report completion for ${reportType}`, { 
@@ -225,7 +225,7 @@ async function saveReportJsonFile(download, jsonContent) {
 		const userIdCandidate = download.UserID;
 		const userFolder = userIdCandidate ? `user__${userIdCandidate}` : 'user__unknown';
 
-		const dateObj = dates.getNowDateTimeInUserTimezone(new Date(), null);
+		const dateObj = dates.getNowDateTimeInUserTimezone(new Date(), null).log;
 		// Replace space with 'T' and colons with '-' for filename safety
 		const timestamp = dateObj.replace(' ', 'T').replace(/[:]/g, '-').slice(0, 19);
 		const date = timestamp.slice(0, 10);
@@ -343,7 +343,7 @@ async function importJsonWithRetry(download, jsonContent, filePath, reportDateOv
             const isFinal = attempt === maxAttempts;
             if (download.CronJobID && download.ReportType) {
                 const status = isFinal ? 2 : 3; // 3 while retrying, 2 on final fail
-                await model.updateSQPReportStatus(download.CronJobID, download.ReportType, status, null, dates.getNowDateTimeInUserTimezone());
+                await model.updateSQPReportStatus(download.CronJobID, download.ReportType, status, null, dates.getNowDateTimeInUserTimezone().db);
             }
             if (isFinal) throw e;
         }
@@ -419,7 +419,7 @@ function buildMetricsRow(download, record, filePath, reportDateOverride) {
 			TotalOneDayShippingPurchaseCount: purchase.totalOneDayShippingPurchaseCount || 0,
 			TotalTwoDayShippingPurchaseCount: purchase.totalTwoDayShippingPurchaseCount || 0,
 			ASIN: asin,
-			dtCreatedOn: dates.getNowDateTimeInUserTimezone()
+			dtCreatedOn: dates.getNowDateTimeInUserTimezone().db
 		};
 	} catch (_) {
 		return null;
@@ -525,12 +525,12 @@ async function updateSellerAsinLatestRanges({
 	let result;
 	if(rangeStr === null){
 		result = await SellerAsinList.update(
-			{ [IsDataAvl]: IsDataAvailable, dtUpdatedOn: dates.getNowDateTimeInUserTimezone() },
+			{ [IsDataAvl]: IsDataAvailable, dtUpdatedOn: dates.getNowDateTimeInUserTimezone().db },
 			{ where }
 		);
 	} else {
 		result = await SellerAsinList.update(
-			{ [col]: rangeStr, [IsDataAvl]: IsDataAvailable, dtUpdatedOn: dates.getNowDateTimeInUserTimezone() },
+			{ [col]: rangeStr, [IsDataAvl]: IsDataAvailable, dtUpdatedOn: dates.getNowDateTimeInUserTimezone().db },
 			{ where }
 		);
 	}
@@ -679,7 +679,7 @@ async function __importJson(row, processed = 0, errors = 0, iInitialPull = 0, ti
 		// Mark cron detail import failed (2) or retry failed (3) if attempts already happened
 		if (row.CronJobID && row.ReportType) {
 			const status = (row.ProcessAttempts && Number(row.ProcessAttempts) > 0) ? 3 : 2;
-			await model.updateSQPReportStatus(row.CronJobID, row.ReportType, status, null, dates.getNowDateTimeInUserTimezone());
+			await model.updateSQPReportStatus(row.CronJobID, row.ReportType, status, null, dates.getNowDateTimeInUserTimezone().db);
 			
 			// ✅ Update ASINs to failed status (3) when import fails
 			try {
@@ -702,7 +702,7 @@ async function __importJson(row, processed = 0, errors = 0, iInitialPull = 0, ti
 							3,  // Status 3 = Failed
 							row.ReportType,
 							null,  // startTime already set
-							dates.getNowDateTimeInUserTimezone()  // endTime when failed
+							dates.getNowDateTimeInUserTimezone().db  // endTime when failed
 						);
 						
 						console.log(`✅ Updated ${cronAsins.length} ASINs to failed status (3) for ${row.ReportType}`, {

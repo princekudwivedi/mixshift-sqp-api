@@ -44,10 +44,10 @@ async function updateDownloadStatus(selector, { status, errorMessage = null, fil
 	if (errorMessage !== null) data.ErrorMessage = errorMessage;
 	if (filePath !== null) data.FilePath = filePath;
 	if (fileSize !== null) data.FileSize = fileSize;
-	if (status === 'DOWNLOADING') data.DownloadStartTime = dates.getNowDateTimeInUserTimezone();
-	if (status === 'COMPLETED' || status === 'FAILED') data.DownloadEndTime = dates.getNowDateTimeInUserTimezone();
+	if (status === 'DOWNLOADING') data.DownloadStartTime = dates.getNowDateTimeInUserTimezone().db;
+	if (status === 'COMPLETED' || status === 'FAILED') data.DownloadEndTime = dates.getNowDateTimeInUserTimezone().db;
 	if (incrementAttempts) data.DownloadAttempts = literal('COALESCE(DownloadAttempts, 0) + 1');
-	data.dtUpdatedOn = dates.getNowDateTimeInUserTimezone();
+	data.dtUpdatedOn = dates.getNowDateTimeInUserTimezone().db;
 
 	const where = selector?.id ? { ID: selector.id } : selector?.criteria || null;
 	if (!where) throw new Error('updateDownloadStatus requires either id or criteria');
@@ -65,10 +65,10 @@ async function updateDownloadStatus(selector, { status, errorMessage = null, fil
 				ErrorMessage: errorMessage || null,
 				FilePath: filePath || null,
 				FileSize: fileSize || null,
-				DownloadStartTime: status === 'DOWNLOADING' ? dates.getNowDateTimeInUserTimezone() : undefined,
-				DownloadEndTime: (status === 'COMPLETED' || status === 'FAILED') ? dates.getNowDateTimeInUserTimezone() : undefined,
-				dtCreatedOn: dates.getNowDateTimeInUserTimezone(),
-				dtUpdatedOn: dates.getNowDateTimeInUserTimezone()
+				DownloadStartTime: status === 'DOWNLOADING' ? dates.getNowDateTimeInUserTimezone().db : undefined,
+				DownloadEndTime: (status === 'COMPLETED' || status === 'FAILED') ? dates.getNowDateTimeInUserTimezone().db : undefined,
+				dtCreatedOn: dates.getNowDateTimeInUserTimezone().db,
+				dtUpdatedOn: dates.getNowDateTimeInUserTimezone().db
 			});
 		}
 	}
@@ -103,8 +103,8 @@ async function updateDownloadUrlStatusByCriteria(cronJobID, reportType, status, 
             ErrorMessage: errorMessage || null,
             FilePath: filePath || null,
             FileSize: fileSize || null,
-            dtCreatedOn: dates.getNowDateTimeInUserTimezone(),
-            dtUpdatedOn: dates.getNowDateTimeInUserTimezone()
+            dtCreatedOn: dates.getNowDateTimeInUserTimezone().db,
+            dtUpdatedOn: dates.getNowDateTimeInUserTimezone().db
         });
         return;
     }
@@ -113,7 +113,7 @@ async function updateDownloadUrlStatusByCriteria(cronJobID, reportType, status, 
     const updateData = { status, errorMessage, filePath, fileSize, incrementAttempts };
     // Also ensure ProcessStatus is PENDING when download completes and file is present
     if (status === 'COMPLETED' && (filePath || fileSize)) {
-        await SqpDownloadUrls.update({ ProcessStatus: 'PENDING', dtUpdatedOn: dates.getNowDateTimeInUserTimezone() }, { where: { ID: latest.ID, ProcessStatus: null } });
+        await SqpDownloadUrls.update({ ProcessStatus: 'PENDING', dtUpdatedOn: dates.getNowDateTimeInUserTimezone().db }, { where: { ID: latest.ID, ProcessStatus: null } });
     }
     return updateDownloadStatus({ id: latest.ID }, updateData);
 }
@@ -139,9 +139,9 @@ async function storeDownloadUrl(row) {
 			FileSize: row.FileSize || null,
 			ProcessStatus: 'PENDING',
 			DownloadStartTime: row.DownloadStartTime || undefined,
-			DownloadEndTime: row.Status === 'COMPLETED' ? dates.getNowDateTimeInUserTimezone() : undefined,
+			DownloadEndTime: row.Status === 'COMPLETED' ? dates.getNowDateTimeInUserTimezone().db : undefined,
 			LastProcessError: row.LastProcessError || null,
-			dtUpdatedOn: dates.getNowDateTimeInUserTimezone()
+			dtUpdatedOn: dates.getNowDateTimeInUserTimezone().db
 		};
 		try {
 			return await SqpDownloadUrls.create({ 
@@ -149,7 +149,7 @@ async function storeDownloadUrl(row) {
 				ReportID: row.ReportID || null,
 				ReportType: row.ReportType, 
 				...payload, 
-				dtCreatedOn: dates.getNowDateTimeInUserTimezone() 
+				dtCreatedOn: dates.getNowDateTimeInUserTimezone().db 
 			});
 		} catch (err) {
 			logger.error({
@@ -169,7 +169,7 @@ async function storeDownloadUrl(row) {
 			FilePath: row.FilePath || null,
 			FileSize: row.FileSize || null,
 			DownloadStartTime: row.DownloadStartTime || undefined,
-			dtUpdatedOn: dates.getNowDateTimeInUserTimezone()
+			dtUpdatedOn: dates.getNowDateTimeInUserTimezone().db
 		};
 		try {
 			return await SqpDownloadUrls.update(payload, { where: { ID: latest.ID } });
@@ -189,8 +189,8 @@ async function updateProcessStatusById(id, processStatus, extra = {}) {
 	const SqpDownloadUrls = getSqpDownloadUrls();
 	const data = {
 		ProcessStatus: processStatus,
-		dtUpdatedOn: dates.getNowDateTimeInUserTimezone(),
-		LastProcessAt: dates.getNowDateTimeInUserTimezone()
+		dtUpdatedOn: dates.getNowDateTimeInUserTimezone().db,
+		LastProcessAt: dates.getNowDateTimeInUserTimezone().db
 	};
 	if (extra.incrementAttempts) data.ProcessAttempts = literal('COALESCE(ProcessAttempts,0)+1');
 	if (typeof extra.successCount === 'number') data.SuccessCount = extra.successCount;

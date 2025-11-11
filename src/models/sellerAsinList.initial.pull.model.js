@@ -31,7 +31,7 @@ async function updateInitialPullStatus(cronDetailID, SellerID, amazonSellerID, a
         // Build update data
         const updateData = {
             InitialPullStatus: status,
-            dtUpdatedOn: dates.getNowDateTimeInUserTimezone()
+            dtUpdatedOn: dates.getNowDateTimeInUserTimezone().db
         };
         
         if (startTime) {
@@ -164,7 +164,7 @@ async function markInitialPullStarted(amazonSellerID, asinList, SellerID, cronDe
         amazonSellerID,
         asinList,
         1, // In Progress
-        dates.getNowDateTimeInUserTimezone(), // Start time
+        dates.getNowDateTimeInUserTimezone().db, // Start time
         null,
         timezone
     );
@@ -181,7 +181,7 @@ async function markInitialPullCompleted(amazonSellerID, asinList, SellerID, cron
         asinList,
         2, // Completed
         null,
-        dates.getNowDateTimeInUserTimezone(), // End time
+        dates.getNowDateTimeInUserTimezone().db, // End time
         timezone
     );
 }
@@ -197,7 +197,7 @@ async function markInitialPullFailed(amazonSellerID, asinList, SellerID, cronDet
         asinList,
         3, // Failed
         null,
-        dates.getNowDateTimeInUserTimezone(), // End time
+        dates.getNowDateTimeInUserTimezone().db, // End time
         timezone
     );
 }

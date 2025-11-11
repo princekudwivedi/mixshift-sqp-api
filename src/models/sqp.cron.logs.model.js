@@ -9,7 +9,7 @@ class SqpCronLogsModel extends BaseModel {
     }
 
     async log(info) {
-        return this.create({ ...info, CreatedAt: dates.getNowDateTimeInUserTimezone() });
+        return this.create({ ...info, CreatedAt: dates.getNowDateTimeInUserTimezone().db });
     }
 
     async findByCronId(cronId, options = {}) {

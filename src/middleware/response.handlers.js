@@ -12,7 +12,7 @@ class SuccessHandler {
         const response = {
             success: true,
             message,
-            timestamp:  dates.getNowDateTimeInUserTimezone(),
+            timestamp:  dates.getNowDateTimeInUserTimezone().log,
             ...(data && { data })
         };
 
@@ -34,7 +34,7 @@ class SuccessHandler {
             message,
             processed,
             errors,
-            timestamp:  dates.getNowDateTimeInUserTimezone()
+            timestamp:  dates.getNowDateTimeInUserTimezone().log
         };
 
         logger.info({ 
@@ -54,7 +54,7 @@ class SuccessHandler {
             success: true,
             message,
             stats,
-            timestamp:  dates.getNowDateTimeInUserTimezone()
+            timestamp:  dates.getNowDateTimeInUserTimezone().log
         };
 
         logger.info({ 
@@ -73,7 +73,7 @@ class SuccessHandler {
             success: true,
             message,
             file: fileInfo,
-            timestamp:  dates.getNowDateTimeInUserTimezone()
+            timestamp:  dates.getNowDateTimeInUserTimezone().log
         };
 
         logger.info({ 
@@ -97,7 +97,7 @@ class ErrorHandler {
             success: false,
             message,
             error: error.message || error,
-            timestamp:  dates.getNowDateTimeInUserTimezone()
+            timestamp:  dates.getNowDateTimeInUserTimezone().log
         };
 
         logger.error(sanitizeLogData({ 
@@ -118,7 +118,7 @@ class ErrorHandler {
             success: false,
             message,
             errors: validationErrors,
-            timestamp:  dates.getNowDateTimeInUserTimezone()
+            timestamp:  dates.getNowDateTimeInUserTimezone().log
         };
 
         logger.warn({ 
@@ -136,7 +136,7 @@ class ErrorHandler {
         const response = {
             success: false,
             message,
-            timestamp:  dates.getNowDateTimeInUserTimezone()
+            timestamp:  dates.getNowDateTimeInUserTimezone().log
         };
 
         logger.warn({ message }, 'Authentication error response sent');
@@ -151,7 +151,7 @@ class ErrorHandler {
         const response = {
             success: false,
             message,
-            timestamp:  dates.getNowDateTimeInUserTimezone()
+            timestamp:  dates.getNowDateTimeInUserTimezone().log
         };
 
         logger.warn({ message }, 'Authorization error response sent');
@@ -166,7 +166,7 @@ class ErrorHandler {
         const response = {
             success: false,
             message,
-            timestamp:  dates.getNowDateTimeInUserTimezone()
+            timestamp:  dates.getNowDateTimeInUserTimezone().log
         };
 
         logger.warn({ message }, 'Not found error response sent');
@@ -184,7 +184,7 @@ class ErrorHandler {
             error: error.message || error,
             processed,
             errors,
-            timestamp:  dates.getNowDateTimeInUserTimezone()
+            timestamp:  dates.getNowDateTimeInUserTimezone().log
         };
 
         logger.error({ 
@@ -205,7 +205,7 @@ class ErrorHandler {
             success: false,
             message,
             error: 'Database operation failed',
-            timestamp:  dates.getNowDateTimeInUserTimezone()
+            timestamp:  dates.getNowDateTimeInUserTimezone().log
         };
 
         logger.error(sanitizeLogData({ 
@@ -225,7 +225,7 @@ class ErrorHandler {
             success: false,
             message,
             error: error.message || error,
-            timestamp:  dates.getNowDateTimeInUserTimezone()
+            timestamp:  dates.getNowDateTimeInUserTimezone().log
         };
 
         logger.error({ 
@@ -243,7 +243,7 @@ class ErrorHandler {
         const response = {
             success: false,
             message,
-            timestamp:  dates.getNowDateTimeInUserTimezone()
+            timestamp:  dates.getNowDateTimeInUserTimezone().log
         };
 
         logger.warn({ message }, 'Rate limit error response sent');

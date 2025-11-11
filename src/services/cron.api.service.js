@@ -471,7 +471,7 @@ class CronApiService {
             }, 'Fatal error detected during retry - marking as permanent failure');
             
             // Update with cronRunningStatus = 2 (completed with fatal error)
-            await model.updateSQPReportStatus(record.ID, reportType, 3, null, dates.getNowDateTimeInUserTimezone(), 2);
+            await model.updateSQPReportStatus(record.ID, reportType, 3, null, dates.getNowDateTimeInUserTimezone().db, 2);
             
             await model.logCronActivity({
                 cronJobID: record.ID,

@@ -50,7 +50,7 @@ class APILogger {
             return null;
         }
 
-        const dateObj = dates.getNowDateTimeInUserTimezone(new Date(), null);
+        const dateObj = dates.getNowDateTimeInUserTimezone(new Date(), null).log;
         const date = dateObj.slice(0, 10).replace(/\//g, '-'); // extract YYYY-MM-DD
         const userFolder = `user__${userId}`;
         const dateFolder = date;
@@ -70,7 +70,7 @@ class APILogger {
      * Format log entry with timestamp
      */
     formatLogEntry(data) {
-        const timestamp = dates.getNowDateTimeInUserTimezone();
+        const timestamp = dates.getNowDateTimeInUserTimezone().log;
         const separator = '='.repeat(80);
         
         let logEntry = `\n${separator}\n`;

@@ -631,7 +631,7 @@ class InitialPullService {
             },
             operation: async ({ attempt, currentRetry, context, startTime }) => {
                 const { seller, asinList, range, reportType, user } = context;
-                const requestStartTime = dates.getNowDateTimeInUserTimezone();
+                const requestStartTime = dates.getNowDateTimeInUserTimezone().db;
                 
                 // Set ProcessRunningStatus = 1 (Report Request)
                 await model.setProcessRunningStatus(cronDetailID, reportType, 1);
@@ -660,7 +660,7 @@ class InitialPullService {
                         requestPayload: payload,
                         response: null,
                         startTime: requestStartTime,
-                        endTime: dates.getNowDateTimeInUserTimezone(),
+                        endTime: dates.getNowDateTimeInUserTimezone().log,
                         executionTime: (Date.now() - startTime) / 1000,
                         status: 'failure',
                         reportId: null,
@@ -697,7 +697,7 @@ class InitialPullService {
                                 requestPayload: payload,
                                 response: null,
                                 startTime: requestStartTime,
-                                endTime: dates.getNowDateTimeInUserTimezone(),
+                                endTime: dates.getNowDateTimeInUserTimezone().log,
                                 executionTime: (Date.now() - startTime) / 1000,
                                 status: 'failure',
                                 reportId: null,
@@ -717,7 +717,7 @@ class InitialPullService {
                     }
                 }
                 const reportId = resp.reportId;
-                const requestEndTime = dates.getNowDateTimeInUserTimezone();
+                const requestEndTime = dates.getNowDateTimeInUserTimezone().log;
                 
                 logger.info({ reportId, range: range.range, attempt }, 'Initial pull report created');
                 
@@ -746,7 +746,7 @@ class InitialPullService {
                 const startDate = range.startDate;
                 
                 if(range.range !== '' && range.range !== null && range.range !== undefined){
-                    await model.updateSQPReportStatus(cronDetailID, reportType, 0, dates.getNowDateTimeInUserTimezone());
+                    await model.updateSQPReportStatus(cronDetailID, reportType, 0, dates.getNowDateTimeInUserTimezone().db);
                     // Log report creation
                     await model.logCronActivity({
                         cronJobID: cronDetailID,
@@ -916,7 +916,7 @@ class InitialPullService {
         const SqpCronDetails = getSqpCronDetails();
         const prefix = model.mapPrefix(type);
         await SqpCronDetails.update(
-            { [`${prefix}SQPDataPullStatus`]: pull, [`${prefix}SQPDataPullEndDate`]: dates.getNowDateTimeInUserTimezone() },
+            { [`${prefix}SQPDataPullStatus`]: pull, [`${prefix}SQPDataPullEndDate`]: dates.getNowDateTimeInUserTimezone().db },
             { where: { ID: cronDetailID } }
         );
     }
@@ -1000,7 +1000,7 @@ class InitialPullService {
             const needsRetry = statuses.some(s => [0, 2, null].includes(s));
             const newStatus = needsRetry ? 3 : (allDone || anyFatal ? 2 : row.cronRunningStatus);
             if (newStatus !== row.cronRunningStatus){
-              await SqpCronDetails.update({ cronRunningStatus: newStatus, dtUpdatedOn: dates.getNowDateTimeInUserTimezone() }, { where: { ID: cronDetailID } });
+              await SqpCronDetails.update({ cronRunningStatus: newStatus, dtUpdatedOn: dates.getNowDateTimeInUserTimezone().db }, { where: { ID: cronDetailID } });
             }
 
             logger.info({ overallAsinStatus }, 'Overall ASIN pull status');
@@ -1052,7 +1052,7 @@ class InitialPullService {
             },
             operation: async ({ attempt, currentRetry, context, startTime }) => {
                 const { seller, reportId, range, reportType, retry, user } = context;
-                const statusStartTime = dates.getNowDateTimeInUserTimezone();
+                const statusStartTime = dates.getNowDateTimeInUserTimezone().db;
                 
                 // Set ProcessRunningStatus = 2 (Status Check)
                 await model.setProcessRunningStatus(cronDetailID, reportType, 2);
@@ -1075,7 +1075,7 @@ class InitialPullService {
                         retryCount: currentRetry,
                         attempt,
                         startTime: statusStartTime,
-                        endTime: dates.getNowDateTimeInUserTimezone(),
+                        endTime: dates.getNowDateTimeInUserTimezone().log,
                         executionTime: (Date.now() - startTime) / 1000,
                         status: 'failure',
                         error: { message: 'No access token available for report request but retry again on catch block' }
@@ -1110,7 +1110,7 @@ class InitialPullService {
                                 retryCount: currentRetry,
                                 attempt,
                                 startTime: statusStartTime,
-                                endTime: dates.getNowDateTimeInUserTimezone(),
+                                endTime: dates.getNowDateTimeInUserTimezone().log,
                                 executionTime: (Date.now() - startTime) / 1000,
                                 status: 'failure',
                                 error: statusError
@@ -1125,7 +1125,7 @@ class InitialPullService {
                     }
                 }
                 const status = res.processingStatus;
-                const statusEndTime = dates.getNowDateTimeInUserTimezone();
+                const statusEndTime = dates.getNowDateTimeInUserTimezone().log;
                 
                 // API Logger - Status Check
                 const userId = user ? user.ID : null;
@@ -1275,7 +1275,7 @@ class InitialPullService {
             },            
             operation: async ({ attempt, currentRetry, context, startTime }) => {
                 const { seller, reportId, documentId, range, reportType, retry, user } = context;
-                const downloadStartTime = dates.getNowDateTimeInUserTimezone();
+                const downloadStartTime = dates.getNowDateTimeInUserTimezone().db;
                 const timezone = await model.getUserTimezone(user);
                 logger.info({ reportId, documentId, range: range.range, attempt, timezone }, 'Starting initial pull download');
                 
@@ -1328,7 +1328,7 @@ class InitialPullService {
                         rowCount: 0,
                         downloadPayload: { documentId: documentId || reportId },
                         startTime: downloadStartTime,
-                        endTime: dates.getNowDateTimeInUserTimezone(),
+                        endTime: dates.getNowDateTimeInUserTimezone().log,
                         executionTime: (Date.now() - startTime) / 1000,
                         status: 'failure',
                         error: { message: 'No access token available for report request but retry again on catch block' },
@@ -1368,7 +1368,7 @@ class InitialPullService {
                                 rowCount: 0,
                                 downloadPayload: { documentId: documentId || reportId },
                                 startTime: downloadStartTime,
-                                endTime: dates.getNowDateTimeInUserTimezone(),
+                                endTime: dates.getNowDateTimeInUserTimezone().log,
                                 executionTime: (Date.now() - startTime) / 1000,
                                 status: 'failure',
                                 error: downloadError,
@@ -1410,7 +1410,7 @@ class InitialPullService {
                     };
                     let filePath = null;
                     let fileSize = 0;
-                    const downloadEndTime = dates.getNowDateTimeInUserTimezone();
+                    const downloadEndTime = dates.getNowDateTimeInUserTimezone().log;
                     
                     try {
                         const saveResult = await jsonSvc.saveReportJsonFile(downloadMeta, data);
@@ -1465,7 +1465,7 @@ class InitialPullService {
                             rowCount: data.length,
                             downloadPayload: { documentId: documentId || reportId },
                             startTime: downloadStartTime,
-                            endTime: dates.getNowDateTimeInUserTimezone(),
+                            endTime: dates.getNowDateTimeInUserTimezone().log,
                             executionTime: (Date.now() - startTime) / 1000,
                             status: 'partial_success',
                             error: fileErr,
@@ -1527,7 +1527,7 @@ class InitialPullService {
                                 importResult 
                             }, retry ? 'Initial pull import completed successfully (retry)' : 'Initial pull import completed successfully', 'Initial pull import completed successfully');
                             
-                            //await model.updateSQPReportStatus(cronDetailID, reportType, 0, null, dates.getNowDateTimeInUserTimezone());
+                            //await model.updateSQPReportStatus(cronDetailID, reportType, 0, null, dates.getNowDateTimeInUserTimezone().db);
                             
                             // Log import success
                             await model.logCronActivity({
@@ -1553,7 +1553,7 @@ class InitialPullService {
                                 retry
                             }, retry ? 'Error during initial pull import - file saved but import failed (retry)' : 'Error during initial pull import - file saved but import failed', 'Error during initial pull import - file saved but import failed');
                             
-                            //await model.updateSQPReportStatus(cronDetailID, reportType, 0, null, dates.getNowDateTimeInUserTimezone());
+                            //await model.updateSQPReportStatus(cronDetailID, reportType, 0, null, dates.getNowDateTimeInUserTimezone().db);
                             
                             // Log import failure
                             await model.logCronActivity({
@@ -1608,7 +1608,7 @@ class InitialPullService {
                         rowCount: 0,
                         downloadPayload: { documentId: documentId || reportId },
                         startTime: downloadStartTime,
-                        endTime: dates.getNowDateTimeInUserTimezone(),
+                        endTime: dates.getNowDateTimeInUserTimezone().log,
                         executionTime: (Date.now() - startTime) / 1000,
                         status: 'success',
                         error: null,
@@ -1638,14 +1638,14 @@ class InitialPullService {
                         // Update download URLs process status to SUCCESS
                         await downloadUrls.updateProcessStatusById(latest.ID, 'SUCCESS', {
                             ProcessAttempts: 1,
-                            LastProcessAt: dates.getNowDateTimeInUserTimezone(),
+                            LastProcessAt: dates.getNowDateTimeInUserTimezone().db,
                             fullyImported: 1
                         });
                     }
                     
                     // Set ProcessRunningStatus = 4 (Import) even though no data
                     await model.setProcessRunningStatus(cronDetailID, reportType, 4);                    
-                    await model.updateSQPReportStatus(cronDetailID, reportType, 0, null, dates.getNowDateTimeInUserTimezone());
+                    await model.updateSQPReportStatus(cronDetailID, reportType, 0, null, dates.getNowDateTimeInUserTimezone().db);
                     
                     // Log import done (nothing to import but process complete)
                     await model.logCronActivity({
