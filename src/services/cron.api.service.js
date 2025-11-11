@@ -298,10 +298,9 @@ class CronApiService {
         const SqpCronDetails = getSqpCronDetails();
         
         // Calculate time (1 hour ago)
-        const cutoffTime = dates.getNowDateTimeInUserTimezone();
-        cutoffTime.setHours(cutoffTime.getHours() - 1);
+        const cutoffTime = dates.getNowDateTimeInUserTimezoneAgo(new Date(), { hours: 1 });
         
-        logger.info({ cutoffTime: cutoffTime.toISOString() }, 'Scanning for records stuck since cutoff time');
+        logger.info({ cutoffTime: cutoffTime }, 'Scanning for records stuck since cutoff time');
         
         // Find records that are stuck in progress or pending status
         // Include records where dtUpdatedOn < dtCronStartDate (stale/stuck)
