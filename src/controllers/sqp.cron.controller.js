@@ -12,7 +12,7 @@ const { NotificationHelpers, RetryHelpers, DelayHelpers, Helpers } = require('..
 const env = require('../config/env.config');
 const authService = require('../services/auth.service');
 
-async function requestForSeller(seller, authOverrides = {}, spReportType = config.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT, user = null) {
+async function requestForSeller(seller, authOverrides = {}, spReportType = env.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT, user = null) {
 	logger.info({ seller: seller.idSellerAccount }, 'Requesting SQP reports for seller');	
 	
 	try {
@@ -81,7 +81,7 @@ async function requestForSeller(seller, authOverrides = {}, spReportType = confi
 	}
 }
 
-async function requestSingleReport(chunk, seller, cronDetailID, reportType, authOverrides = {}, spReportType = config.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT, user = null) {
+async function requestSingleReport(chunk, seller, cronDetailID, reportType, authOverrides = {}, spReportType = env.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT, user = null) {
 	logger.info({ 
 		cronDetailID, 
 		reportType, 
