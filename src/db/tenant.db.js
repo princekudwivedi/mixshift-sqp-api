@@ -41,6 +41,9 @@ async function loadDatabase(userId = 0) {
     
     if (!userId || Number(userId) === 0) {
         // Connect to root database for userId = 0
+        if (typeof logger.clearUserContext === 'function') {
+            logger.clearUserContext();
+        }
         logger.info({ contextId: getContextId() }, 'Connecting to root database (userId = 0)');
         context.dbName = env.DB_NAME;
         context.sequelize = getRootSequelize();
@@ -50,6 +53,9 @@ async function loadDatabase(userId = 0) {
     }
 
     // For userId > 0: First connect to root database to query user mapping
+    if (typeof logger.setUserContext === 'function') {
+        logger.setUserContext(userId);
+    }
     logger.info({ contextId: getContextId(), userId }, 'Connecting to root database to query user mapping');
     const rootSequelize = getRootSequelize();
     

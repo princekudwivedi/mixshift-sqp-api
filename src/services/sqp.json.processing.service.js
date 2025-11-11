@@ -15,6 +15,7 @@ const dates = require('../utils/dates.utils');
 const logger = require('../utils/logger.utils');
 const { Op, literal } = require('sequelize');
 const { FileHelpers, DataProcessingHelpers } = require('../helpers/sqp.helpers');
+const { getCurrentUserId } = require('../db/tenant.db');
 
 /**
  * Handle report completion - unified function for both data and no-data scenarios
@@ -171,7 +172,7 @@ async function handleReportCompletion(cronJobID, reportType, amazonSellerID = nu
 			reportType,
 			asinCount: cronAsins.length,
 			status: statusForThisReport,
-			endTime: endTime.toISOString()
+			endTime: endTime
 		});
 
 		console.log(`🎯 Successfully handled report completion for ${reportType}`, { 
@@ -219,33 +220,36 @@ async function downloadJsonFromUrl(url) {
  */
 async function saveReportJsonFile(download, jsonContent) {
     try {
-        const amazonSellerID = download.AmazonSellerID;		
+        const amazonSellerID = download.AmazonSellerID;
+		const sellerId = download.SellerID;
+		const userIdCandidate = download.UserID;
+		const userFolder = userIdCandidate ? `user__${userIdCandidate}` : 'user__unknown';
 
 		const dateObj = dates.getNowDateTimeInUserTimezone(new Date(), null);
-        // Replace space with 'T' and colons with '-' for filename safety
-        const timestamp = dateObj.replace(' ', 'T').replace(/[:]/g, '-').slice(0, 19);
-        const date = timestamp.slice(0, 10);
-        const reportType = (download.ReportType || download.reportType || '').toString().toLowerCase();
-        
-        // Generate filename: {reportType}_{reportID}_{timestamp}.json
+		// Replace space with 'T' and colons with '-' for filename safety
+		const timestamp = dateObj.replace(' ', 'T').replace(/[:]/g, '-').slice(0, 19);
+		const date = timestamp.slice(0, 10);
+		const reportType = (download.ReportType || download.reportType || '').toString().toLowerCase();
+
+		// Generate filename: {reportType}_{reportID}_{timestamp}.json
 		const safeType = reportType || 'sqp';
-        const filename = `${safeType}_${download.ReportID}_${timestamp}.json`;
+        const filename = `${safeType}_${download.ReportID}_${timestamp}.json`;        
         
-        if (nodeEnv === 'development' || nodeEnv === 'local' || nodeEnv === 'production') {
-            // Save locally outside src: ./reports/{seller}/{type}/{date}/{filename}
-            const baseDir = path.join(process.cwd(), 'reports', amazonSellerID, reportType, date);
-            await fs.mkdir(baseDir, { recursive: true });
-            const filePath = path.join(baseDir, filename);
-            await fs.writeFile(filePath, JSON.stringify(jsonContent, null, 2));
-            console.log(`JSON file saved locally: ${filePath}`);
-            return { path: filePath };
-        } else {
-            // Upload to S3
-            const parts = [amazonSellerID, reportType, date];
-            const result = await uploadJson(parts, filename, jsonContent);
-            console.log(`JSON file uploaded to S3: ${result.url}`);
-            return result;
-        }
+		// Save to reports/<date>/<userFolder>/<sellerId>/<amazonSellerId>/
+		const baseDir = path.join(
+			process.cwd(),
+			'reports',
+			date,
+			userFolder,
+			String(sellerId),
+			String(amazonSellerID)
+		);
+		await fs.mkdir(baseDir, { recursive: true });
+		const filePath = path.join(baseDir, filename);
+		await fs.writeFile(filePath, JSON.stringify(jsonContent, null, 2));
+		console.log(`JSON file saved locally: ${filePath}`);
+		return { path: filePath };
+        
     } catch (error) {
         console.error('Error saving JSON report:', error);
         return null;
@@ -304,12 +308,15 @@ async function parseAndStoreJsonData(download, jsonContent, filePath, reportDate
             const type = (download.ReportType || '').toUpperCase();
             if (type === 'WEEK') {
                 const SqpWeekly = getSqpWeekly();
+                await deleteExistingRows(SqpWeekly, rows);
                 await SqpWeekly.bulkCreate(rows, { validate: false, ignoreDuplicates: false });
             } else if (type === 'MONTH') {
                 const SqpMonthly = getSqpMonthly();
+                await deleteExistingRows(SqpMonthly, rows);
                 await SqpMonthly.bulkCreate(rows, { validate: false, ignoreDuplicates: false });
             } else if (type === 'QUARTER') {
                 const SqpQuarterly = getSqpQuarterly();
+                await deleteExistingRows(SqpQuarterly, rows);
                 await SqpQuarterly.bulkCreate(rows, { validate: false, ignoreDuplicates: false });
             } 
 		}
@@ -536,6 +543,55 @@ async function updateSellerAsinLatestRanges({
     }, 'updateSellerAsinLatestRanges: Update completed');
 }
 
+async function deleteExistingRows(model, rows) {
+    if (!rows || rows.length === 0) return;
+
+    const uniqueKeys = [];
+    const seen = new Set();
+
+    rows.forEach((row) => {
+        const keyParts = [row.AmazonSellerID, row.ASIN, row.SellerID, row.StartDate, row.EndDate];
+        if (keyParts.some((value) => value === undefined || value === null)) {
+            return;
+        }
+        const key = keyParts.join('|');
+        if (seen.has(key)) return;
+        seen.add(key);
+        uniqueKeys.push({
+            AmazonSellerID: row.AmazonSellerID,
+            ASIN: row.ASIN,
+            SellerID: row.SellerID,
+            StartDate: row.StartDate,
+            EndDate: row.EndDate
+        });
+    });
+
+    if (uniqueKeys.length === 0) return;
+
+    logger.info({
+        model: model.getTableName ? model.getTableName() : model.tableName,
+        deleteCount: uniqueKeys.length
+    }, 'Deleting existing SQP rows before insert');
+
+    const chunkSize = 500;
+    let totalDeleted = 0;
+    for (let i = 0; i < uniqueKeys.length; i += chunkSize) {
+        const chunk = uniqueKeys.slice(i, i + chunkSize);
+        const deleted = await model.destroy({
+            where: {
+                [Op.or]: chunk
+            }
+        });
+        totalDeleted += deleted;
+    }
+
+    logger.info({
+        model: model.getTableName ? model.getTableName() : model.tableName,
+        deleteCount: uniqueKeys.length,
+        rowsDeleted: totalDeleted
+    }, 'Existing SQP rows removed prior to import');
+}
+
 
 async function __importJson(row, processed = 0, errors = 0, iInitialPull = 0, timezone = null){
     let jsonContent = null;
@@ -700,5 +756,6 @@ module.exports = {
     handleReportCompletion,
     getDownloadUrlStats,
 	__importJson,
-	updateSellerAsinLatestRanges
+	updateSellerAsinLatestRanges,
+	deleteExistingRows
 };

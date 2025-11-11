@@ -118,7 +118,7 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 			
 			// Set start date when beginning the report request
 			const startDate =  dates.getNowDateTimeInUserTimezone();
-			logger.info({ cronDetailID, reportType, startDate: startDate.toISOString(), attempt }, 'Setting start date for report request');
+			logger.info({ cronDetailID, reportType, startDate: startDate, attempt }, 'Setting start date for report request');
 			await model.updateSQPReportStatus(cronDetailID, reportType, 0, startDate);
 
 			const period = reportType;
@@ -810,7 +810,7 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 			
 			if (data.length > 0) {
 				// Save JSON file to disk and record only path into sqp_download_urls
-				const downloadMeta = { AmazonSellerID: row.AmazonSellerID, ReportType: reportType, ReportID: documentId };
+				const downloadMeta = { AmazonSellerID: row.AmazonSellerID, ReportType: reportType, ReportID: documentId, SellerID: seller.idSellerAccount, UserID: user ? user.ID : null };
 				let filePath = null; let fileSize = 0;
 				const downloadEndTime =  dates.getNowDateTimeInUserTimezone();
 				

@@ -6,91 +6,92 @@ const { LOG_LEVEL } = require('../config/env.config');
 const LOG_TO_FILE = process.env.LOG_TO_FILE === 'true';
 const LOG_DIR = process.env.LOG_DIR || path.join(process.cwd(), 'logs');
 
-/**
- * Get current date folder (DD-MM-YYYY)
- */
 function getDateFolder() {
 	const now = new Date();
 	const day = String(now.getDate()).padStart(2, '0');
 	const month = String(now.getMonth() + 1).padStart(2, '0');
 	const year = now.getFullYear();
-	return `${day}-${month}-${year}`;
+	return `${year}-${month}-${day}`;
 }
 
-/**
- * Ensure daily log directory exists
- */
-function ensureLogDirectory() {
-	if (!LOG_TO_FILE) return null;
-
-	try {
-		const dateFolder = getDateFolder();
-		const logPath = path.join(LOG_DIR, dateFolder);
-		if (!fs.existsSync(logPath)) {
-			fs.mkdirSync(logPath, { recursive: true });
-			console.log(`📁 Created log directory: ${logPath}`);
-		}
-		return logPath;
-	} catch (err) {
-		console.error('❌ Failed to create log directory:', err.message);
-		return null;
+function ensureDirectory(dirPath) {
+	if (!fs.existsSync(dirPath)) {
+		fs.mkdirSync(dirPath, { recursive: true });
 	}
 }
 
-let logger;
+let currentUserId = null;
+
+function resolveLogDir() {
+	const dateFolder = getDateFolder();
+	if (currentUserId && Number(currentUserId) !== 0) {
+		return path.join(LOG_DIR, 'api_logs', `user__${currentUserId}`, dateFolder);
+	}
+	return path.join(LOG_DIR, dateFolder);
+}
+
+function createLevelStream(fileName) {
+	return {
+		write(chunk) {
+			if (!LOG_TO_FILE || !chunk) return;
+			try {
+				const dir = resolveLogDir();
+				ensureDirectory(dir);
+				fs.appendFileSync(path.join(dir, fileName), chunk);
+			} catch (err) {
+				console.error(`❌ Failed to append log for ${fileName}:`, err.message);
+			}
+		}
+	};
+}
+
+const prettyStream = pino.transport({
+	target: 'pino-pretty',
+	options: { colorize: true }
+});
+
+const streams = [{ stream: prettyStream }];
 
 if (LOG_TO_FILE) {
-	const logPath = ensureLogDirectory();
-
-	// Define separate destinations for each log level
-	const targets = [
-		{
-			target: 'pino-pretty',
-			options: { colorize: true }, // pretty console output
-		},
-		{
-			target: 'pino/file',
-			level: 'info',
-			options: { destination: path.join(logPath, 'info.log'), mkdir: true },
-		},
-		{
-			target: 'pino/file',
-			level: 'warn',
-			options: { destination: path.join(logPath, 'warning.log'), mkdir: true },
-		},
-		{
-			target: 'pino/file',
-			level: 'error',
-			options: { destination: path.join(logPath, 'error.log'), mkdir: true },
-		},
-		{
-			target: 'pino/file',
-			level: 'fatal',
-			options: { destination: path.join(logPath, 'fatal.log'), mkdir: true },
-		},
+	const levelStreams = [
+		{ level: 'info', fileName: 'info.log' },
+		{ level: 'warn', fileName: 'warning.log' },
+		{ level: 'error', fileName: 'error.log' },
+		{ level: 'fatal', fileName: 'fatal.log' }
 	];
 
-	const transport = pino.transport({ targets });
+	levelStreams.forEach(({ level, fileName }) => {
+		streams.push({ level, stream: createLevelStream(fileName) });
+	});
+}
 
-	logger = pino(
-		{
-			level: LOG_LEVEL || 'info',
-			timestamp: pino.stdTimeFunctions.isoTime,
-		},
-		transport
-	);
+const logger = pino(
+	{
+		level: LOG_LEVEL || 'info',
+		timestamp: pino.stdTimeFunctions.isoTime
+	},
+	pino.multistream(streams)
+);
 
-	console.log(`✅ Logger configured with separate files in: ${logPath}`);
-	console.log(`   - info.log, warning.log, error.log, fatal.log`);
+logger.setUserContext = (userId) => {
+	if (userId === null || userId === undefined || Number(userId) === 0 || userId === '') {
+		currentUserId = null;
+		return;
+	}
+	currentUserId = userId;
+};
+
+logger.clearUserContext = () => {
+	currentUserId = null;
+};
+
+if (LOG_TO_FILE) {
+	const initialDir = resolveLogDir();
+	ensureDirectory(initialDir);
+	console.log(`✅ Logger configured with file output in: ${initialDir}`);
+	console.log('   - info.log, warning.log, error.log, fatal.log');
 } else {
-	logger = pino(
-		{ level: LOG_LEVEL || 'info' },
-		pino.transport({
-			target: 'pino-pretty',
-			options: { colorize: true },
-		})
-	);
-	console.log(`🖥️ Logger running in console-only mode`);
+	console.log('🖥️ Logger running in console-only mode');
 }
 
 module.exports = logger;

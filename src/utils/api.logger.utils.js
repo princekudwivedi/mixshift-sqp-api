@@ -70,7 +70,7 @@ class APILogger {
      * Format log entry with timestamp
      */
     formatLogEntry(data) {
-        const timestamp = dates.getNowDateTimeInUserTimezone().toISOString();
+        const timestamp = dates.getNowDateTimeInUserTimezone();
         const separator = '='.repeat(80);
         
         let logEntry = `\n${separator}\n`;
@@ -478,15 +478,15 @@ class APILogger {
             // 2. Clean API logs (logs/api_logs/user_X/<DD-MM-YYYY>/)
             if (fs.existsSync(this.baseLogPath)) {
                 logger.info('\n📂 Cleaning API user logs...');
-                
+
                 const userFolders = fs.readdirSync(this.baseLogPath);
                 logger.info(`   Found ${userFolders.length} items in api_logs`);
-                
+
                 let apiLogsDeleted = 0;
-                
+
                 userFolders.forEach(userFolder => {
                     const userPath = path.join(this.baseLogPath, userFolder);
-                    
+
                     // Check if it's a directory
                     try {
                         if (!fs.statSync(userPath).isDirectory()) {
@@ -499,18 +499,18 @@ class APILogger {
                     }
 
                     // Check if it's a user folder (user_X or user__X pattern)
-                    if (!userFolder.match(/^user_+\d+$/)) {
-                        logger.info(`   ⊘ Skipped (not user_X pattern): ${userFolder}`);
+                    if (!userFolder.match(/^user_+\d+$|^user__unknown$/)) {
+                        logger.info(`   ⊘ Skipped (not user_* pattern): ${userFolder}`);
                         return;
                     }
 
                     logger.info(`   📁 Processing: ${userFolder}`);
                     const dateFolders = fs.readdirSync(userPath);
                     logger.info(`      Found ${dateFolders.length} date folders`);
-                    
+
                     dateFolders.forEach(dateFolder => {
                         const datePath = path.join(userPath, dateFolder);
-                        
+
                         if (!fs.statSync(datePath).isDirectory()) return;
 
                         // Parse date from folder name (DD-MM-YYYY format)
@@ -522,10 +522,10 @@ class APILogger {
 
                         if (folderDate < cutoffDate) {
                             const folderSize = getSize(datePath);
-                            
+
                             // Remove folder recursively
                             fs.rmSync(datePath, { recursive: true, force: true });
-                            
+
                             totalDeletedCount++;
                             totalBytesFreed += folderSize;
                             apiLogsDeleted++;
@@ -553,6 +553,37 @@ class APILogger {
             } else {
                 logger.info('\n📂 API logs directory not found');
                 logger.info(`   Expected path: ${this.baseLogPath}`);
+            }
+
+            // 3. Clean API report exports (reports/<date>/<user>/<seller>/<amazon>/)
+            const reportsBasePath = path.join(process.cwd(), 'logs', 'reports');
+            if (fs.existsSync(reportsBasePath)) {
+                logger.info('\n📂 Cleaning API report exports...');
+
+                const dateFolders = fs.readdirSync(reportsBasePath);
+                logger.info(`   Found ${dateFolders.length} date folders in reports`);
+
+                dateFolders.forEach((dateFolder) => {
+                    const datePath = path.join(reportsBasePath, dateFolder);
+                    if (!fs.statSync(datePath).isDirectory()) return;
+
+                    const folderDate = parseDateFolder(dateFolder);
+                    if (!folderDate) {
+                        logger.info(`   ⊘ Invalid date format in reports: ${dateFolder}`);
+                        return;
+                    }
+
+                    if (folderDate < cutoffDate) {
+                        const folderSize = getSize(datePath);
+                        fs.rmSync(datePath, { recursive: true, force: true });
+                        totalDeletedCount++;
+                        totalBytesFreed += folderSize;
+                        logger.info(`   ✓ Deleted report date folder: ${dateFolder} (${(folderSize / 1024 / 1024).toFixed(2)} MB)`);
+                    }
+                });
+            } else {
+                logger.info('\n📂 Reports directory not found');
+                logger.info(`   Expected path: ${reportsBasePath}`);
             }
 
             logger.info(`\n✅ Cleanup complete: ${totalDeletedCount} folders deleted, ${(totalBytesFreed / 1024 / 1024).toFixed(2)} MB freed\n`);

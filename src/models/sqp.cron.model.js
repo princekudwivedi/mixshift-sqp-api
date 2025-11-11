@@ -54,9 +54,7 @@ async function getReportsForStatusType(row, retry = false) {
 async function getActiveASINsBySeller(sellerId = null, limit = true, reportType = null) {
     const SellerAsinList = getSellerAsinList();
     const sellerFilter = sellerId ? { SellerID: sellerId } : {};
-    const currentDay = dates.getNowDateTimeInUserTimezone();
-    const retryCutoffTime = dates.getNowDateTimeInUserTimezone();
-    retryCutoffTime.setDate(currentDay.getDate() - env.MAX_DAYS_AGO);
+    const retryCutoffTime = dates.getNowDateTimeInUserTimezoneAgo( new Date(), { days: env.MAX_DAYS_AGO } );
 
     // Determine report-specific fields
     let statusField, endTimeField;
@@ -334,11 +332,26 @@ async function getActiveASINsBySellerInitialPull(sellerId = null, limit = true) 
     const SellerAsinList = getSellerAsinList();
     const sellerFilter = sellerId ? { SellerID: sellerId } : {};
 
+    const retryCutoffTime = dates.getNowDateTimeInUserTimezoneAgo( new Date(), { days: env.MAX_DAYS_AGO } );
+
     const where = {
         IsActive: 1,
         ...sellerFilter,
-        InitialPullStatus: null
-    };
+        [Op.and]: [
+            {
+                [Op.or]: [
+                    { InitialPullStatus: null },
+                    { InitialPullStatus: { [Op.ne]: 2 } }
+                ]
+            },
+            {
+                [Op.or]: [
+                    { InitialPullStartTime: null },
+                    { InitialPullStartTime: { [Op.lt]: retryCutoffTime } }
+                ]
+            }
+        ]
+    };    
 
     const asins = await SellerAsinList.findAll({
         where,
@@ -445,15 +458,13 @@ async function hasEligibleASINsInitialPull(sellerId, limit = true) {
 
 async function createSQPCronDetail(amazonSellerID, asinString, sellerID, options = {}) {
     const SqpCronDetails = getSqpCronDetails();
-    
-    // Base data for creating cron detail
-    const createData = { 
-        AmazonSellerID: amazonSellerID, 
+    const createData = {
+        AmazonSellerID: amazonSellerID,
         SellerID: sellerID,
-        ASIN_List: asinString,         
-        dtCreatedOn: dates.getNowDateTimeInUserTimezone(), 
-        dtCronStartDate: dates.getNowDateTimeInUserTimezone(), 
-        dtUpdatedOn: dates.getNowDateTimeInUserTimezone() 
+        ASIN_List: asinString,
+        dtCreatedOn: dates.getNowDateTimeInUserTimezone(),
+        dtCronStartDate: dates.getNowDateTimeInUserTimezone(),
+        dtUpdatedOn: dates.getNowDateTimeInUserTimezone()
     };
     
     // Add optional fields for initial pull
@@ -471,7 +482,7 @@ async function createSQPCronDetail(amazonSellerID, asinString, sellerID, options
     }
     if (options.SellerName) {
         createData.SellerName = options.SellerName;
-    }    
+    }
     createData.cronRunningStatus = 1;
     const row = await SqpCronDetails.create(createData);
     
@@ -481,6 +492,7 @@ async function createSQPCronDetail(amazonSellerID, asinString, sellerID, options
 }
 
 async function updateSQPReportStatus(cronDetailID, reportType, status, startDate = undefined, endDate = undefined, cronRunningStatus = null, cronStartDate = false) {
+    const SqpCronDetails = getSqpCronDetails();
     const prefix = mapPrefix(reportType);
     const data = {
         dtUpdatedOn: dates.getNowDateTimeInUserTimezone()
@@ -502,7 +514,6 @@ async function updateSQPReportStatus(cronDetailID, reportType, status, startDate
     if(cronRunningStatus != null){
         data.cronRunningStatus = Number(cronRunningStatus);
     }
-    const SqpCronDetails = getSqpCronDetails();
     await SqpCronDetails.update(data, { where: { ID: cronDetailID } });
 }
 
@@ -579,13 +590,9 @@ async function getLatestReportId(cronJobID, reportType, reportID = null, range =
 }
 
 async function setProcessRunningStatus(cronDetailID, reportType, status) {
-    try {
-        const prefix = mapPrefix(reportType);
-        const SqpCronDetails = getSqpCronDetails();
-        await SqpCronDetails.update({ [`${prefix}ProcessRunningStatus`]: Number(status), dtUpdatedOn: dates.getNowDateTimeInUserTimezone() }, { where: { ID: cronDetailID } });
-    } catch (error) {
-        logger.error({ error: error.message, cronDetailID, reportType }, 'Failed to update ProcessRunningStatus');
-    }
+    const prefix = mapPrefix(reportType);
+    const SqpCronDetails = getSqpCronDetails();
+    await SqpCronDetails.update({ [`${prefix}ProcessRunningStatus`]: Number(status), dtUpdatedOn: dates.getNowDateTimeInUserTimezone() }, { where: { ID: cronDetailID } });
 }
 
 /**
@@ -616,6 +623,8 @@ async function checkCronDetailsOfSellersByDate(
         HoursAgo = dates.getNowDateTimeInUserTimezoneAgo(new Date(), { hours: 1 });
     }
 
+    const hoursAgoDate = HoursAgo instanceof Date ? HoursAgo : new Date(String(HoursAgo).replace(' ', 'T'));
+
     // Build date filter
     let dateFilter = {};
     if (date !== '') {
@@ -630,7 +639,8 @@ async function checkCronDetailsOfSellersByDate(
             ]
         };
     } else {
-        const today = dates.getNowDateTimeInUserTimezone();
+        const todayValue = dates.getNowDateTimeInUserTimezone();
+        const today = todayValue instanceof Date ? todayValue : new Date(String(todayValue).replace(' ', 'T'));
         const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0);
         const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59);
         dateFilter = {
@@ -641,7 +651,7 @@ async function checkCronDetailsOfSellersByDate(
             ]
         };
     }
-
+    
     const where = { ...dateFilter };
 
     // ✅ Active Cron Filter (status in [1,2,3], not older than 2h, and SQPDataPullStatus != 3)
@@ -662,7 +672,7 @@ async function checkCronDetailsOfSellersByDate(
                 ]
             },
             {
-                dtUpdatedOn: { [Op.gt]: HoursAgo }
+                dtUpdatedOn: { [Op.gt]: hoursAgoDate }
             }
         ];
     }
@@ -683,12 +693,11 @@ async function checkCronDetailsOfSellersByDate(
     if (AmazonSellerID) {
         where.AmazonSellerID = AmazonSellerID;
     }
-
+    
     const results = await SqpCronDetails.findAll({
         where,
         order: [['ID', 'DESC']]
     });
-
     // Return single record if AmazonSellerID given
     if (AmazonSellerID != '') {
         return results.length > 0 ? results[0] : null;

@@ -1404,7 +1404,9 @@ class InitialPullService {
                     const downloadMeta = { 
                         AmazonSellerID: seller.AmazonSellerID, 
                         ReportType: reportType, 
-                        ReportID: documentId || reportId
+                        ReportID: documentId || reportId,
+                        SellerID: seller.idSellerAccount,
+                        UserID: user ? user.ID : null
                     };
                     let filePath = null;
                     let fileSize = 0;
@@ -1606,7 +1608,7 @@ class InitialPullService {
                         rowCount: 0,
                         downloadPayload: { documentId: documentId || reportId },
                         startTime: downloadStartTime,
-                        endTime: dates.getNowDateTimeInUserTimezone().toISOString(),
+                        endTime: dates.getNowDateTimeInUserTimezone(),
                         executionTime: (Date.now() - startTime) / 1000,
                         status: 'success',
                         error: null,
@@ -1685,10 +1687,9 @@ class InitialPullService {
         const SqpCronDetails = getSqpCronDetails();
         
         // Calculate time (6 hours ago)
-        const cutoffTime = dates.getNowDateTimeInUserTimezone();
-        cutoffTime.setHours(cutoffTime.getHours() - 6);
+        const cutoffTime = dates.getNowDateTimeInUserTimezoneAgo(new Date(), { hours: 6 });
         
-        logger.info({ cutoffTime: cutoffTime.toISOString() }, 'Scanning for records stuck since cutoff time');
+        logger.info({ cutoffTime: cutoffTime }, 'Scanning for records stuck since cutoff time');
                 
         // Find initial pull records with failed status (3)
         const failedRecords = await SqpCronDetails.findAll({

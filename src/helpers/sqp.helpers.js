@@ -543,29 +543,6 @@ class DateHelpers {
         
         return date;
     }
-
-    /**
-     * Get date range with validation
-     */
-    static getDateRange(startDate, endDate) {
-        try {
-            const start = this.validateDateString(startDate);
-            const end = this.validateDateString(endDate);
-            
-            if (start > end) {
-                throw new Error('Start date cannot be after end date');
-            }
-            
-            return {
-                start: start.toISOString().split('T')[0],
-                end: end.toISOString().split('T')[0],
-                days: Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1
-            };
-        } catch (error) {
-            logger.error({ error: error.message, startDate, endDate }, 'Date range validation failed');
-            throw error;
-        }
-    }
 }
 
 /**

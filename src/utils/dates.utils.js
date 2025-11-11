@@ -12,30 +12,135 @@ function fmt(date) {
 function fmtDate(date) {
     return format(date, 'yyyy-MM-dd HH:mm:ss');
 }
-/**
- * Get current DateTime object in user's timezone
- * @param {string|null} timezone
- */
-function getNowDateTimeInUserTimezone(date = new Date(), timezone = null) {
-    const zone = timezone ?? getCurrentTimezone();
-    const formatted = formatTimestamp(date, zone);
-    return fmtDate(formatted);
-}
-function getNowDateTimeInUserTimezoneAgo(date = new Date(), { hours = 0, days = 0 } = {}, timezone = null) {
-    const zone = timezone ?? getCurrentTimezone();
-    const formatted = formatTimestamp(date, zone);
-    const dt = new Date(formatted);
 
-    // Subtract days and hours
-    const adjusted = new Date(dt.getTime() - (days * 24 * 60 * 60 * 1000) - (hours * 60 * 60 * 1000));
-    return fmtDate(adjusted); // returns formatted string "YYYY-MM-DD HH:mm:ss"
+function resolveTimezone(preferred) {
+    if (preferred && preferred.trim().length > 0 && preferred !== 'UTC') {
+        return preferred;
+    }
+    if (DEFAULT_TZ && DEFAULT_TZ.trim().length > 0 && DEFAULT_TZ !== 'UTC') {
+        return DEFAULT_TZ;
+    }
+    try {
+        const resolved = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        if (resolved && resolved !== 'UTC') {
+            return resolved;
+        }
+    } catch (err) {
+        // ignore
+    }
+    if (preferred && preferred.trim().length > 0) {
+        return preferred;
+    }
+    if (DEFAULT_TZ && DEFAULT_TZ.trim().length > 0) {
+        return DEFAULT_TZ;
+    }
+    try {
+        const resolved = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        if (resolved) {
+            return resolved;
+        }
+    } catch (err) {
+        // ignore
+    }
+    return 'UTC';
+}
+
+function parseOffset(timeZoneName) {
+    const match = timeZoneName.match(/GMT([+-]?)(\d{1,2})(?::(\d{2}))?/i);
+    if (!match) {
+        return { minutes: 0, string: '+00:00' };
+    }
+    const sign = match[1] === '-' ? -1 : 1;
+    const hours = parseInt(match[2] || '0', 10);
+    const minutes = parseInt(match[3] || '0', 10);
+    const totalMinutes = sign * (hours * 60 + minutes);
+    const normalized = `${sign === -1 ? '-' : '+'}${String(Math.abs(hours)).padStart(2, '0')}:${String(Math.abs(minutes)).padStart(2, '0')}`;
+    return { minutes: totalMinutes, string: normalized };
+}
+
+function getTimeZoneParts(date, timeZone) {
+    const targetZone = resolveTimezone(timeZone);
+    const formatter = new Intl.DateTimeFormat('en-US', {
+        timeZone: targetZone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+        timeZoneName: 'short'
+    });
+
+    const parts = formatter.formatToParts(date);
+    const map = {};
+    parts.forEach(({ type, value }) => {
+        map[type] = value;
+    });
+
+    const datePart = `${map.year}-${map.month}-${map.day}`;
+    const timePart = `${map.hour}:${map.minute}:${map.second}`;
+    const { string: offsetString } = parseOffset(map.timeZoneName || 'GMT');
+    const iso = `${datePart}T${timePart}${offsetString === '+00:00' ? 'Z' : offsetString}`;
+
+    return {
+        datePart,
+        timePart,
+        formatted: `${datePart} ${timePart}`,
+        offsetString,
+        date: new Date(iso)
+    };
+}
+
+function formatTimestamp(timestamp, timeZone = DEFAULT_TZ, options = {}) {
+    if (!timestamp) return null;
+    const date = timestamp instanceof Date ? timestamp : new Date(timestamp);
+    if (Number.isNaN(date.getTime())) return null;
+
+    const useRaw = timestamp instanceof Date && !timeZone;
+    const parts = useRaw
+        ? { datePart: format(date, 'yyyy-MM-dd'), timePart: format(date, 'HH:mm:ss'), formatted: format(date, 'yyyy-MM-dd HH:mm:ss'), offsetString: '+00:00' }
+        : getTimeZoneParts(date, timeZone);
+
+    if (options.onlyDate) {
+        return parts.datePart;
+    }
+
+    if (options.includeOffset) {
+        return `${parts.formatted} ${parts.offsetString}`;
+    }
+
+    return parts.formatted;
+}
+
+function getNowDateTimeInUserTimezone(date = new Date(), timezone = null) {
+    const zone = resolveTimezone(timezone ?? getCurrentTimezone());
+    return formatTimestamp(date, zone);
+}
+
+function getNowDateTimeInUserTimezoneDate(date = new Date(), timezone = null) {
+    const zone = resolveTimezone(timezone ?? getCurrentTimezone());
+    return getTimeZoneParts(date, zone).date;
+}
+
+function getNowDateTimeInUserTimezoneAgo(date = new Date(), { hours = 0, days = 0, minutes = 0 } = {}, timezone = null) {
+    const zone = resolveTimezone(timezone ?? getCurrentTimezone());
+    const baseDate = getTimeZoneParts(date, zone).date;
+    const adjusted = new Date(baseDate.getTime() - ((days * 24 * 60 + hours * 60 + minutes) * 60000));
+    return formatTimestamp(adjusted, zone);
+}
+
+function getNowDateTimeInUserTimezoneAgoDate(date = new Date(), { hours = 0, days = 0, minutes = 0 } = {}, timezone = null) {
+    const zone = resolveTimezone(timezone ?? getCurrentTimezone());
+    const baseDate = getTimeZoneParts(date, zone).date;
+    return new Date(baseDate.getTime() - ((days * 24 * 60 + hours * 60 + minutes) * 60000));
 }
 
 /**
  * Return JS Date for the current time in user's timezone
  */
 function getNowRangeForPeriodInUserTimezone(timezone = null) {
-    return getNowDateTimeInUserTimezone(new Date(), timezone);
+    return getNowDateTimeInUserTimezoneDate(new Date(), timezone);
 }
 
 /**
@@ -43,7 +148,7 @@ function getNowRangeForPeriodInUserTimezone(timezone = null) {
  */
 function calculateWeekRanges(numberOfWeeks = 52, skipLatest = true, timezone) {
     const ranges = [];
-    const today = getNowDateTimeInUserTimezone(new Date(), timezone);
+    const today = getNowDateTimeInUserTimezoneDate(new Date(), timezone);
     const currentSunday = startOfWeek(today, { weekStartsOn: 0 }); // Sunday
 
     const startWeek = skipLatest ? -2 : 0;
@@ -68,7 +173,7 @@ function calculateWeekRanges(numberOfWeeks = 52, skipLatest = true, timezone) {
  */
 function calculateMonthRanges(numberOfMonths = 12, skipCurrent = true, timezone) {
     const ranges = [];
-    const today = getNowDateTimeInUserTimezone(new Date(), timezone);
+    const today = getNowDateTimeInUserTimezoneDate(new Date(), timezone);
     const startMonthIndex = skipCurrent ? -2 : 0;
 
     for (let i = startMonthIndex; i >= startMonthIndex - (numberOfMonths - 1); i--) {
@@ -92,7 +197,7 @@ function calculateMonthRanges(numberOfMonths = 12, skipCurrent = true, timezone)
  */
 function calculateQuarterRanges(numberOfQuarters = 4, skipCurrent = true, timezone) {
     const ranges = [];
-    const today = getNowDateTimeInUserTimezone(new Date(), timezone);
+    const today = getNowDateTimeInUserTimezoneDate(new Date(), timezone);
     const currentQuarter = Math.floor(today.getMonth() / 3); // 0 = Q1
 
     const startQuarterIndex = skipCurrent ? -2 : 0;
@@ -144,32 +249,9 @@ function calculateFullRanges(timezone) {
     };
 }
 
-/**
- * Format timestamp using Intl.DateTimeFormat with timezone
- */
-function formatTimestamp(timestamp, timeZone = DEFAULT_TZ, options = {}) {
-    if (!timestamp) return null;
-    const date = timestamp instanceof Date ? timestamp : new Date(timestamp);
-    if (Number.isNaN(date.getTime())) return null;
-
-    const fmtOptions = {
-        timeZone,
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-        hour12: true,
-        ...options.formatOptions
-    };
-    const formatted = new Intl.DateTimeFormat('en-US', fmtOptions).format(date);
-    return formatted;
-}
-
 function getDateRangeForPeriod(period, timezone = null) {
-    const zone = timezone ?? getCurrentTimezone();
-    const now = getNowDateTimeInUserTimezone(new Date(), zone);
+    const zone = resolveTimezone(timezone ?? getCurrentTimezone());
+    const now = getNowDateTimeInUserTimezoneDate(new Date(), zone);
     switch (period) {
         case 'WEEK': {
             const currentWeekStart = startOfWeek(now, { weekStartsOn: 0 });
@@ -203,8 +285,11 @@ module.exports = {
     calculateQuarterRanges,
     calculateFullRanges,
     getNowDateTimeInUserTimezone,
+    getNowDateTimeInUserTimezoneDate,
     getNowRangeForPeriodInUserTimezone,
     formatTimestamp,
     getDateRangeForPeriod,
-    getNowDateTimeInUserTimezoneAgo
+    getNowDateTimeInUserTimezoneAgo,
+    getNowDateTimeInUserTimezoneAgoDate,
+    resolveTimezone
 };
