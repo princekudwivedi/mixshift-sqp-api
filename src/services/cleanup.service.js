@@ -14,6 +14,7 @@ const isDevEnv = ["local", "development","production"].includes(env.NODE_ENV);
 const { getAllAgencyUserList } = require('../models/sequelize/user.model');
 const { isUserAllowed } = require('../utils/security.utils');
 const apiLogger = require('../utils/api.logger.utils');
+const dates = require('../utils/dates.utils');
 
 class CleanupService {
 
@@ -117,7 +118,7 @@ class CleanupService {
     async _cleanupOldCronDetails(userID, daysToKeep = process.env.DAYS_TO_KEEP) {
         try {
             const SqpCronDetails = getSqpCronDetails();
-            const cutoffDate = new Date();
+            const cutoffDate = dates.getNowDateTimeInUserTimezone();
             cutoffDate.setDate(cutoffDate.getDate() - daysToKeep);
                         
             
@@ -155,7 +156,7 @@ class CleanupService {
     async _cleanupOldCronLogs(userID, daysToKeep = process.env.DAYS_TO_KEEP) {
         try {
             const SqpCronLogs = getSqpCronLogs();
-            const cutoffDate = new Date();
+            const cutoffDate = dates.getNowDateTimeInUserTimezone();
             cutoffDate.setDate(cutoffDate.getDate() - daysToKeep);
             
             // Uncomment to actually delete:
@@ -193,7 +194,7 @@ class CleanupService {
     async _cleanupOldDownloadUrls(userID, daysToKeep = process.env.DAYS_TO_KEEP) {
         try {
             const SqpDownloadUrls = getSqpDownloadUrls();
-            const cutoffDate = new Date();
+            const cutoffDate = dates.getNowDateTimeInUserTimezone();
             cutoffDate.setDate(cutoffDate.getDate() - daysToKeep);
             
             // Uncomment to actually delete:

@@ -14,7 +14,8 @@ function initDatabaseContext(callback) {
     const context = {
         dbName: env.DB_NAME,
         sequelize: null,
-        userId: null
+        userId: null,
+        timezone: 'UTC'
     };
     return asyncLocalStorage.run(context, callback);
 }
@@ -44,6 +45,7 @@ async function loadDatabase(userId = 0) {
         context.dbName = env.DB_NAME;
         context.sequelize = getRootSequelize();
         context.userId = 0;
+        context.timezone = 'UTC';
         return context.sequelize;
     }
 
@@ -71,6 +73,7 @@ async function loadDatabase(userId = 0) {
             context.dbName = env.DB_NAME;
             context.sequelize = rootSequelize;
             context.userId = userId;
+            context.timezone = userMapping?.[0]?.tz || 'UTC';
             return context.sequelize;
         }
         
@@ -88,11 +91,13 @@ async function loadDatabase(userId = 0) {
             pass: env.DB_PASS 
         });
         context.userId = userId;
+        context.timezone = userMapping[0].tz || 'UTC';
         
         logger.info({ 
             userId, 
             dbName: context.dbName, 
-            contextId: getContextId() 
+            contextId: getContextId(),
+            timezone: context.timezone
         }, 'Database context switched successfully');
         
         return context.sequelize;
@@ -104,6 +109,7 @@ async function loadDatabase(userId = 0) {
         }, 'Error loading tenant database');
         context.dbName = env.DB_NAME;
         context.sequelize = rootSequelize;
+        context.timezone = 'UTC';
         return context.sequelize;
     }
 }
@@ -133,6 +139,15 @@ function getCurrentUserId() {
         return null;
     }
     return context.userId;
+}
+
+function getCurrentTimezone() {
+    const context = asyncLocalStorage.getStore();
+    if (!context) {
+        logger.warn('No database context - returning default timezone UTC');
+        return 'UTC';
+    }
+    return context.timezone || 'UTC';
 }
 
 function clearModelCaches() {
@@ -191,6 +206,7 @@ module.exports = {
     getCurrentDbName, 
     getCurrentSequelize, 
     getCurrentUserId,
+    getCurrentTimezone,
     clearModelCaches,
     getTenantSequelizeForCurrentDb,
     verifyDatabaseContext,

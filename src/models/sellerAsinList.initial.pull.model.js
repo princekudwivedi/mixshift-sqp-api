@@ -7,7 +7,7 @@ const { getModel: getSellerAsinList } = require('./sequelize/sellerAsinList.mode
 const logger = require('../utils/logger.utils');
 const { Op, literal } = require('sequelize');
 const { updateSellerAsinLatestRanges } = require('../services/sqp.json.processing.service');
-
+const dates = require('../utils/dates.utils');
 /**
  * Status values:
  * 0 = Pending (not started)
@@ -31,7 +31,7 @@ async function updateInitialPullStatus(cronDetailID, SellerID, amazonSellerID, a
         // Build update data
         const updateData = {
             InitialPullStatus: status,
-            dtUpdatedOn: new Date()
+            dtUpdatedOn: dates.getNowDateTimeInUserTimezone()
         };
         
         if (startTime) {
@@ -164,7 +164,7 @@ async function markInitialPullStarted(amazonSellerID, asinList, SellerID, cronDe
         amazonSellerID,
         asinList,
         1, // In Progress
-        new Date(), // Start time
+        dates.getNowDateTimeInUserTimezone(), // Start time
         null,
         timezone
     );
@@ -181,7 +181,7 @@ async function markInitialPullCompleted(amazonSellerID, asinList, SellerID, cron
         asinList,
         2, // Completed
         null,
-        new Date(), // End time
+        dates.getNowDateTimeInUserTimezone(), // End time
         timezone
     );
 }
@@ -197,7 +197,7 @@ async function markInitialPullFailed(amazonSellerID, asinList, SellerID, cronDet
         asinList,
         3, // Failed
         null,
-        new Date(), // End time
+        dates.getNowDateTimeInUserTimezone(), // End time
         timezone
     );
 }

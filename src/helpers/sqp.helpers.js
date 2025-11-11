@@ -1,7 +1,7 @@
 const fs = require('fs').promises;
 const path = require('path');
 const logger = require('../utils/logger.utils');
-const datesUtils = require('../utils/dates.utils');
+const dates = require('../utils/dates.utils');
 
 
 class Helpers {
@@ -245,7 +245,7 @@ class RetryHelpers {
                             reportType,
                             2, // error (needs retry)
                             null, // startDate unchanged
-                            new Date(), // endDate set on failure
+                             dates.getNowDateTimeInUserTimezone(), // endDate set on failure
                             null // DO NOT set cronRunningStatus here - will be calculated by finalizeCronRunningStatus
                         );                       
                     } catch (updateErr) {
@@ -734,99 +734,6 @@ class DataProcessingHelpers {
             conversionRate
         };
     }
-
-    /**
-     * Validate SQP record structure
-     */
-    static validateSqpRecord(record) {
-        const requiredFields = ['asin'];
-        const missingFields = requiredFields.filter(field => !record[field]);
-        
-        if (missingFields.length > 0) {
-            throw new Error(`Missing required fields: ${missingFields.join(', ')}`);
-        }
-
-        return true;
-    }
-
-    /**
-     * Clean and prepare metrics data for storage
-     */
-    static prepareMetricsData(download, reportType, reportDate, record, filePath) {
-        const asin = ValidationHelpers.sanitizeString(record.asin || '');
-        const queryStr = ValidationHelpers.sanitizeString(record.searchQueryData?.searchQuery || '');
-        const impressions = ValidationHelpers.sanitizeNumber(record.impressionData?.asinImpressionCount || 0);
-        const clicks = ValidationHelpers.sanitizeNumber(record.clickData?.asinClickCount || 0);
-        const orders = ValidationHelpers.sanitizeNumber(record.purchaseData?.asinPurchaseCount || 0);
-        const cartAdds = ValidationHelpers.sanitizeNumber(record.cartAddData?.asinCartAddCount || 0);
-
-        // Skip records with no meaningful data
-        if (!asin || !queryStr || (impressions === 0 && clicks === 0 && cartAdds === 0 && orders === 0)) {
-            return null;
-        }
-
-        const derivedMetrics = this.calculateDerivedMetrics(record);
-        const currencyCode = this.extractCurrencyCode(record);
-
-        return {
-            ReportID: download.ReportID,
-            AmazonSellerID: download.AmazonSellerID,
-            ReportType: reportType,
-            ReportDate: reportDate,
-            StartDate: ValidationHelpers.sanitizeDate(record.startDate),
-            EndDate: ValidationHelpers.sanitizeDate(record.endDate),
-            CurrencyCode: currencyCode,
-            SearchQuery: queryStr,
-            SearchQueryScore: ValidationHelpers.sanitizeNumber(record.searchQueryData?.searchQueryScore || 0),
-            SearchQueryVolume: ValidationHelpers.sanitizeNumber(record.searchQueryData?.searchQueryVolume || 0),
-            TotalQueryImpressionCount: ValidationHelpers.sanitizeNumber(record.impressionData?.totalQueryImpressionCount || 0),
-            AsinImpressionCount: impressions,
-            AsinImpressionShare: ValidationHelpers.sanitizeNumber(record.impressionData?.asinImpressionShare || 0),
-            TotalClickCount: ValidationHelpers.sanitizeNumber(record.clickData?.totalClickCount || 0),
-            TotalClickRate: ValidationHelpers.sanitizeNumber(record.clickData?.totalClickRate || 0),
-            AsinClickCount: clicks,
-            AsinClickShare: ValidationHelpers.sanitizeNumber(record.clickData?.asinClickShare || 0),
-            TotalMedianClickPrice: ValidationHelpers.sanitizeNumber(record.clickData?.totalMedianClickPrice?.amount || 0),
-            AsinMedianClickPrice: ValidationHelpers.sanitizeNumber(record.clickData?.asinMedianClickPrice?.amount || 0),
-            TotalSameDayShippingClickCount: ValidationHelpers.sanitizeNumber(record.clickData?.totalSameDayShippingClickCount || 0),
-            TotalOneDayShippingClickCount: ValidationHelpers.sanitizeNumber(record.clickData?.totalOneDayShippingClickCount || 0),
-            TotalTwoDayShippingClickCount: ValidationHelpers.sanitizeNumber(record.clickData?.totalTwoDayShippingClickCount || 0),
-            TotalCartAddCount: ValidationHelpers.sanitizeNumber(record.cartAddData?.totalCartAddCount || 0),
-            TotalCartAddRate: ValidationHelpers.sanitizeNumber(record.cartAddData?.totalCartAddRate || 0),
-            AsinCartAddCount: cartAdds,
-            AsinCartAddShare: ValidationHelpers.sanitizeNumber(record.cartAddData?.asinCartAddShare || 0),
-            TotalMedianCartAddPrice: ValidationHelpers.sanitizeNumber(record.cartAddData?.totalMedianCartAddPrice?.amount || 0),
-            AsinMedianCartAddPrice: ValidationHelpers.sanitizeNumber(record.cartAddData?.asinMedianCartAddPrice?.amount || 0),
-            TotalSameDayShippingCartAddCount: ValidationHelpers.sanitizeNumber(record.cartAddData?.totalSameDayShippingCartAddCount || 0),
-            TotalOneDayShippingCartAddCount: ValidationHelpers.sanitizeNumber(record.cartAddData?.totalOneDayShippingCartAddCount || 0),
-            TotalTwoDayShippingCartAddCount: ValidationHelpers.sanitizeNumber(record.cartAddData?.totalTwoDayShippingCartAddCount || 0),
-            TotalPurchaseCount: ValidationHelpers.sanitizeNumber(record.purchaseData?.totalPurchaseCount || 0),
-            TotalPurchaseRate: ValidationHelpers.sanitizeNumber(record.purchaseData?.totalPurchaseRate || 0),
-            AsinPurchaseCount: orders,
-            AsinPurchaseShare: ValidationHelpers.sanitizeNumber(record.purchaseData?.asinPurchaseShare || 0),
-            TotalMedianPurchasePrice: ValidationHelpers.sanitizeNumber(record.purchaseData?.totalMedianPurchasePrice?.amount || 0),
-            AsinMedianPurchasePrice: ValidationHelpers.sanitizeNumber(record.purchaseData?.asinMedianPurchasePrice?.amount || 0),
-            AsinPurchaseRate: ValidationHelpers.sanitizeNumber(record.purchaseData?.asinPurchaseRate || derivedMetrics.conversionRate),
-            TotalSameDayShippingPurchaseCount: ValidationHelpers.sanitizeNumber(record.purchaseData?.totalSameDayShippingPurchaseCount || 0),
-            TotalOneDayShippingPurchaseCount: ValidationHelpers.sanitizeNumber(record.purchaseData?.totalOneDayShippingPurchaseCount || 0),
-            TotalTwoDayShippingPurchaseCount: ValidationHelpers.sanitizeNumber(record.purchaseData?.totalTwoDayShippingPurchaseCount || 0),
-            ASIN: asin,
-            dtCreatedOn: new Date()
-        };
-    }
-
-    /**
-     * Extract currency code from record
-     */
-    static extractCurrencyCode(record) {
-        return record.clickData?.asinMedianClickPrice?.currencyCode
-            || record.clickData?.totalMedianClickPrice?.currencyCode
-            || record.cartAddData?.asinMedianCartAddPrice?.currencyCode
-            || record.cartAddData?.totalMedianCartAddPrice?.currencyCode
-            || record.purchaseData?.asinMedianPurchasePrice?.currencyCode
-            || record.purchaseData?.totalMedianPurchasePrice?.currencyCode
-            || null;
-    }
 }
 
 /**
@@ -877,36 +784,6 @@ class NotificationHelpers {
             logger.error({ error: error.message, subject }, 'Failed to send notification email');
             return false;
         }
-    }
-    /**
-     * Send max retry notification
-     */
-    static async sendMaxRetryNotification(download, result) {
-        const attempts = (download.ProcessAttempts || 0) + 1;
-        logger.error({ downloadID: download.ID, reportID: download.ReportID, attempts, result }, 'Max retry attempts reached for SQP processing');
-
-        const to = this.parseList(env.NOTIFY_TO);
-        const cc = this.parseList(env.NOTIFY_CC);
-        const bcc = this.parseList(env.NOTIFY_BCC);
-        if ((to.length + cc.length + bcc.length) === 0) {
-            logger.warn('Notification recipients not configured (NOTIFY_TO/CC/BCC)');
-            return false;
-        }
-
-        const subject = `SQP Processing Failed after ${attempts} attempts [ReportID: ${download.ReportID}]`;
-        const html = `
-            <h3>Max Retry Attempts Reached</h3>
-            <p><strong>Download ID:</strong> ${download.ID}</p>
-            <p><strong>Report ID:</strong> ${download.ReportID}</p>
-            <p><strong>Seller:</strong> ${download.AmazonSellerID || ''}</p>
-            <p><strong>File:</strong> ${download.FilePath || ''}</p>
-            <p><strong>Attempts:</strong> ${attempts}</p>
-            <p><strong>Last Error:</strong> ${result?.lastError || 'N/A'}</p>
-            <p><strong>Totals:</strong> total=${result?.total || 0}, success=${result?.success || 0}, failed=${result?.failed || 0}</p>
-            <p>Time: ${new Date().toISOString()}</p>
-        `;
-
-        return this.sendEmail({ subject, html, to, cc, bcc });
     }
 }
 

@@ -1,5 +1,6 @@
 const BaseModel = require('./base.model');
 const { env } = require('../config/env.config');
+const dates = require('../utils/dates.utils');
 
 class SqpCronDetailsModel extends BaseModel {
     constructor() {
@@ -15,15 +16,15 @@ class SqpCronDetailsModel extends BaseModel {
     }
 
     async markStarted(id) {
-        return this.update(id, { Status: 'STARTED', StartedAt: new Date() });
+        return this.update(id, { Status: 'STARTED', StartedAt: dates.getNowDateTimeInUserTimezone() });
     }
 
     async markCompleted(id, extra = {}) {
-        return this.update(id, { Status: 'COMPLETED', CompletedAt: new Date(), ...extra });
+        return this.update(id, { Status: 'COMPLETED', CompletedAt: dates.getNowDateTimeInUserTimezone(), ...extra });
     }
 
     async markFailed(id, message) {
-        return this.update(id, { Status: 'FAILED', ErrorMessage: message, CompletedAt: new Date() });
+        return this.update(id, { Status: 'FAILED', ErrorMessage: message, CompletedAt: dates.getNowDateTimeInUserTimezone() });
     }
 }
 

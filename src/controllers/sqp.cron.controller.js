@@ -45,7 +45,7 @@ async function requestForSeller(seller, authOverrides = {}, spReportType = confi
 			cronDetailData.push(cronDetailObject);
 			for (const type of reportTypes) {
 				// Prepare to mark ASINs as In Progress and set start time
-				const startTime = new Date();
+				const startTime = dates.getNowDateTimeInUserTimezone();
 				logger.info({ 
 					userId: user.ID,
 					sellerAccountId: seller.idSellerAccount,
@@ -117,7 +117,7 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 			const { chunk, seller, authOverrides, user } = context;
 			
 			// Set start date when beginning the report request
-			const startDate = new Date();
+			const startDate =  dates.getNowDateTimeInUserTimezone();
 			logger.info({ cronDetailID, reportType, startDate: startDate.toISOString(), attempt }, 'Setting start date for report request');
 			await model.updateSQPReportStatus(cronDetailID, reportType, 0, startDate);
 
@@ -164,7 +164,7 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 			};
 			
 			logger.info({ payload, attempt }, 'Payload created, calling SP-API');
-			const requestStartTime = new Date().toISOString();
+			const requestStartTime =  dates.getNowDateTimeInUserTimezone();
 
 			// Ensure access token is present for this seller
 			let currentAuthOverrides = await authService.buildAuthOverrides(seller.AmazonSellerID);
@@ -181,7 +181,7 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 					requestPayload: payload,
 					response: null,
 					startTime: requestStartTime,
-					endTime: new Date().toISOString(),
+					endTime:  dates.getNowDateTimeInUserTimezone(),
 					executionTime: (Date.now() - startTime) / 1000,
 					status: 'failure',
 					reportId: null,
@@ -224,7 +224,7 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 							requestPayload: payload,
 							response: null,
 							startTime: requestStartTime,
-							endTime: new Date().toISOString(),
+							endTime:  dates.getNowDateTimeInUserTimezone(),
 							executionTime: (Date.now() - startTime) / 1000,
 							status: 'failure',
 							reportId: null,
@@ -244,7 +244,7 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 				}
             }
 			const reportId = resp.reportId;
-			const requestEndTime = new Date().toISOString();
+			const requestEndTime =  dates.getNowDateTimeInUserTimezone();
 			
 			// API Logger - Successful Request Report
 			const userId = user ? user.ID : null;
@@ -422,7 +422,7 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 		},
 		operation: async ({ attempt, currentRetry, context, startTime }) => {
 			const { row, reportId, seller, authOverrides, isRetry, user, range } = context;
-			const statusStartTime = new Date().toISOString();
+			const statusStartTime =  dates.getNowDateTimeInUserTimezone();
 			
 			// Ensure access token for this seller during status checks
 			
@@ -444,7 +444,7 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 					retryCount: currentRetry,
 					attempt,
 					startTime: statusStartTime,
-					endTime: new Date(),
+					endTime:  dates.getNowDateTimeInUserTimezone(),
 					executionTime: (Date.now() - startTime) / 1000,
 					status: 'failure',
 					error: { message: 'No access token available for report request' }
@@ -480,7 +480,7 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 							retryCount: currentRetry,
 							attempt,
 							startTime: statusStartTime,
-							endTime: new Date(),
+							endTime:  dates.getNowDateTimeInUserTimezone(),
 							executionTime: (Date.now() - startTime) / 1000,
 							status: 'failure',
 							error: statusError
@@ -495,7 +495,7 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 				}
             }
 			const status = res.processingStatus;
-			const statusEndTime = new Date().toISOString();
+			const statusEndTime =  dates.getNowDateTimeInUserTimezone();
 			
 			// API Logger - Status Check
 			const userId = user ? user.ID : null;
@@ -578,7 +578,7 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 							3,           // Status 3 = Failed
 							reportType,  // WEEK/MONTH/QUARTER
 							null,        // startTime already set
-							new Date()      // endTime when failed
+							 dates.getNowDateTimeInUserTimezone()      // endTime when failed
 						);
 						
 						logger.info({
@@ -675,7 +675,7 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 		},
 		operation: async ({ attempt, currentRetry, context, startTime }) => {
 			const { row, reportId, seller, authOverrides, user, range } = context;
-			const downloadStartTime = new Date().toISOString();
+			const downloadStartTime =  dates.getNowDateTimeInUserTimezone();
 			const timezone = await model.getUserTimezone(user);
 			logger.info({ reportId, reportType, attempt }, 'Starting download for report');
 			
@@ -711,7 +711,7 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 					rowCount: 0,
 					downloadPayload: { documentId: reportId },
 					startTime: downloadStartTime,
-					endTime: new Date(),
+					endTime:  dates.getNowDateTimeInUserTimezone(),
 					executionTime: (Date.now() - startTime) / 1000,
 					status: 'failure',
 					error: { message: 'No access token available for report request but retry again on catch block' },
@@ -780,7 +780,7 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 							rowCount: 0,
 							downloadPayload: { documentId },
 							startTime: downloadStartTime,
-							endTime: new Date(),
+							endTime:  dates.getNowDateTimeInUserTimezone(),
 							executionTime: (Date.now() - startTime) / 1000,
 							status: 'failure',
 							error: downloadError,
@@ -812,7 +812,7 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 				// Save JSON file to disk and record only path into sqp_download_urls
 				const downloadMeta = { AmazonSellerID: row.AmazonSellerID, ReportType: reportType, ReportID: documentId };
 				let filePath = null; let fileSize = 0;
-				const downloadEndTime = new Date().toISOString();
+				const downloadEndTime =  dates.getNowDateTimeInUserTimezone();
 				
 				try {
 					const saveResult = await jsonSvc.saveReportJsonFile(downloadMeta, data);
@@ -867,7 +867,7 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 						rowCount: data.length,
 						downloadPayload: { documentId },
 						startTime: downloadStartTime,
-						endTime: new Date(),
+						endTime:  dates.getNowDateTimeInUserTimezone(),
 						executionTime: (Date.now() - startTime) / 1000,
 						status: 'partial_success',
 						error: fileErr,
@@ -979,7 +979,7 @@ async function handleFatalOrUnknownStatus(row, reportType, status, reportId = nu
 	}
 
     const statusToSet = 3; // Failed status
-    const endDate = new Date();
+    const endDate =  dates.getNowDateTimeInUserTimezone();
     
     // Fatal should mark cron as completed (2) with failed SQP status (3); no retry
     await model.updateSQPReportStatus(row.ID, reportType, statusToSet, null, endDate, 2);
@@ -1149,7 +1149,7 @@ async function finalizeCronRunningStatus(cronDetailID, user = null) {
             
             await SqpCronDetails.update({ 
                 cronRunningStatus: newStatus, 
-                dtUpdatedOn: new Date() 
+                dtUpdatedOn:  dates.getNowDateTimeInUserTimezone() 
             }, { 
                 where: { ID: cronDetailID } 
             });

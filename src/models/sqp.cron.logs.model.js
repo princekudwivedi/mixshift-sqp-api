@@ -1,5 +1,7 @@
 const BaseModel = require('./base.model');
 const { env } = require('../config/env.config');
+const dates = require('../utils/dates.utils');
+
 
 class SqpCronLogsModel extends BaseModel {
     constructor() {
@@ -7,7 +9,7 @@ class SqpCronLogsModel extends BaseModel {
     }
 
     async log(info) {
-        return this.create({ ...info, CreatedAt: new Date() });
+        return this.create({ ...info, CreatedAt: dates.getNowDateTimeInUserTimezone() });
     }
 
     async findByCronId(cronId, options = {}) {

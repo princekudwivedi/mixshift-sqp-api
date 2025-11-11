@@ -1,41 +1,41 @@
-/**
- * Utility functions for calculating historical date ranges
- * (Week, Month, Quarter) — all timezone-aware and ISO date formatted.
- */
-
-const { subDays } = require('date-fns');
-const { DateTime } = require('luxon');
+const { format, addDays, subDays, startOfWeek, startOfMonth, startOfQuarter, lastDayOfMonth, lastDayOfQuarter } = require('date-fns');
 const logger = require('../utils/logger.utils'); // adjust path if needed
+const { getCurrentTimezone } = require('../db/tenant.db');
 
 // Default timezone (e.g., 'America/Denver')
-const DEFAULT_TZ = process.env.TZ || 'America/Denver';
+const DEFAULT_TZ = process.env.TZ;
 
-/**
- * Format a Luxon DateTime or JS Date to 'YYYY-MM-DD'
- */
 function fmt(date) {
-    if (!date) return null;
-    if (DateTime.isDateTime(date)) {
-        return date.toISODate();
-    }
-    return DateTime.fromJSDate(date).toISODate();
+    return format(date, 'yyyy-MM-dd');
 }
 
+function fmtDate(date) {
+    return format(date, 'yyyy-MM-dd HH:mm:ss');
+}
 /**
  * Get current DateTime object in user's timezone
  * @param {string|null} timezone
  */
-function getNowDateTimeInUserTimezone(timezone) {
-    const tz = timezone ?? DEFAULT_TZ;
-    return DateTime.now().setZone(tz);
+function getNowDateTimeInUserTimezone(date = new Date(), timezone = null) {
+    const zone = timezone ?? getCurrentTimezone();
+    const formatted = formatTimestamp(date, zone);
+    return fmtDate(formatted);
+}
+function getNowDateTimeInUserTimezoneAgo(date = new Date(), { hours = 0, days = 0 } = {}, timezone = null) {
+    const zone = timezone ?? getCurrentTimezone();
+    const formatted = formatTimestamp(date, zone);
+    const dt = new Date(formatted);
+
+    // Subtract days and hours
+    const adjusted = new Date(dt.getTime() - (days * 24 * 60 * 60 * 1000) - (hours * 60 * 60 * 1000));
+    return fmtDate(adjusted); // returns formatted string "YYYY-MM-DD HH:mm:ss"
 }
 
 /**
  * Return JS Date for the current time in user's timezone
- * (optional, rarely needed)
  */
-function getNowRangeForPeriodInUserTimezone(timezone) {
-    return getNowDateTimeInUserTimezone(timezone).toJSDate();
+function getNowRangeForPeriodInUserTimezone(timezone = null) {
+    return getNowDateTimeInUserTimezone(new Date(), timezone);
 }
 
 /**
@@ -43,14 +43,14 @@ function getNowRangeForPeriodInUserTimezone(timezone) {
  */
 function calculateWeekRanges(numberOfWeeks = 52, skipLatest = true, timezone) {
     const ranges = [];
-    const today = getNowDateTimeInUserTimezone(timezone);
-    const currentSunday = today.startOf('week'); // Sunday
+    const today = getNowDateTimeInUserTimezone(new Date(), timezone);
+    const currentSunday = startOfWeek(today, { weekStartsOn: 0 }); // Sunday
 
     const startWeek = skipLatest ? -2 : 0;
 
     for (let i = startWeek; i >= startWeek - (numberOfWeeks - 1); i--) {
-        const weekStart = currentSunday.plus({ weeks: i });
-        const weekEnd = weekStart.plus({ days: 6 });
+        const weekStart = addDays(currentSunday, i * 7);
+        const weekEnd = addDays(weekStart, 6);
 
         ranges.push({
             startDate: fmt(weekStart),
@@ -68,12 +68,13 @@ function calculateWeekRanges(numberOfWeeks = 52, skipLatest = true, timezone) {
  */
 function calculateMonthRanges(numberOfMonths = 12, skipCurrent = true, timezone) {
     const ranges = [];
-    const today = getNowDateTimeInUserTimezone(timezone);
+    const today = getNowDateTimeInUserTimezone(new Date(), timezone);
     const startMonthIndex = skipCurrent ? -2 : 0;
 
     for (let i = startMonthIndex; i >= startMonthIndex - (numberOfMonths - 1); i--) {
-        const monthStart = today.plus({ months: i }).startOf('month');
-        const monthEnd = monthStart.endOf('month');
+        const d = new Date(today.getFullYear(), today.getMonth() + i, 1);
+        const monthStart = startOfMonth(d);
+        const monthEnd = lastDayOfMonth(d, { weekStartsOn: 0 });
 
         ranges.push({
             startDate: fmt(monthStart),
@@ -91,20 +92,28 @@ function calculateMonthRanges(numberOfMonths = 12, skipCurrent = true, timezone)
  */
 function calculateQuarterRanges(numberOfQuarters = 4, skipCurrent = true, timezone) {
     const ranges = [];
-    const today = getNowDateTimeInUserTimezone(timezone);
+    const today = getNowDateTimeInUserTimezone(new Date(), timezone);
+    const currentQuarter = Math.floor(today.getMonth() / 3); // 0 = Q1
+
     const startQuarterIndex = skipCurrent ? -2 : 0;
 
     for (let i = startQuarterIndex; i >= startQuarterIndex - (numberOfQuarters - 1); i--) {
-        const qStart = today.plus({ months: i * 3 }).startOf('quarter');
-        const qEnd = qStart.endOf('quarter');
+        const qIndex = currentQuarter + i;
+        const yearOffset = Math.floor(qIndex / 4);
+        const quarter = ((qIndex % 4 + 4) % 4) + 1;
+        const year = today.getFullYear() + yearOffset;
+        const quarterStartMonth = quarter * 3 - 3;
+
+        const qStart = new Date(year, quarterStartMonth, 1);
+        const qEnd = new Date(year, quarterStartMonth + 3, 0); // last day of quarter
 
         ranges.push({
             startDate: fmt(qStart),
             endDate: fmt(qEnd),
             range: `${fmt(qStart)} to ${fmt(qEnd)}`,
             type: 'QUARTER',
-            quarter: qStart.quarter,
-            year: qStart.year
+            quarter,
+            year
         });
     }
 
@@ -112,7 +121,7 @@ function calculateQuarterRanges(numberOfQuarters = 4, skipCurrent = true, timezo
 }
 
 /**
- * Calculate combined full ranges for week, month, quarter
+ * Combined full ranges
  */
 function calculateFullRanges(timezone) {
     const weeksToPull = parseInt(process.env.WEEKS_TO_PULL || 52);
@@ -125,22 +134,10 @@ function calculateFullRanges(timezone) {
     const monthRanges = calculateMonthRanges(monthsToPull, true, timezone);
     const quarterRanges = calculateQuarterRanges(quartersToPull, true, timezone);
 
-    const fullWeekRange = weekRanges.length
-        ? `${weekRanges[weekRanges.length - 1].startDate} to ${weekRanges[0].endDate}`
-        : null;
-
-    const fullMonthRange = monthRanges.length
-        ? `${monthRanges[monthRanges.length - 1].startDate} to ${monthRanges[0].endDate}`
-        : null;
-
-    const fullQuarterRange = quarterRanges.length
-        ? `${quarterRanges[quarterRanges.length - 1].startDate} to ${quarterRanges[0].endDate}`
-        : null;
-
     return {
-        fullWeekRange,
-        fullMonthRange,
-        fullQuarterRange,
+        fullWeekRange: weekRanges.length ? `${weekRanges[weekRanges.length - 1].startDate} to ${weekRanges[0].endDate}` : null,
+        fullMonthRange: monthRanges.length ? `${monthRanges[monthRanges.length - 1].startDate} to ${monthRanges[0].endDate}` : null,
+        fullQuarterRange: quarterRanges.length ? `${quarterRanges[quarterRanges.length - 1].startDate} to ${quarterRanges[0].endDate}` : null,
         weekRanges,
         monthRanges,
         quarterRanges
@@ -148,31 +145,50 @@ function calculateFullRanges(timezone) {
 }
 
 /**
- * Return start/end for the latest completed WEEK, MONTH, or QUARTER
+ * Format timestamp using Intl.DateTimeFormat with timezone
  */
-function getDateRangeForPeriod(period, timezone) {
-    const now = getNowDateTimeInUserTimezone(timezone);
+function formatTimestamp(timestamp, timeZone = DEFAULT_TZ, options = {}) {
+    if (!timestamp) return null;
+    const date = timestamp instanceof Date ? timestamp : new Date(timestamp);
+    if (Number.isNaN(date.getTime())) return null;
+
+    const fmtOptions = {
+        timeZone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: true,
+        ...options.formatOptions
+    };
+    const formatted = new Intl.DateTimeFormat('en-US', fmtOptions).format(date);
+    return formatted;
+}
+
+function getDateRangeForPeriod(period, timezone = null) {
+    const zone = timezone ?? getCurrentTimezone();
+    const now = getNowDateTimeInUserTimezone(new Date(), zone);
     switch (period) {
         case 'WEEK': {
-            // Last completed week Sunday-Saturday
-            const lastSaturday = now.startOf('week').minus({ days: 1 }); // last Saturday
-            const lastSunday = lastSaturday.minus({ days: 6 });          // previous Sunday
-            return { start: fmt(lastSunday), end: fmt(lastSaturday) };
+            const currentWeekStart = startOfWeek(now, { weekStartsOn: 0 });
+            const lastWeekEnd = subDays(currentWeekStart, 1);
+            const lastWeekStart = subDays(currentWeekStart, 7);
+            return { start: fmt(lastWeekStart), end: fmt(lastWeekEnd) };
         }
 
         case 'MONTH': {
-            // Last completed month
-            const firstDayOfCurrentMonth = now.startOf('month');
-            const lastMonthEnd = firstDayOfCurrentMonth.minus({ days: 1 });
-            const lastMonthStart = lastMonthEnd.startOf('month');
+            const firstDayOfCurrentMonth = startOfMonth(now);
+            const lastMonthEnd = subDays(firstDayOfCurrentMonth, 1);
+            const lastMonthStart = startOfMonth(lastMonthEnd);
             return { start: fmt(lastMonthStart), end: fmt(lastMonthEnd) };
         }
 
         case 'QUARTER': {
-            // Last completed quarter
-            const currentQuarterStart = now.startOf('quarter');
-            const lastQuarterEnd = currentQuarterStart.minus({ days: 1 });
-            const lastQuarterStart = lastQuarterEnd.startOf('quarter');
+            const currentQuarterStart = startOfQuarter(now);
+            const lastQuarterEnd = subDays(currentQuarterStart, 1);
+            const lastQuarterStart = startOfQuarter(lastQuarterEnd);
             return { start: fmt(lastQuarterStart), end: fmt(lastQuarterEnd) };
         }
 
@@ -181,21 +197,14 @@ function getDateRangeForPeriod(period, timezone) {
     }
 }
 
-
-/**
- * Format a Date or Luxon DateTime to YYYY-MM-DD
- */
-function formatDate(date) {
-    return fmt(date);
-}
-
 module.exports = {
     calculateWeekRanges,
     calculateMonthRanges,
     calculateQuarterRanges,
     calculateFullRanges,
-    getDateRangeForPeriod,
     getNowDateTimeInUserTimezone,
     getNowRangeForPeriodInUserTimezone,
-    formatDate
+    formatTimestamp,
+    getDateRangeForPeriod,
+    getNowDateTimeInUserTimezoneAgo
 };

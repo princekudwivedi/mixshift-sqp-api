@@ -17,6 +17,7 @@ const { isUserAllowed, isValidSellerID, sanitizeLogData } = require('../utils/se
 const env = require('../config/env.config');
 const isDevEnv = ["local", "development","production"].includes(env.NODE_ENV);
 const authService = require('../services/auth.service');
+const dates = require('../utils/dates.utils');
 
 class CronApiService {
     constructor() {
@@ -297,7 +298,7 @@ class CronApiService {
         const SqpCronDetails = getSqpCronDetails();
         
         // Calculate time (1 hour ago)
-        const cutoffTime = new Date();
+        const cutoffTime = dates.getNowDateTimeInUserTimezone();
         cutoffTime.setHours(cutoffTime.getHours() - 1);
         
         logger.info({ cutoffTime: cutoffTime.toISOString() }, 'Scanning for records stuck since cutoff time');
@@ -471,7 +472,7 @@ class CronApiService {
             }, 'Fatal error detected during retry - marking as permanent failure');
             
             // Update with cronRunningStatus = 2 (completed with fatal error)
-            await model.updateSQPReportStatus(record.ID, reportType, 3, null, new Date(), 2);
+            await model.updateSQPReportStatus(record.ID, reportType, 3, null, dates.getNowDateTimeInUserTimezone(), 2);
             
             await model.logCronActivity({
                 cronJobID: record.ID,

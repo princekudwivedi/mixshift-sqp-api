@@ -15,6 +15,7 @@
 const fs = require('fs');
 const path = require('path');
 const logger = require('./logger.utils');
+const dates = require('./dates.utils');
 class APILogger {
     constructor() {
         this.baseLogPath = path.join(process.cwd(), 'logs', 'api_logs');
@@ -49,7 +50,8 @@ class APILogger {
             return null;
         }
 
-        const date = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+        const dateObj = dates.getNowDateTimeInUserTimezone(new Date(), null);
+        const date = dateObj.slice(0, 10).replace(/\//g, '-'); // extract YYYY-MM-DD
         const userFolder = `user__${userId}`;
         const dateFolder = date;
         const sellerAccountFolder = sellerAccountId.toString();
@@ -68,7 +70,7 @@ class APILogger {
      * Format log entry with timestamp
      */
     formatLogEntry(data) {
-        const timestamp = new Date().toISOString();
+        const timestamp = dates.getNowDateTimeInUserTimezone().toISOString();
         const separator = '='.repeat(80);
         
         let logEntry = `\n${separator}\n`;
@@ -391,9 +393,7 @@ class APILogger {
      * @param {number} daysToKeep - Number of days to keep (default: 15)
      */
     cleanOldLogs(daysToKeep = 15) {
-        const cutoffDate = new Date();
-        cutoffDate.setDate(cutoffDate.getDate() - daysToKeep);
-
+        const cutoffDate = dates.getNowDateTimeInUserTimezoneAgo(new Date(), { days: 15 });
         logger.info(`\n🧹 Cleaning logs older than ${daysToKeep} days (before ${cutoffDate.toISOString().split('T')[0]})...`);
 
         // Helper function to parse date from folder name (DD-MM-YYYY or YYYY-MM-DD)

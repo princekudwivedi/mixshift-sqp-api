@@ -9,6 +9,7 @@ const { getModel: getMwsItems } = require('../models/sequelize/mwsItems.model');
 const sellerModel = require('../models/sequelize/seller.model');
 const logger = require('../utils/logger.utils');
 const env = require('../config/env.config');
+const dates = require('../utils/dates.utils');
 
 class AsinPullService {
 
@@ -137,7 +138,7 @@ class AsinPullService {
                     ItemName: item.ItemName || '',
                     SKU: item.SKU || '',
                     IsActive: isActive || 0,
-                    dtCreatedOn: new Date()
+                    dtCreatedOn: dates.getNowDateTimeInUserTimezone()
                 }));
 
             let insertedCount = 0;

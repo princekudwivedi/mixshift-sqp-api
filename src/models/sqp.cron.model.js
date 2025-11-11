@@ -4,6 +4,7 @@ const { getModel: getSellerAsinList } = require('./sequelize/sellerAsinList.mode
 const { Op, literal } = require('sequelize');
 const logger = require('../utils/logger.utils');
 const env = require('../config/env.config');
+const dates = require('../utils/dates.utils');
 
 function splitASINsIntoChunks(asins, maxChars = 200) {
     // Split ASINs into space-separated chunks where each concatenated string <= maxChars
@@ -53,8 +54,8 @@ async function getReportsForStatusType(row, retry = false) {
 async function getActiveASINsBySeller(sellerId = null, limit = true, reportType = null) {
     const SellerAsinList = getSellerAsinList();
     const sellerFilter = sellerId ? { SellerID: sellerId } : {};
-    const currentDay = new Date();
-    const retryCutoffTime = new Date();
+    const currentDay = dates.getNowDateTimeInUserTimezone();
+    const retryCutoffTime = dates.getNowDateTimeInUserTimezone();
     retryCutoffTime.setDate(currentDay.getDate() - env.MAX_DAYS_AGO);
 
     // Determine report-specific fields
@@ -362,14 +363,14 @@ async function ASINsBySellerUpdated(SellerID, amazonSellerID, asinList, status, 
         
         const data = { 
             [`${prefix}LastSQPDataPullStatus`]: status,
-            dtUpdatedOn: new Date() 
+            dtUpdatedOn: dates.getNowDateTimeInUserTimezone() 
         };
         
         if (startTime) {
-            data[`${prefix}LastSQPDataPullStartTime`] = new Date(startTime);
+            data[`${prefix}LastSQPDataPullStartTime`] = startTime;
         }
         if (endTime) {
-            data[`${prefix}LastSQPDataPullEndTime`] = new Date(endTime);
+            data[`${prefix}LastSQPDataPullEndTime`] = endTime;
         }
         let where = {
             AmazonSellerID: amazonSellerID, 
@@ -450,9 +451,9 @@ async function createSQPCronDetail(amazonSellerID, asinString, sellerID, options
         AmazonSellerID: amazonSellerID, 
         SellerID: sellerID,
         ASIN_List: asinString,         
-        dtCreatedOn: new Date(), 
-        dtCronStartDate: new Date(), 
-        dtUpdatedOn: new Date() 
+        dtCreatedOn: dates.getNowDateTimeInUserTimezone(), 
+        dtCronStartDate: dates.getNowDateTimeInUserTimezone(), 
+        dtUpdatedOn: dates.getNowDateTimeInUserTimezone() 
     };
     
     // Add optional fields for initial pull
@@ -482,10 +483,10 @@ async function createSQPCronDetail(amazonSellerID, asinString, sellerID, options
 async function updateSQPReportStatus(cronDetailID, reportType, status, startDate = undefined, endDate = undefined, cronRunningStatus = null, cronStartDate = false) {
     const prefix = mapPrefix(reportType);
     const data = {
-        dtUpdatedOn: new Date()
+        dtUpdatedOn: dates.getNowDateTimeInUserTimezone()
     };
     if(cronStartDate){
-        data.dtCronStartDate = new Date();
+        data.dtCronStartDate = dates.getNowDateTimeInUserTimezone();
     }
     if(status){
         data[`${prefix}SQPDataPullStatus`] =  status;
@@ -493,10 +494,10 @@ async function updateSQPReportStatus(cronDetailID, reportType, status, startDate
         data[`${prefix}SQPDataPullStatus`] =  status;
     }
     if (startDate) {
-        data[`${prefix}SQPDataPullStartDate`] = new Date(startDate);
+        data[`${prefix}SQPDataPullStartDate`] = startDate;
     }
     if (endDate) {
-        data[`${prefix}SQPDataPullEndDate`] = new Date(endDate);
+        data[`${prefix}SQPDataPullEndDate`] = endDate;
     }
     if(cronRunningStatus != null){
         data.cronRunningStatus = Number(cronRunningStatus);
@@ -528,7 +529,7 @@ async function logCronActivity({ cronJobID, reportType, action, status, message,
         ReportID: reportID,
         RetryCount: retryCount,
         ExecutionTime: executionTime != null ? Number(executionTime) : undefined,
-        dtUpdatedOn: new Date()
+        dtUpdatedOn: dates.getNowDateTimeInUserTimezone()
     };      
     
     if (reportDocumentID != null) {
@@ -550,7 +551,7 @@ async function logCronActivity({ cronJobID, reportType, action, status, message,
         await SqpCronLogs.create({
             ...where,
             ...payload,
-            dtCreatedOn: new Date()
+            dtCreatedOn: dates.getNowDateTimeInUserTimezone()
         });
     }
 }
@@ -581,7 +582,7 @@ async function setProcessRunningStatus(cronDetailID, reportType, status) {
     try {
         const prefix = mapPrefix(reportType);
         const SqpCronDetails = getSqpCronDetails();
-        await SqpCronDetails.update({ [`${prefix}ProcessRunningStatus`]: Number(status), dtUpdatedOn: new Date() }, { where: { ID: cronDetailID } });
+        await SqpCronDetails.update({ [`${prefix}ProcessRunningStatus`]: Number(status), dtUpdatedOn: dates.getNowDateTimeInUserTimezone() }, { where: { ID: cronDetailID } });
     } catch (error) {
         logger.error({ error: error.message, cronDetailID, reportType }, 'Failed to update ProcessRunningStatus');
     }
@@ -605,9 +606,14 @@ async function checkCronDetailsOfSellersByDate(
     iInitialPull = 0
 ) {
     const SqpCronDetails = getSqpCronDetails();
-    let HoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
-    if(iInitialPull === 1){
-        HoursAgo = new Date(Date.now() - 10 * 60 * 60 * 1000);
+    // Get current date/time in user's timezone
+    let HoursAgo = null;
+    if (iInitialPull === 1) {
+        // Reset to now and subtract 6 hours
+        HoursAgo = dates.getNowDateTimeInUserTimezoneAgo(new Date(), { hours: 6 });  
+    } else {
+        // Subtract 1 hours
+        HoursAgo = dates.getNowDateTimeInUserTimezoneAgo(new Date(), { hours: 1 });
     }
 
     // Build date filter
@@ -624,7 +630,7 @@ async function checkCronDetailsOfSellersByDate(
             ]
         };
     } else {
-        const today = new Date();
+        const today = dates.getNowDateTimeInUserTimezone();
         const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0);
         const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59);
         dateFilter = {
@@ -643,9 +649,9 @@ async function checkCronDetailsOfSellersByDate(
         where[Op.and] = [
             {
                 [Op.or]: [
-                    { WeeklyProcessRunningStatus: { [Op.in]: [1, 2, 3] } },
-                    { MonthlyProcessRunningStatus: { [Op.in]: [1, 2, 3] } },
-                    { QuarterlyProcessRunningStatus: { [Op.in]: [1, 2, 3] } },
+                    { WeeklyProcessRunningStatus: { [Op.in]: [1, 2, 3, 4] } },
+                    { MonthlyProcessRunningStatus: { [Op.in]: [1, 2, 3, 4] } },
+                    { QuarterlyProcessRunningStatus: { [Op.in]: [1, 2, 3, 4] } },
                 ]
             },
             {
@@ -719,10 +725,10 @@ async function incrementRetryCount(cronJobID, reportType, reportId) {
     const existing = await SqpCronLogs.findOne({ where });
     if (existing) {
         const next = (typeof existing.RetryCount === 'number' ? existing.RetryCount : 0) + 1;
-        await existing.update({ RetryCount: next, dtUpdatedOn: new Date() });
+        await existing.update({ RetryCount: next, dtUpdatedOn: dates.getNowDateTimeInUserTimezone() });
         return next;
     } else {
-        await SqpCronLogs.create({ ...where, RetryCount: 1, Action: 'Retry', Status: 3, Message: 'Increment retry', dtCreatedOn: new Date(), dtUpdatedOn: new Date() });
+        await SqpCronLogs.create({ ...where, RetryCount: 1, Action: 'Retry', Status: 3, Message: 'Increment retry', dtCreatedOn: dates.getNowDateTimeInUserTimezone(), dtUpdatedOn: dates.getNowDateTimeInUserTimezone() });
         return 1;
     }
 }
