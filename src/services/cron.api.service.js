@@ -11,6 +11,7 @@ const ctrl = require('../controllers/sqp.cron.controller');
 const model = require('../models/sqp.cron.model');
 const { getModel: getSqpCronDetails } = require('../models/sequelize/sqpCronDetails.model');
 const { getModel: getSqpCronLogs } = require('../models/sequelize/sqpCronLogs.model');
+const asinInitialPull = require('../models/sellerAsinList.initial.pull.model');
 const { Op, literal } = require('sequelize');
 const logger = require('../utils/logger.utils');
 const { isUserAllowed, isValidSellerID, sanitizeLogData } = require('../utils/security.utils');
@@ -350,7 +351,7 @@ class CronApiService {
                 ]
             },
             attributes: [
-                'ID', 'AmazonSellerID', 'dtCronStartDate', 'dtCreatedOn', 'dtUpdatedOn',
+                'ID', 'AmazonSellerID', 'dtCronStartDate', 'dtCreatedOn', 'dtUpdatedOn','SellerID', 'ASIN_List',
                 'WeeklyProcessRunningStatus', 'WeeklySQPDataPullStatus', 'WeeklySQPDataPullEndDate', 'WeeklySQPDataPullStartDate',
                 'MonthlyProcessRunningStatus', 'MonthlySQPDataPullStatus', 'MonthlySQPDataPullEndDate', 'MonthlySQPDataPullStartDate',
                 'QuarterlyProcessRunningStatus', 'QuarterlySQPDataPullStatus', 'QuarterlySQPDataPullEndDate', 'QuarterlySQPDataPullStartDate'
@@ -411,8 +412,18 @@ class CronApiService {
             }, 'High memory usage detected, skipping seller processing');            
             return;
         }
+        const prefix = model.mapPrefix(reportType);
+        const startDate = dates.getNowDateTimeInUserTimezone().db;
+        // Build update data
+        const updateData = {
+            [`${prefix}LastSQPDataPullStatus`]: 1,
+            [`${prefix}LastSQPDataPullStartTime`]: startDate,
+            [`${prefix}LastSQPDataPullEndTime`]: null,
+            dtUpdatedOn: dates.getNowDateTimeInUserTimezone().db
+        };
+        await asinInitialPull.updateInitialPullStatusByASIN(record.AmazonSellerID, record.ASIN_List, record.SellerID, updateData);
 
-        await model.updateSQPReportStatus(record.ID, reportType, 2, null, null, 4, true); // 4 is retry mark running status
+        await model.updateSQPReportStatus(record.ID, reportType, 2, startDate, null, 4, true); // 4 is retry mark running status
         let res = null;
         try {
             res = await ctrl.checkReportStatuses(authOverrides, { cronDetailID: [record.ID], reportType: reportType, cronDetailData: [record], user: user }, true);
@@ -430,7 +441,6 @@ class CronApiService {
                 'dtUpdatedOn'
             ]
         });
-        const prefix = model.mapPrefix(reportType);
         const statusField = `${prefix}SQPDataPullStatus`;
         const processStatusField = `${prefix}ProcessRunningStatus`;
         const current = refreshed ? refreshed[statusField] : null;

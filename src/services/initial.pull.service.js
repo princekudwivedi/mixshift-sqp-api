@@ -12,6 +12,7 @@ const { initDatabaseContext, loadDatabase } = require('../db/tenant.db');
 const { getAllAgencyUserList } = require('../models/sequelize/user.model');
 const { getModel: getSqpCronDetails } = require('../models/sequelize/sqpCronDetails.model');
 const { getModel: getSqpCronLogs } = require('../models/sequelize/sqpCronLogs.model');
+const { getModel: getSellerAsinList } = require('../models/sequelize/sellerAsinList.model');
 const sellerModel = require('../models/sequelize/seller.model');
 const model = require('../models/sqp.cron.model');
 const sp = require('../spapi/client.spapi');
@@ -102,7 +103,14 @@ class InitialPullService {
                         // Retry each failed record
                         for (const rec of failedRecords) {
                             const authOverrides = await authService.buildAuthOverrides(rec.AmazonSellerID);
-                            
+                            // status update
+                            const updateData = {
+                                InitialPullStatus: 1,
+                                InitialPullStartTime: dates.getNowDateTimeInUserTimezone().db,
+                                dtUpdatedOn: dates.getNowDateTimeInUserTimezone().db
+                            };
+                            await asinInitialPull.updateInitialPullStatusByASIN(rec.AmazonSellerID, rec.ASIN_List, rec.SellerID, updateData);
+
                             // Process each failed log entry individually
                             for (const log of rec.failedLogs) {
                                 try {
@@ -114,8 +122,10 @@ class InitialPullService {
                                         action: log.action
                                     }, 'Retrying failed initial pull report');
                                     
+                                    const startDate = dates.getNowDateTimeInUserTimezone().db;
+                                    
                                     // Reset the failed status to pending (0) to allow retry
-                                    await model.updateSQPReportStatus(log.cronJobID, log.reportType, 0, null, null, 4, true);
+                                    await model.updateSQPReportStatus(log.cronJobID, log.reportType, 0, startDate, null, 4, true);
                                     await model.setProcessRunningStatus(log.cronJobID, log.reportType, 1);
                                     
                                     // Log retry attempt
@@ -1739,7 +1749,7 @@ class InitialPullService {
                 ]
             },
             attributes: [
-                'ID', 'AmazonSellerID', 'ASIN_List', 'dtCreatedOn', 'dtUpdatedOn',
+                'ID', 'AmazonSellerID', 'ASIN_List', 'dtCreatedOn', 'dtUpdatedOn', 'SellerID',
                 'cronRunningStatus', 'WeeklyProcessRunningStatus', 'WeeklySQPDataPullStatus', 'WeeklySQPDataPullEndDate', 'WeeklySQPDataPullStartDate',
                 'MonthlyProcessRunningStatus', 'MonthlySQPDataPullStatus', 'MonthlySQPDataPullEndDate', 'MonthlySQPDataPullStartDate',
                 'QuarterlyProcessRunningStatus', 'QuarterlySQPDataPullStatus', 'QuarterlySQPDataPullEndDate', 'QuarterlySQPDataPullStartDate'

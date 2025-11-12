@@ -202,9 +202,26 @@ async function markInitialPullFailed(amazonSellerID, asinList, SellerID, cronDet
     );
 }
 
+async function updateInitialPullStatusByASIN(amazonSellerID, asinList, SellerID, updateData) {
+    const SellerAsinList = getSellerAsinList();
+    // Convert ASIN_List string to array
+    const asinArray = asinList
+    ? asinList.split(',').map(a => a.trim()) // split and trim spaces
+    : [];
+
+    await SellerAsinList.update(updateData, {
+        where: {
+            SellerID: SellerID,
+            AmazonSellerID: amazonSellerID,
+            ASIN: asinArray.length > 0 ? { [Op.in]: asinArray } : null
+        }
+    });
+}
+
 module.exports = {
     updateInitialPullStatus,
     markInitialPullStarted,
     markInitialPullCompleted,
-    markInitialPullFailed
+    markInitialPullFailed,
+    updateInitialPullStatusByASIN
 };
