@@ -107,6 +107,7 @@ class InitialPullService {
                             const updateData = {
                                 InitialPullStatus: 1,
                                 InitialPullStartTime: dates.getNowDateTimeInUserTimezone().db,
+                                InitialPullEndTime: null,
                                 dtUpdatedOn: dates.getNowDateTimeInUserTimezone().db
                             };
                             await asinInitialPull.updateInitialPullStatusByASIN(rec.AmazonSellerID, rec.ASIN_List, rec.SellerID, updateData);
