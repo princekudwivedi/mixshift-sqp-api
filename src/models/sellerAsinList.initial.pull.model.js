@@ -206,9 +206,12 @@ async function updateInitialPullStatusByASIN(amazonSellerID, asinList, SellerID,
     const SellerAsinList = getSellerAsinList();
     // Convert ASIN_List string to array
     const asinArray = asinList
-    ? asinList.split(',').map(a => a.trim()) // split and trim spaces
-    : [];
-
+        ? asinList
+            .split(/[\s,]+/) // split on commas or whitespace
+            .map(a => a.trim())
+            .filter(Boolean)
+        : [];
+        
     await SellerAsinList.update(updateData, {
         where: {
             SellerID: SellerID,
