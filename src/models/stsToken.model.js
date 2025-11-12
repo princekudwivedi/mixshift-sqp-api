@@ -52,24 +52,6 @@ class StsToken {
         }
     }
 
-    /**
-     * Get latest STS token details
-     */
-    async getLatestTokenDetails() {
-        try {
-            const token = await this.findOne({
-                attributes: ['id', 'accessKeyId', 'secretAccessKey', 'SessionToken', 'expire_at'],
-                order: [['id', 'DESC']]
-            });
-
-            logger.debug({ found: !!token }, 'StsToken.getLatestTokenDetails');
-            return token;
-        } catch (error) {
-            logger.warn({ error: error.message }, 'STS token table not found or accessible');
-            return null;
-        }
-    }
-
     // Write operations are not allowed for read-only model
     async create() {
         throw new Error('Write operation not allowed on read-only STS token model');
@@ -95,49 +77,6 @@ class StsToken {
         } catch (error) {
             logger.error({ error: error.message, table: this.tableName, where }, 'Error in StsToken.count');
             throw error;
-        }
-    }
-
-    /**
-     * Get active STS tokens (not expired)
-     */
-    async getActiveTokens() {
-        try {
-            const now = new Date();
-            const SpApiSts = getSpApiSts();
-            const { Op } = require('sequelize');
-            const tokens = await SpApiSts.findAll({ where: { expire_at: { [Op.gt]: now } }, order: [['id','DESC']] });
-            logger.debug({ count: tokens.length }, 'StsToken.getActiveTokens');
-            return tokens;
-        } catch (error) {
-            logger.error({ error: error.message, table: this.tableName }, 'Error in StsToken.getActiveTokens');
-            throw error;
-        }
-    }
-
-    /**
-     * Check if token is expired
-     */
-    async isTokenExpired(tokenId) {
-        try {
-            const token = await this.findOne({
-                where: { id: tokenId },
-                attributes: ['expire_at']
-            });
-
-            if (!token) {
-                return true; // Token not found, consider expired
-            }
-
-            const now = new Date();
-            const expireAt = new Date(token.expire_at);
-            const isExpired = now >= expireAt;
-
-            logger.debug({ tokenId, isExpired, expireAt, now }, 'StsToken.isTokenExpired');
-            return isExpired;
-        } catch (error) {
-            logger.error({ error: error.message, table: this.tableName, tokenId }, 'Error in StsToken.isTokenExpired');
-            return true; // On error, consider expired
         }
     }
 }

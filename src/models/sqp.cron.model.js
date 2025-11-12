@@ -54,8 +54,8 @@ async function getReportsForStatusType(row, retry = false) {
 async function getActiveASINsBySeller(sellerId = null, limit = true, reportType = null) {
     const SellerAsinList = getSellerAsinList();
     const sellerFilter = sellerId ? { SellerID: sellerId } : {};
-    const retryCutoffTime = dates.getNowDateTimeInUserTimezoneAgo( new Date(), { days: env.MAX_DAYS_AGO } );
-
+    let retryCutoffTime = dates.getNowDateTimeInUserTimezoneAgo( new Date(), { days: env.MAX_DAYS_AGO } );
+    retryCutoffTime = literal(`'${retryCutoffTime}'`) ;
     // Determine report-specific fields
     let statusField, endTimeField;
     if (reportType) {
@@ -332,8 +332,8 @@ async function getActiveASINsBySellerInitialPull(sellerId = null, limit = true) 
     const SellerAsinList = getSellerAsinList();
     const sellerFilter = sellerId ? { SellerID: sellerId } : {};
 
-    const retryCutoffTime = dates.getNowDateTimeInUserTimezoneAgo( new Date(), { days: env.MAX_DAYS_AGO } );
-
+    let retryCutoffTime = dates.getNowDateTimeInUserTimezoneAgo( new Date(), { days: env.MAX_DAYS_AGO } );
+    retryCutoffTime = literal(`'${retryCutoffTime}'`) ;
     const where = {
         IsActive: 1,
         ...sellerFilter,
@@ -359,7 +359,6 @@ async function getActiveASINsBySellerInitialPull(sellerId = null, limit = true) 
         ...(limit ? { limit: env.MAX_ASINS_PER_REQUEST } : {}),
         order: [['dtCreatedOn', 'ASC']]
     });
-
     if (asins.length > 0) {
         logger.info({ sellerId, count: asins.length }, `Scenario matched: Initial Pull`);
         return { asins: asins.map(a => a.ASIN) };
@@ -623,8 +622,7 @@ async function checkCronDetailsOfSellersByDate(
         HoursAgo = dates.getNowDateTimeInUserTimezoneAgo(new Date(), { hours: 1 });
     }
 
-    const hoursAgoDate = HoursAgo instanceof Date ? HoursAgo : new Date(String(HoursAgo).replace(' ', 'T'));
-
+    HoursAgo = literal(`'${HoursAgo}'`) ;
     // Build date filter
     let dateFilter = {};
     if (date !== '') {
@@ -643,6 +641,7 @@ async function checkCronDetailsOfSellersByDate(
         const today = todayValue instanceof Date ? todayValue : new Date(String(todayValue).replace(' ', 'T'));
         const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0);
         const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59);
+        
         dateFilter = {
             [Op.or]: [
                 { WeeklySQPDataPullStartDate: { [Op.between]: [startOfDay, endOfDay] } },
@@ -672,7 +671,7 @@ async function checkCronDetailsOfSellersByDate(
                 ]
             },
             {
-                dtUpdatedOn: { [Op.gt]: hoursAgoDate }
+                dtUpdatedOn: { [Op.gt]: HoursAgo }
             }
         ];
     }

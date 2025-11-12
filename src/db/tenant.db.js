@@ -80,6 +80,9 @@ async function loadDatabase(userId = 0) {
             context.sequelize = rootSequelize;
             context.userId = userId;
             context.timezone = userMapping?.[0]?.tz || 'UTC';
+            if (typeof logger.setUserContext === 'function') {
+                logger.setUserContext(userId, context.timezone);
+            }
             return context.sequelize;
         }
         
@@ -98,6 +101,9 @@ async function loadDatabase(userId = 0) {
         });
         context.userId = userId;
         context.timezone = userMapping[0].tz || 'UTC';
+        if (typeof logger.setUserContext === 'function') {
+            logger.setUserContext(userId, context.timezone);
+        }
         
         logger.info({ 
             userId, 
@@ -116,6 +122,9 @@ async function loadDatabase(userId = 0) {
         context.dbName = env.DB_NAME;
         context.sequelize = rootSequelize;
         context.timezone = 'UTC';
+        if (typeof logger.setUserContext === 'function') {
+            logger.setUserContext(userId, context.timezone);
+        }
         return context.sequelize;
     }
 }

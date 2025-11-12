@@ -1703,7 +1703,7 @@ class InitialPullService {
                             { WeeklySQPDataPullStatus: { [Op.in]: [0, 2] } },
                             {
                                 [Op.or]: [
-                                    { dtUpdatedOn: { [Op.lte]: cutoffTime } },
+                                    { dtUpdatedOn: { [Op.lte]: literal(`'${cutoffTime}'`) } },
                                     literal('dtUpdatedOn < dtCronStartDate')
                                 ]
                             }
@@ -1717,7 +1717,7 @@ class InitialPullService {
                             { MonthlySQPDataPullStatus: { [Op.in]: [0,2] } },
                             {
                                 [Op.or]: [
-                                    { dtUpdatedOn: { [Op.lte]: cutoffTime } },
+                                    { dtUpdatedOn: { [Op.lte]: literal(`'${cutoffTime}'`) } },
                                     literal('dtUpdatedOn < dtCronStartDate')
                                 ]
                             }
@@ -1730,7 +1730,7 @@ class InitialPullService {
                             { QuarterlySQPDataPullStatus: { [Op.in]: [0,2] } },
                             {
                                 [Op.or]: [
-                                    { dtUpdatedOn: { [Op.lte]: cutoffTime } },
+                                    { dtUpdatedOn: { [Op.lte]: literal(`'${cutoffTime}'`) } },
                                     literal('dtUpdatedOn < dtCronStartDate')
                                 ]
                             }

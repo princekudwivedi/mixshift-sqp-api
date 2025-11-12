@@ -2,16 +2,49 @@ const pino = require('pino');
 const fs = require('fs');
 const path = require('path');
 const { LOG_LEVEL } = require('../config/env.config');
-
 const LOG_TO_FILE = process.env.LOG_TO_FILE === 'true';
 const LOG_DIR = process.env.LOG_DIR || path.join(process.cwd(), 'logs');
 
+let currentUserId = null;
+let currentUserTimezone = null;
+
+function resolveTimezone() {
+	if (currentUserTimezone && currentUserTimezone.trim().length > 0) {
+		return currentUserTimezone.trim();
+	}
+	if (process.env.TZ && process.env.TZ.trim().length > 0) {
+		return process.env.TZ.trim();
+	}
+	try {
+		const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+		if (tz && tz.trim().length > 0) {
+			return tz.trim();
+		}
+	} catch (err) {
+		// ignore
+	}
+	return 'UTC';
+}
+
+function formatDateInTimezone(date, timeZone) {
+	const formatter = new Intl.DateTimeFormat('en-CA', {
+		timeZone,
+		year: 'numeric',
+		month: '2-digit',
+		day: '2-digit'
+	});
+	const parts = formatter.formatToParts(date).reduce((acc, part) => {
+		if (part.type === 'year') acc.year = part.value;
+		if (part.type === 'month') acc.month = part.value;
+		if (part.type === 'day') acc.day = part.value;
+		return acc;
+	}, {});
+	return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
 function getDateFolder() {
-	const now = new Date();
-	const day = String(now.getDate()).padStart(2, '0');
-	const month = String(now.getMonth() + 1).padStart(2, '0');
-	const year = now.getFullYear();
-	return `${year}-${month}-${day}`;
+	const timeZone = resolveTimezone();
+	return formatDateInTimezone(new Date(), timeZone);
 }
 
 function ensureDirectory(dirPath) {
@@ -20,10 +53,8 @@ function ensureDirectory(dirPath) {
 	}
 }
 
-let currentUserId = null;
-
-function resolveLogDir() {
-	const dateFolder = getDateFolder();
+function resolveLogDir() {	
+	let dateFolder = getDateFolder();
 	if (currentUserId && Number(currentUserId) !== 0) {
 		return path.join(LOG_DIR, 'api_logs', `user__${currentUserId}`, dateFolder);
 	}
@@ -73,16 +104,19 @@ const logger = pino(
 	pino.multistream(streams)
 );
 
-logger.setUserContext = (userId) => {
+logger.setUserContext = (userId, timezone = null) => {
 	if (userId === null || userId === undefined || Number(userId) === 0 || userId === '') {
 		currentUserId = null;
+		currentUserTimezone = null;
 		return;
 	}
 	currentUserId = userId;
+	currentUserTimezone = timezone;
 };
 
 logger.clearUserContext = () => {
 	currentUserId = null;
+	currentUserTimezone = null;
 };
 
 if (LOG_TO_FILE) {

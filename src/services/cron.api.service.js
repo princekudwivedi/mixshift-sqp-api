@@ -315,7 +315,7 @@ class CronApiService {
                             { WeeklySQPDataPullStatus: { [Op.in]: [0, 2] } },
                             {
                                 [Op.or]: [
-                                    { dtUpdatedOn: { [Op.lte]: cutoffTime } },
+                                    { dtUpdatedOn: { [Op.lte]: literal(`'${cutoffTime}'`) } },
                                     literal('dtUpdatedOn < dtCronStartDate')
                                 ]
                             }
@@ -328,7 +328,7 @@ class CronApiService {
                             { MonthlySQPDataPullStatus: { [Op.in]: [0, 2] } },
                             {
                                 [Op.or]: [
-                                    { dtUpdatedOn: { [Op.lte]: cutoffTime } },
+                                    { dtUpdatedOn: { [Op.lte]: literal(`'${cutoffTime}'`) } },
                                     literal('dtUpdatedOn < dtCronStartDate')
                                 ]
                             }
@@ -341,7 +341,7 @@ class CronApiService {
                             { QuarterlySQPDataPullStatus: { [Op.in]: [0, 2] } },
                             {
                                 [Op.or]: [
-                                    { dtUpdatedOn: { [Op.lte]: cutoffTime } },
+                                    { dtUpdatedOn: { [Op.lte]: literal(`'${cutoffTime}'`) } },
                                     literal('dtUpdatedOn < dtCronStartDate')
                                 ]
                             }

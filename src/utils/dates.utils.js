@@ -1,5 +1,4 @@
 const { format, addDays, subDays, startOfWeek, startOfMonth, startOfQuarter, lastDayOfMonth, lastDayOfQuarter } = require('date-fns');
-const logger = require('../utils/logger.utils'); // adjust path if needed
 const { getCurrentTimezone } = require('../db/tenant.db');
 const { Op, literal } = require('sequelize');
 // Default timezone (e.g., 'America/Denver')
@@ -233,8 +232,6 @@ function calculateFullRanges(timezone) {
     const weeksToPull = parseInt(process.env.WEEKS_TO_PULL || 52);
     const monthsToPull = parseInt(process.env.MONTHS_TO_PULL || 12);
     const quartersToPull = parseInt(process.env.QUARTERS_TO_PULL || 4);
-
-    logger.info({ weeksToPull, monthsToPull, quartersToPull }, 'Initial pull configuration');
 
     const weekRanges = calculateWeekRanges(weeksToPull, true, timezone);
     const monthRanges = calculateMonthRanges(monthsToPull, true, timezone);

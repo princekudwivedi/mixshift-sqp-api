@@ -121,7 +121,7 @@ class CleanupService {
             const cutoffDate = dates.getNowDateTimeInUserTimezoneAgo(new Date(), { days: daysToKeep });
             const deletedCount = await SqpCronDetails.destroy({
                 where: {
-                    dtCreatedOn: { [Op.lt]: cutoffDate }
+                    dtCreatedOn: { [Op.lt]: literal(`'${cutoffDate}'`) }
                 }
             });
 
@@ -158,7 +158,7 @@ class CleanupService {
             // Uncomment to actually delete:
             const deletedCount = await SqpCronLogs.destroy({
                 where: {
-                    dtCreatedOn: { [Op.lt]: cutoffDate }
+                    dtCreatedOn: { [Op.lt]: literal(`'${cutoffDate}'`) }
                 }
             });
 
@@ -195,7 +195,7 @@ class CleanupService {
             // Uncomment to actually delete:
             const deletedCount = await SqpDownloadUrls.destroy({
                 where: {
-                    dtCreatedOn: { [Op.lt]: cutoffDate }
+                    dtCreatedOn: { [Op.lt]: literal(`'${cutoffDate}'`) }
                 }
             });
 
