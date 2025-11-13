@@ -1,8 +1,6 @@
 const AuthToken = require('../models/authToken.model');
 const axios = require('axios');
-const config = require('../config/env.config');
 const logger = require('../utils/logger.utils');
-const dates = require('../utils/dates.utils');
 
 // Amazon LWA token endpoint
 const LWA_TOKEN_URL = 'https://api.amazon.com/auth/o2/token';
@@ -80,7 +78,7 @@ function isTokenExpired(tokenRow) {
 async function refreshAccessToken(amazonSellerID, refreshToken) {
     try {
         if (!refreshToken) throw new Error('No refresh token available');
-        if (!config.LWA_CLIENT_ID || !config.LWA_CLIENT_SECRET)
+        if (!process.env.SP_API_DEVELOPER_CLIENT_ID || !process.env.SP_API_DEVELOPER_CLIENT_SECERET)
             throw new Error('LWA credentials not configured');
 
         logger.info({ amazonSellerID }, 'Attempting to refresh access token');
@@ -88,8 +86,8 @@ async function refreshAccessToken(amazonSellerID, refreshToken) {
         const params = new URLSearchParams({
             grant_type: 'refresh_token',
             refresh_token: refreshToken,
-            client_id: config.LWA_CLIENT_ID,
-            client_secret: config.LWA_CLIENT_SECRET,
+            client_id: process.env.SP_API_DEVELOPER_CLIENT_ID,
+            client_secret: process.env.SP_API_DEVELOPER_CLIENT_SECERET,
         });
 
         const response = await axios.post(LWA_TOKEN_URL, params.toString(), {

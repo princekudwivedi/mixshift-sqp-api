@@ -1,9 +1,8 @@
 const { Sequelize } = require('sequelize');
-const { DB_HOST, DB_PORT, DB_USER, DB_PASS, DB_NAME } = require('./env.config');
 
-const sequelize = new Sequelize(DB_NAME, DB_USER, DB_PASS, {
-    host: DB_HOST,
-    port: DB_PORT,
+const sequelize = new Sequelize(process.env.DEFAULT_DB_NAME, process.env.DEFAULT_DB_USERNAME, process.env.DEFAULT_DB_PASSWORD, {
+    host: process.env.DEFAULT_DB_HOSTNAME,
+    port: process.env.DB_PORT_NUMBER,
     dialect: 'mysql',
     logging: false,
     define: {

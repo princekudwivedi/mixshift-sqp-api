@@ -7,6 +7,7 @@ const apiRoutes = require('./routes/api.routes');
 const { AsyncErrorHandler } = require('./middleware/response.handlers');
 const { addConnectionStats, getHealthCheckData } = require('./middleware/connection.monitor');
 const { corsOriginValidator } = require('./utils/security.utils');
+const env = require('./config/env.config');
 
 const app = express();
 
@@ -61,9 +62,10 @@ app.use((req, res) => {
 const PORT = process.env.PORT || 3001;
 function validateEnv() {
     const errors = [];
-    if ((process.env.NODE_ENV || '').toLowerCase() === 'production') {
-        if (!process.env.DB_HOST || !process.env.DB_USER || !process.env.DB_NAME) errors.push('DB_* env missing');
-        //if (!process.env.S3_BUCKET || !process.env.S3_REGION) errors.push('S3_* env missing');
+    if ((env.NODE_ENV || '').toLowerCase() === 'production') {
+       if (!process.env.DEFAULT_DB_HOSTNAME || !process.env.DEFAULT_DB_USERNAME || !process.env.DEFAULT_DB_NAME) errors.push('DB_* env missing');
+       if (!process.env.SP_API_DEVELOPER_CLIENT_ID || !process.env.SP_API_DEVELOPER_CLIENT_SECERET) errors.push('SP_API_DEVELOPER_CLIENT_* env missing');
+       
     }
     if (errors.length) {
         logger.error({ errors }, 'Environment validation failed');
@@ -71,12 +73,20 @@ function validateEnv() {
     }
 }
 
-validateEnv();
+async function startServer() {
+    await env.loadAwsSecrets({ overwrite: false });
+    validateEnv();
 
-app.listen(PORT, () => {
-    logger.info({ 
-        PORT, 
-        environment: process.env.NODE_ENV || 'development',
-        version: process.env.npm_package_version || '1.0.0'
-    }, 'SQP API server running');
+    app.listen(PORT, () => {
+        logger.info({
+            PORT,
+            environment: process.env.NODE_ENV || 'development',
+            version: process.env.npm_package_version || '1.0.0'
+        }, 'SQP API server running');
+    });
+}
+
+startServer().catch(error => {
+    logger.error({ error: error.message }, 'Failed to start server');
+    process.exit(1);
 });
