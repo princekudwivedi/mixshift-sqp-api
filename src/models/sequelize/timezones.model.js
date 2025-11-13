@@ -35,6 +35,6 @@ function getModel() {
     return makeReadOnly(cachedModel);
 }
 
-module.exports = getModel();
+module.exports = { getModel };
 
 

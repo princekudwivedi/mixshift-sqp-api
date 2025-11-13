@@ -1,7 +1,8 @@
-const { DataTypes } = require('sequelize');
+const { DataTypes, Op, literal } = require('sequelize');
 const { getCurrentSequelize, getCurrentUserId } = require('../../db/tenant.db');
 const { TBL_USERS } = require('../../config/env.config');
 const { makeReadOnly } = require('./utils');
+const { getModel: getTimezoneModel } = require('./timezones.model');
 
 const table = TBL_USERS; // 'users'
 
@@ -69,105 +70,82 @@ function getModel() {
     if (!cachedModel) {
         const sequelize = getCurrentSequelize();
         cachedModel = sequelize.define(table, modelDefinition, modelOptions);
+        // Association with timezones
+        const timezoneModel = getTimezoneModel();
+        cachedModel.belongsTo(timezoneModel, {
+            foreignKey: 'iTimezoneID',
+            targetKey: 'ID',
+            as: 'timezone'
+        });
     }
     
     return makeReadOnly(cachedModel);
 }
 
-// Export functions similar to sqp.cron.model.js pattern
+// Get all agency user list
 async function getAllAgencyUserList() {
-    try {
-        const { QueryTypes } = require('sequelize');
-        const sequelize = getCurrentSequelize();
-        
-        // First check if any agency user has active cron priority flag
-        const hasActiveCronPriorityFlag = await checkCronPriorityFlagActiveOrNotForAnyAgencyUser();
-        
-        let query;
-        if (hasActiveCronPriorityFlag) {
-            // Order by priority flag DESC, then by MWS updated date ASC, then by ID ASC
-            query = `
-                SELECT 
-                    user.ID,
-                    user.AgencyName,
-                    user.FirstName,
-                    user.LastName,
-                    user.Email,
-                    user.iTimezoneID,
-                    user.iMwsCronPriorityFlag,
-                    user.dtMwsUpdatedOn,
-                    time.Timezone,
-                    time.GMT_Value
-                FROM ${require('../../config/env.config').TBL_USERS} as user
-                LEFT JOIN ${require('../../config/env.config').TBL_TIMEZONES} as time ON user.iTimezoneID = time.ID
-                WHERE user.iActive = 1 
-                    AND user.iParentID = 0 
-                    AND user.iUserType != 4 
-                    AND user.isDeleted = 0 
-                    AND user.isDemoUser = 0
-                ORDER BY user.iMwsCronPriorityFlag DESC, user.dtMwsUpdatedOn ASC, user.ID ASC
-            `;
-        } else {
-            // Order by timezone GMT value DESC, then by ID ASC
-            query = `
-                SELECT 
-                    user.ID,
-                    user.AgencyName,
-                    user.FirstName,
-                    user.LastName,
-                    user.Email,
-                    user.iTimezoneID,
-                    user.iMwsCronPriorityFlag,
-                    user.dtMwsUpdatedOn,
-                    time.Timezone,
-                    time.GMT_Value
-                FROM ${require('../../config/env.config').TBL_USERS} as user
-                LEFT JOIN ${require('../../config/env.config').TBL_TIMEZONES} as time ON user.iTimezoneID = time.ID
-                WHERE user.iActive = 1 
-                    AND user.iParentID = 0 
-                    AND user.iUserType != 4 
-                    AND user.isDeleted = 0 
-                    AND user.isDemoUser = 0
-                ORDER BY time.GMT_Value DESC, user.ID ASC
-            `;
+    const hasPriorityUsers = await checkCronPriorityFlagActiveOrNotForAnyAgencyUser();
+    const userModel = getModel();
+    const timezoneModel = getTimezoneModel();
+  
+    const order = hasPriorityUsers
+      ? [
+          ['iMwsCronPriorityFlag', 'DESC'],
+          ['dtMwsUpdatedOn', 'ASC'],
+          ['ID', 'ASC']
+        ]
+      : [
+          [timezoneModel, 'GMT_Value', 'DESC'],
+          ['ID', 'ASC']
+        ];
+  
+    const users = await userModel.findAll({
+      attributes: [
+        'ID',
+        'AgencyName',
+        'FirstName',
+        'LastName',
+        'Email',
+        'iTimezoneID',
+        'iMwsCronPriorityFlag',
+        'dtMwsUpdatedOn',
+        [literal('timezone.Timezone'), 'Timezone'],
+        [literal('timezone.GMT_Value'), 'GMT_Value']
+      ],
+      where: {
+        iActive: 1,
+        iParentID: 0,
+        iUserType: { [Op.ne]: 4 },
+        isDeleted: 0,
+        isDemoUser: 0
+      },
+      include: [
+        {
+          model: timezoneModel,
+          as: 'timezone',
+          attributes: ['Timezone', 'GMT_Value'],
+          required: false
         }
-        
-        const users = await sequelize.query(query, {
-            type: QueryTypes.SELECT
-        });
-        
-        return users;
-    } catch (error) {
-        console.error('Error getting agency user list:', error);
-        throw error;
-    }
+      ],
+      order
+    });
+  
+    return users;
 }
-
+  
 async function checkCronPriorityFlagActiveOrNotForAnyAgencyUser() {
-    try {
-        const { QueryTypes } = require('sequelize');
-        const sequelize = getCurrentSequelize();
-        
-        const query = `
-            SELECT user.ID
-            FROM ${require('../../config/env.config').TBL_USERS} as user
-            WHERE user.iMwsCronPriorityFlag = 1
-                AND user.iParentID = 0
-                AND user.iUserType != 4
-                AND user.iActive = 1
-                AND user.isDeleted = 0
-            LIMIT 1
-        `;
-        
-        const result = await sequelize.query(query, {
-            type: QueryTypes.SELECT
-        });
-        
-        return result.length > 0;
-    } catch (error) {
-        console.error('Error checking cron priority flag:', error);
-        throw error;
-    }
+    const userModel = getModel();
+    const priorityUser = await userModel.findOne({
+        attributes: ['ID'],
+        where: {
+            iMwsCronPriorityFlag: 1,
+            iParentID: 0,
+            iUserType: { [Op.ne]: 4 },
+            iActive: 1,
+            isDeleted: 0
+        }
+    });
+    return Boolean(priorityUser);
 }
 
 module.exports = makeReadOnly({
