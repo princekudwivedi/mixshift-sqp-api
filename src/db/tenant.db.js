@@ -64,10 +64,10 @@ async function loadDatabase(userId = 0) {
             SELECT 
                 db.DB_Name AS dbName,
                 tz.Timezone AS tz
-            FROM urs AS user
-            LEFT JOIN user_database_mapping AS map ON map.UserID = user.ID
-            LEFT JOIN user_databases AS db ON map.MappedDB_ID = db.DB_ID
-            LEFT JOIN timezones AS tz ON tz.ID = user.iTimezoneID
+            FROM ${env.TBL_USERS} AS user
+            LEFT JOIN ${env.TBL_USER_DB_MAP} AS map ON map.UserID = user.ID
+            LEFT JOIN ${env.TBL_USER_DATABASES} AS db ON map.MappedDB_ID = db.DB_ID
+            LEFT JOIN ${env.TBL_TIMEZONES} AS tz ON tz.ID = user.iTimezoneID
             WHERE 
                 user.isDeleted = ?  
                 AND db.DB_AppType = ?  
