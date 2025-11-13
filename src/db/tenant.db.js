@@ -88,7 +88,6 @@ async function loadDatabase(userId = 0) {
         
         // Switch to the user's tenant database
         logger.info({ 
-            tenantDb: userMapping[0].dbName, 
             userId, 
             contextId: getContextId() 
         }, 'Switching to tenant database');
@@ -141,7 +140,7 @@ function getCurrentDbName() {
 function getCurrentSequelize() {
     const context = asyncLocalStorage.getStore();
     if (!context || !context.sequelize) {
-        logger.warn({ contextId: getContextId() }, 'No sequelize in context - returning root');
+        //logger.warn({ contextId: getContextId() }, 'No sequelize in context - returning root');
         return getRootSequelize();
     }
     return context.sequelize;
