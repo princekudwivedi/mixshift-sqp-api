@@ -1,6 +1,7 @@
 const { format, addDays, subDays, startOfWeek, startOfMonth, startOfQuarter, lastDayOfMonth, lastDayOfQuarter } = require('date-fns');
 const { getCurrentTimezone } = require('../db/tenant.db');
 const { Op, literal } = require('sequelize');
+
 // Default timezone (e.g., 'America/Denver')
 const DEFAULT_TZ = process.env.TZ;
 
@@ -10,6 +11,54 @@ function fmt(date) {
 
 function fmtDate(date) {
     return format(date, 'yyyy-MM-dd HH:mm:ss');
+}
+
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+function evaluateReportDelay(reportType, now) {
+    
+	if (!(now instanceof Date) || Number.isNaN(now.getTime())) {
+		return { delay: false };
+	}
+	const dayOfWeek = now.getDay(); // 0 (Sunday) - 6 (Saturday)
+	const dayOfMonth = now.getDate(); // 1 - 31
+	const month = now.getMonth() + 1; // 1 (Jan) - 12 (Dec)
+    const weeklyDelay = Number(process.env.WEEKLY_REPORT_DELAY || 2);
+    const monthlyDelay = Number(process.env.MONTHLY_REPORT_DELAY || 3);
+    const quarterlyDelay = Number(process.env.QUARTERLY_REPORT_DELAY || 20);
+    const todatDate = fmt(now);
+	switch (reportType) {
+		case 'WEEK': {
+			if (dayOfWeek < weeklyDelay) {
+				return {
+					delay: true,
+					reason: `Weekly reports unlock on ${DAY_NAMES[weeklyDelay]}; today is ${DAY_NAMES[dayOfWeek]} and Date: ${todatDate}`
+				};
+			}
+			return { delay: false };
+		}
+		case 'MONTH': {
+			if (dayOfMonth < monthlyDelay) {
+				return {
+					delay: true,
+					reason: `Monthly reports unlock on day ${monthlyDelay}; current day ${dayOfMonth} and date is ${todatDate}`
+				};
+			}
+			return { delay: false };
+		}
+		case 'QUARTER': {
+            const isQuarterStartMonth = [1,4,7,10].includes(month);
+			if (isQuarterStartMonth && dayOfMonth < quarterlyDelay) {            
+				return {
+					delay: true,
+					reason: `Quarterly reports unlock on day ${quarterlyDelay} of the first month in the quarter; current day ${dayOfMonth} and date is ${todatDate}`
+				};
+			}
+			return { delay: false };
+		}
+		default:
+			return { delay: false };
+	}
 }
 
 function resolveTimezone(preferred) {
@@ -289,5 +338,6 @@ module.exports = {
     getDateRangeForPeriod,
     getNowDateTimeInUserTimezoneAgo,
     getNowDateTimeInUserTimezoneAgoDate,
-    resolveTimezone
+    resolveTimezone,
+    evaluateReportDelay
 };

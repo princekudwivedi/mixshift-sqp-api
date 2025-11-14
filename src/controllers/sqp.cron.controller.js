@@ -12,6 +12,64 @@ const { NotificationHelpers, RetryHelpers, DelayHelpers, Helpers } = require('..
 const env = require('../config/env.config');
 const authService = require('../services/auth.service');
 
+async function checkAllowedReportTypes(reportTypes, user, seller, chunk) {
+	const nowInTimezone = dates.getNowDateTimeInUserTimezone().log;
+	const nowDateOnly = new Date(nowInTimezone.replace(' ', 'T'));
+	nowDateOnly.setHours(0, 0, 0, 0); // normalize to date only
+
+	// Evaluate all delays
+	const delayEvaluations = reportTypes.map(type => ({
+		type,
+		...dates.evaluateReportDelay(type, nowDateOnly)
+	}));
+
+	const allowedReportTypes = delayEvaluations
+								.filter(info => !info.delay)
+								.map(info => info.type);
+	
+	
+	const delayedReportTypes = delayEvaluations.filter(info => info.delay);
+
+	// -----------------------------
+	// IF ANY REPORT TYPES ARE DELAYED
+	// -----------------------------
+	if (delayedReportTypes.length > 0) {
+
+		const reasons = delayedReportTypes.reduce((acc, curr) => {
+			acc[curr.type] = curr.reason;
+			return acc;
+		}, {});
+
+		const ranges = delayedReportTypes.map(info => {
+			const range = dates.getDateRangeForPeriod(info.type);
+			return {
+				type: info.type,
+				range: `${range.start} to ${range.end}`,
+				reason: info.reason,
+			};
+		});
+
+		// Log each delayed type separately
+		for (const item of ranges) {
+			apiLogger.logDelayReportRequestsByTypeAndRange({
+				userId: user.ID,
+				sellerId: seller.AmazonSellerID,
+				sellerAccountId: seller.idSellerAccount,
+				endpoint: 'Delaying report requests until allowed window',
+				asins: chunk.asin_string || '',
+				asinCount: chunk.asins.length,
+				status: 'delayed',
+				reportType: item.type,
+				range: item.range,
+				error: item.reason,
+				nowInTimezone: nowInTimezone
+			});
+		}
+	}
+
+	return allowedReportTypes;
+}
+
 async function requestForSeller(seller, authOverrides = {}, spReportType = env.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT, user = null) {
 	logger.info({ seller: seller.idSellerAccount }, 'Requesting SQP reports for seller');	
 	
@@ -21,14 +79,23 @@ async function requestForSeller(seller, authOverrides = {}, spReportType = env.G
 			logger.warn({ sellerId: seller.idSellerAccount }, 'No eligible ASINs for seller (pending or ${env.MAX_DAYS_AGO}+ day old completed)');
 			return [];
 		}
-		
 		const chunks = model.splitASINsIntoChunks(asins, 200);
 		logger.info({ chunkCount: chunks.length }, 'Split ASINs into chunks');
 		let cronDetailIDs = [];
 		let cronDetailData = [];		
 		for (let i = 0; i < chunks.length; i++) {
-			const chunk = chunks[i];
-			logger.info({ chunkIndex: i, asinCount: chunk.asins.length }, 'Processing chunk');			
+			const chunk = chunks[i];			
+			// Check if any report types are allowed to be requested 
+			let allowedReportTypes = await checkAllowedReportTypes(reportTypes, user, seller, chunk);
+
+			// -----------------------------
+			// IF *NO* REPORT TYPES ARE ALLOWED SKIP REQUESTS
+			// -----------------------------
+			if (allowedReportTypes.length === 0) {
+				break;
+			}
+			
+			logger.info({ chunkIndex: i, asinCount: chunk.asins.length }, 'Processing chunk');
 			const timezone = await model.getUserTimezone(user);
 			const weekRange = dates.getDateRangeForPeriod('WEEK', timezone);
 			const monthRange = dates.getDateRangeForPeriod('MONTH', timezone);
@@ -43,7 +110,7 @@ async function requestForSeller(seller, authOverrides = {}, spReportType = env.G
 			logger.info({ cronDetailID: cronDetailID }, 'Created cron detail');
 			cronDetailIDs.push(cronDetailID);
 			cronDetailData.push(cronDetailObject);
-			for (const type of reportTypes) {
+			for (const type of allowedReportTypes) {
 				// Prepare to mark ASINs as In Progress and set start time
 				const startTime = dates.getNowDateTimeInUserTimezone();
 				logger.info({ 
@@ -397,12 +464,14 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 	const range = dates.getDateRangeForPeriod(reportType, timezone);
 
 	// Use the universal retry function
+	const statusMaxRetries = Number(process.env.MAX_RETRY_ATTEMPTS) || 3;
 	const result = await RetryHelpers.executeWithRetry({
 		cronDetailID: row.ID,
 		amazonSellerID: row.AmazonSellerID,
 		reportType,
 		action: 'Check Status',
-		context: { row, reportId, seller, authOverrides, isRetry: retry, user, range },
+		maxRetries: statusMaxRetries,
+		context: { row, reportId, seller, authOverrides, isRetry: retry, user, range, maxRetries: statusMaxRetries },
 		model,
 		sendFailureNotification: (cronDetailID, amazonSellerID, reportType, errorMessage, retryCount, reportId, isFatalError, range) => {
 			return sendFailureNotification({
@@ -566,7 +635,9 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 					executionTime: (Date.now() - startTime) / 1000 
 				});
 
-				if(attempt >= 3) {
+				const maxRetries = context?.maxRetries ?? 3;
+
+				if(attempt >= maxRetries) {
 					// Parse ASINs from the row's ASIN_List
 					const asins = row.ASIN_List ? row.ASIN_List.split(/\s+/).filter(Boolean).map(a => a.trim()) : [];
         
@@ -594,7 +665,10 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 				await DelayHelpers.wait(delaySeconds, 'Before retry IN_QUEUE or IN_PROGRESS');
 
 				// Throw error to trigger retry mechanism
-				throw new Error(`Report still ${status.toLowerCase().replace('_',' ')} after ${delaySeconds}s wait - retrying`);
+				const pendingError = new Error(`Report still ${status.toLowerCase().replace('_',' ')} after ${delaySeconds}s wait - retrying`);
+				pendingError.code = 'REPORT_PENDING';
+				pendingError.logLevel = attempt >= maxRetries ? 'error' : 'info';
+				throw pendingError;
 
 				
 			} else if (status === 'FATAL' || status === 'CANCELLED') {                

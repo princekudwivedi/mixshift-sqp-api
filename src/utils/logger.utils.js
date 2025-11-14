@@ -1,7 +1,7 @@
 const pino = require('pino');
 const fs = require('fs');
 const path = require('path');
-const { LOG_LEVEL } = require('../config/env.config');
+const envConfig = require('../config/env.config');
 const LOG_TO_FILE = process.env.LOG_TO_FILE === 'true';
 const LOG_DIR = process.env.LOG_DIR || path.join(process.cwd(), 'logs');
 
@@ -53,6 +53,88 @@ function ensureDirectory(dirPath) {
 	}
 }
 
+function sanitizeValue(value, visited = new WeakSet()) {
+	if (value === null || value === undefined) {
+		return value;
+	}
+
+	if (typeof value === 'string') {
+		return value
+			.replace(/(tenantDb|tenant_Db|daysToKeep|logCleanupDays|validatedUserId|userId|hasToken|token|access_token|refresh_token|id_token)=([^&\s]+)/gi, '$1=[REDACTED]')
+			.replace(/(api[_-]?key|secret|password)=([^&\s]+)/gi, '$1=[REDACTED]');
+	}
+
+	if (typeof value !== 'object') {
+		return value;
+	}
+
+	if (visited.has(value)) {
+		return value;
+	}
+
+	visited.add(value);
+
+	if (Array.isArray(value)) {
+		return value.map((item) => sanitizeValue(item, visited));
+	}
+
+	if (value instanceof Date) {
+		return value;
+	}
+
+	if (value instanceof Error) {
+		return {
+			name: value.name,
+			message: sanitizeValue(value.message, visited),
+			stack: value.stack
+		};
+	}
+
+	const redacted = {};
+	Object.entries(value).forEach(([key, val]) => {
+		const lowerKey = key.toLowerCase();
+		const shouldRedact =
+			lowerKey === 'userid' ||
+			lowerKey === 'user_id' ||
+			lowerKey === 'userId' ||
+			lowerKey === 'currentUserId' ||	
+			lowerKey === 'SellerID' ||	
+			lowerKey === 'seller_id' ||
+			lowerKey === 'sellerId' ||
+			lowerKey === 'amazonSellerID' ||
+			lowerKey === 'amazonSellerId' ||
+			lowerKey === 'user' ||
+			lowerKey === 'contextId' ||
+			lowerKey === 'validatedUserId' ||
+			lowerKey === 'validatedSellerId' ||
+			lowerKey === 'db' ||
+			lowerKey === 'dbname' ||
+			lowerKey === 'dbName' ||
+			lowerKey === 'currentDbName' ||
+			lowerKey === 'database' ||
+			lowerKey === 'daysToKeep' ||
+			lowerKey.endsWith('token') ||
+			lowerKey.includes('token') ||
+			lowerKey === 'key' ||
+			lowerKey.endsWith('key') ||
+			lowerKey.includes('apikey') ||
+			lowerKey.includes('secret') ||
+			lowerKey.includes('password');
+
+		if (shouldRedact) {
+			redacted[key] = '[REDACTED]';
+		} else {
+			redacted[key] = sanitizeValue(val, visited);
+		}
+	});
+
+	return redacted;
+}
+
+function sanitizeLogArguments(args) {
+	return args.map((arg) => sanitizeValue(arg));
+}
+
 function resolveLogDir() {	
 	let dateFolder = getDateFolder();
 	if (currentUserId && Number(currentUserId) !== 0) {
@@ -98,8 +180,14 @@ if (LOG_TO_FILE) {
 
 const logger = pino(
 	{
-		level: LOG_LEVEL || 'info',
-		timestamp: pino.stdTimeFunctions.isoTime
+		level: envConfig.LOG_LEVEL || 'info',
+		timestamp: pino.stdTimeFunctions.isoTime,
+		hooks: {
+			logMethod(args, method) {
+				const sanitizedArgs = sanitizeLogArguments(args);
+				method.apply(this, sanitizedArgs);
+			}
+		}
 	},
 	pino.multistream(streams)
 );

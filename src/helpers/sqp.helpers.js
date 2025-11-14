@@ -74,7 +74,7 @@ class RetryHelpers {
             action,
             operation,
             context = {},
-            maxRetries = 3,
+            maxRetries = process.env.MAX_RETRY_ATTEMPTS || 3,
             skipIfMaxRetriesReached = true,
             model,
             sendFailureNotification,
@@ -190,7 +190,7 @@ class RetryHelpers {
                 // Classify error type to determine if retryable
                 const isRetryable = this.isRetryableError(error);
                 
-                logger.error({
+                const logPayload = {
                     error: error ? (error.message || String(error)) : 'Unknown error',
                     stack: error?.stack,
                     cronDetailID,
@@ -199,7 +199,16 @@ class RetryHelpers {
                     attempt,
                     maxRetries,
                     isRetryable
-                }, `Error in ${action} attempt ${attempt}`);
+                };
+                const logLevel = error?.logLevel || (error?.suppressErrorLog ? 'info' : 'error');
+
+                if (logLevel === 'info') {
+                    logger.info(logPayload, `Retryable condition in ${action} attempt ${attempt}`);
+                } else if (logLevel === 'warn') {
+                    logger.warn(logPayload, `Retryable warning in ${action} attempt ${attempt}`);
+                } else {
+                    logger.error(logPayload, `Error in ${action} attempt ${attempt}`);
+                }
 
                 // Only retry if error is retryable
                 if (!isRetryable) {
