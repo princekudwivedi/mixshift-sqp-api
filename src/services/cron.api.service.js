@@ -56,6 +56,7 @@ class CronApiService {
                 await loadDatabase(0);
                 const users = validatedUserId ? [{ ID: validatedUserId }] : await getAllAgencyUserList();
                 
+
                 // Check cron limit logic            
                 let totalProcessed = 0;
                 let totalErrors = 0;
@@ -128,7 +129,7 @@ class CronApiService {
                                         () => ctrl.requestForSeller(s, authOverrides, env.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT, user),
                                         { sellerId: s.idSellerAccount, operation: 'requestForSeller' }
                                     );
-                                    
+
                                     totalProcessed++;
 
                                     if (cronDetailIDs.length > 0) {
@@ -146,13 +147,20 @@ class CronApiService {
                                         }                                        
                                     }
                                     
-                                    logger.info({ 
-                                        sellerId: s.idSellerAccount, 
-                                        amazonSellerID: s.AmazonSellerID,
-                                        cronDetailIDs,
-                                        processed: totalProcessed,
-                                        errors: totalErrors
-                                    }, 'Completed processing for seller - exiting cron run');
+                                    if (cronDetailIDs.length === 0) {
+                                        logger.info({ 
+                                            sellerId: s.idSellerAccount, 
+                                            amazonSellerID: s.AmazonSellerID,
+                                        }, 'All report types are skipping. No report types are allowed to be requested.');
+                                    } else {
+                                        logger.info({ 
+                                            sellerId: s.idSellerAccount, 
+                                            amazonSellerID: s.AmazonSellerID,
+                                            cronDetailIDs,
+                                            processed: totalProcessed,
+                                            errors: totalErrors
+                                        }, 'Completed processing for seller - exiting cron run');
+                                    }
                                     
                                 } catch (error) {
                                     logger.error({ 

@@ -366,6 +366,44 @@ class APILogger {
     }
 
     /**
+     * Log Delay Report Requests By Type And Range
+     */
+    logDelayReportRequestsByTypeAndRange(params) {
+        const {
+            userId,
+            sellerId,
+            sellerAccountId,
+            status,
+            asins,
+            asinCount,
+            reportType,
+            range,
+            error,
+            nowInTimezone
+        } = params;
+
+        const logData = {
+            operation: 'DELAY_REPORT_REQUESTS_BY_TYPE_AND_RANGE',
+            userId,
+            sellerId,
+            sellerAccountId,
+            asins,
+            asinCount,
+            status,
+            reportType,
+            range,
+            error,
+            nowInTimezone
+        };
+
+        const filePath = this.getLogFilePath(userId, sellerAccountId, sellerId, 'delay_report_requests_by_type_and_range', reportType);
+        if (filePath) {
+            const logEntry = this.formatLogEntry(logData);
+            this.writeLog(filePath, logEntry);
+        }
+    }
+
+    /**
      * Sanitize headers to remove sensitive data
      */
     sanitizeHeaders(headers) {

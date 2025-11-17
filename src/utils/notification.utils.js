@@ -215,7 +215,9 @@ function shouldSendNotification(errorMessage, isFatalError) {
         'invalid_client',             // OAuth client errors
         'invalid_scope',              // OAuth scope errors
         'access token',               // Token issues (after retries)
-        'credentials'                 // Credential errors
+        'credentials',                 // Credential errors
+        'ENOTFOUND',
+        'getaddrinfo'
     ];
     
     // Check if error matches any critical pattern

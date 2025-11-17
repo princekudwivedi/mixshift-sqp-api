@@ -5,17 +5,20 @@ const logger = require('../utils/logger.utils');
 const { isUserAllowed, sanitizeLogData } = require('../utils/security.utils');
 const env = require('../config/env.config');
 const isDevEnv = ["local", "development","production"].includes(env.NODE_ENV);
-
+const dates = require('../utils/dates.utils');
 class AsinResetService {
 
     // Check if a period has started
     isNewPeriod(period) {
-        const today = new Date();
-        if (period === 'WEEK') return today.getDay() === 2; // Tuesday
-        if (period === 'MONTH') return today.getDate() === 3;
+        const nowInTimezone = dates.getNowDateTimeInUserTimezone().log;
+		const today = new Date(nowInTimezone.replace(' ', 'T'));
+		today.setHours(0, 0, 0, 0); // zero out hours, minutes, seconds, ms		
+
+        if (period === 'WEEK') return today.getDay() === Number(process.env.WEEK_RESET_DAY || 2); // Tuesday
+        if (period === 'MONTH') return today.getDate() === Number(process.env.MONTH_REPORT_DELAY || 3);
         if (period === 'QUARTER') {
             const month = today.getMonth() + 1, day = today.getDate();
-            return day === 20 && [1,4,7,10].includes(month);
+            return day === Number(process.env.QUARTER_REPORT_DELAY || 20) && [1,4,7,10].includes(month);
         }
         return false;
     }
