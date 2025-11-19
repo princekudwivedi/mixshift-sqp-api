@@ -44,30 +44,48 @@ class ConnectionMonitor {
             const sequelize = getCurrentSequelize();
             if (sequelize && sequelize.connectionManager) {
                 const pool = sequelize.connectionManager.pool;
-                const stats = pool ? pool.size : 0;
-                const active = pool ? pool.used : 0;
-                const idle = pool ? pool.pending : 0;
-                
-                this.connectionStats = {
-                    totalConnections: stats,
-                    activeConnections: active,
-                    idleConnections: idle,
-                    queuedConnections: 0, // Sequelize doesn't expose queue length directly
-                    lastChecked: new Date().toISOString()
-                };
-                
-                // Log warning if connections are high
-                if (stats > 8) {
-                    logger.warn({
-                        connectionStats: this.connectionStats
-                    }, 'High database connection usage detected');
-                }
-                
-                // Log if connections are at limit
-                if (stats >= (parseInt(process.env.DB_CONNECTION_LIMIT) || 5)) {
-                    logger.error({
-                        connectionStats: this.connectionStats
-                    }, 'Database connection limit reached');
+                if (pool) {
+                    const toNumber = (value) => {
+                        if (typeof value === 'function') {
+                            try {
+                                return Number(value.call(pool)) || 0;
+                            } catch {
+                                return 0;
+                            }
+                        }
+                        if (typeof value === 'number') return value;
+                        if (value && typeof value.length === 'number') return value.length;
+                        return Number(value) || 0;
+                    };
+
+                    const totalConnections = toNumber(pool.size);
+                    const activeConnections = toNumber(pool.borrowed || pool.used);
+                    const idleConnections = toNumber(pool.available || pool.idle);
+                    const queuedConnections = toNumber(pool.pending);
+                    
+                    this.connectionStats = {
+                        totalConnections,
+                        activeConnections,
+                        idleConnections,
+                        queuedConnections,
+                        lastChecked: new Date().toISOString()
+                    };
+                    
+                    const connectionLimit = parseInt(process.env.DB_CONNECTION_LIMIT, 10) || 5;
+
+                    if (totalConnections > connectionLimit) {
+                        logger.warn({
+                            connectionStats: this.connectionStats,
+                            connectionLimit
+                        }, 'Database connection usage exceeds configured limit');
+                    }
+                    
+                    if (queuedConnections > 0) {
+                        logger.warn({
+                            queuedConnections,
+                            connectionStats: this.connectionStats
+                        }, 'Database connections are queueing');
+                    }
                 }
             }
         } catch (error) {

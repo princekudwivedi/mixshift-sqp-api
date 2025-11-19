@@ -1,7 +1,7 @@
 const AuthToken = require('../models/authToken.model');
 const axios = require('axios');
 const logger = require('../utils/logger.utils');
-
+const { Helpers } = require('../helpers/sqp.helpers');
 // Amazon LWA token endpoint
 const LWA_TOKEN_URL = 'https://api.amazon.com/auth/o2/token';
 
@@ -78,7 +78,8 @@ function isTokenExpired(tokenRow) {
 async function refreshAccessToken(amazonSellerID, refreshToken) {
     try {
         if (!refreshToken) throw new Error('No refresh token available');
-        if (!process.env.SP_API_DEVELOPER_CLIENT_ID || !process.env.SP_API_DEVELOPER_CLIENT_SECERET)
+        const clientSecret = await Helpers.resolveClientSecret();
+        if (!process.env.SP_API_DEVELOPER_CLIENT_ID || !clientSecret)
             throw new Error('LWA credentials not configured');
 
         logger.info({ amazonSellerID }, 'Attempting to refresh access token');
@@ -87,7 +88,7 @@ async function refreshAccessToken(amazonSellerID, refreshToken) {
             grant_type: 'refresh_token',
             refresh_token: refreshToken,
             client_id: process.env.SP_API_DEVELOPER_CLIENT_ID,
-            client_secret: process.env.SP_API_DEVELOPER_CLIENT_SECERET,
+            client_secret: clientSecret,
         });
 
         const response = await axios.post(LWA_TOKEN_URL, params.toString(), {
@@ -96,8 +97,11 @@ async function refreshAccessToken(amazonSellerID, refreshToken) {
         });
 
         if (response.data && response.data.access_token) {
-            // Add 5 minutes buffer to expiration
-            const expiresInDate = new Date(Date.now() + 5 * 60 * 1000);
+            const rawExpires = Number(response.data.expires_in);
+            const expiresInMs = Number.isFinite(rawExpires) ? rawExpires * 1000 : 3600 * 1000;
+            const safetyBufferMs = 5 * 60 * 1000;
+            const ttlMs = Math.max(expiresInMs - safetyBufferMs, 60 * 1000);
+            const expiresInDate = new Date(Date.now() + ttlMs);
 
             logger.info(
                 { amazonSellerID, expiresAt: expiresInDate },

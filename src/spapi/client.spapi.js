@@ -3,6 +3,7 @@ const config = require('../config/env.config');
 const axios = require('axios');
 const zlib = require('zlib');
 const authService = require('../services/auth.service');
+const { Helpers } = require('../helpers/sqp.helpers');
 
 async function getReportsApiModule() {
 	// ESM dynamic import to satisfy SDK module type
@@ -39,7 +40,7 @@ async function buildReportsClient(opts = {}) {
 	
 	// Use config defaults with per-user overrides (LWA credentials)
 	const clientId = opts.clientId || process.env.SP_API_DEVELOPER_CLIENT_ID;
-	const clientSecret = opts.clientSecret || process.env.SP_API_DEVELOPER_CLIENT_SECERET;
+	const clientSecret = opts.clientSecret || await Helpers.resolveClientSecret();
 	const accessToken = opts.accessToken; // Use access_token
 	const merchantRegion = opts.merchantRegion || 'NA';
 	

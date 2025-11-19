@@ -1,6 +1,16 @@
 const logger = require('../utils/logger.utils');
 const { sanitizeLogData } = require('../utils/security.utils');
 const dates = require('../utils/dates.utils');
+
+const isProduction = (process.env.NODE_ENV || 'development').toLowerCase() === 'production';
+
+function formatPublicError(error, fallback = 'Internal server error') {
+	if (!error) {
+		return fallback;
+	}
+	const rawMessage = typeof error === 'string' ? error : (error.message || fallback);
+	return isProduction ? fallback : rawMessage;
+}
 /**
  * Success response handler
  */
@@ -96,7 +106,7 @@ class ErrorHandler {
         const response = {
             success: false,
             message,
-            error: error.message || error,
+            ...(error && { error: formatPublicError(error, message) }),
             timestamp:  dates.getNowDateTimeInUserTimezone().log
         };
 
@@ -181,7 +191,7 @@ class ErrorHandler {
         const response = {
             success: false,
             message,
-            error: error.message || error,
+            ...(error && { error: formatPublicError(error, message) }),
             processed,
             errors,
             timestamp:  dates.getNowDateTimeInUserTimezone().log
@@ -224,7 +234,7 @@ class ErrorHandler {
         const response = {
             success: false,
             message,
-            error: error.message || error,
+            ...(error && { error: formatPublicError(error, message) }),
             timestamp:  dates.getNowDateTimeInUserTimezone().log
         };
 

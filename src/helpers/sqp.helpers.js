@@ -5,6 +5,17 @@ const dates = require('../utils/dates.utils');
 
 
 class Helpers {
+    static async resolveClientSecret() {
+        return new Promise((resolve, reject) => {
+            const direct = process.env.SP_API_DEVELOPER_CLIENT_SECRET;
+            if (direct && direct.trim()) {
+                resolve(direct.trim());
+            }
+            // Backward compatibility for historic typo
+            const legacy = process.env.SP_API_DEVELOPER_CLIENT_SECERET;
+            resolve(legacy && legacy.trim() ? legacy.trim() : null);
+        });
+    }
     /**
      * Check cron limits and active sellers count
      * @param {number} userId 

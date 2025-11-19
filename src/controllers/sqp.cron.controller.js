@@ -721,7 +721,7 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 				throw new Error('No access token available for report request');
 			}
 			// Download the report document
-			const { resp: downloadResponse } = await sp.downloadReport(seller, documentId, currentAuthOverrides);
+			const downloadResponse = await sp.downloadReport(seller, documentId, currentAuthOverrides);
 			let res = downloadResponse?.data || downloadResponse;
 			if(!res){
 				logger.error({ downloadResponse, documentId, range: range.range, attempt }, 'Download report failed');

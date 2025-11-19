@@ -1280,10 +1280,10 @@ class InitialPullService {
                     throw new Error('No access token available for report request but retry again on catch block');
                 }
                 
-                const { resp: downloadReportResponse } = await sp.downloadReport(seller, documentId || reportId, currentAuthOverrides);
-                let res = downloadReportResponse?.data || downloadReportResponse;
+                const downloadResponse = await sp.downloadReport(seller, documentId || reportId, currentAuthOverrides);
+                let res = downloadResponse?.data || downloadResponse;
                 if(!res){
-                    logger.error({ downloadReportResponse, documentId, range: range.range, attempt }, 'Initial pull report download failed');
+                    logger.error({ downloadResponse, documentId, range: range.range, attempt }, 'Initial pull report download failed');
                     throw new Error('Initial pull report download failed - no data returned for documentId: ' + documentId);
                 }
                 
