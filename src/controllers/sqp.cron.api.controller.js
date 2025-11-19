@@ -221,16 +221,13 @@ class SqpCronApiController {
      */
     async resetAsinStatus(req, res) {
         try {
-            logger.info('Automatic ASIN reset check triggered - background process');
+            logger.info({'userId': null, operation: 'resetAsinStatus'}, 'Automatic ASIN reset check triggered - background process');       
 
             // Process in background
-            asinResetService.resetAsinStatus()
-                .then(result => {
-                    logger.info({ result }, 'ASIN reset completed in background');
-                })
-                .catch(error => {
-                    logger.error({ error: error.message }, 'Error in background ASIN reset');
-                });
+            this.circuitBreaker.execute(
+                () => asinResetService.resetAsinStatus(),
+                { userId: null, operation: 'resetAsinStatus' }
+            );
 
             return SuccessHandler.sendSuccess(res, {
                 message: 'ASIN reset started',

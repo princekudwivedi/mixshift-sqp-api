@@ -261,56 +261,12 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 				
 				throw new Error('No access token available for report request');
 			}
-
-            let resp;
-			let requestError = null;
-            try {
-                resp = await sp.createReport(seller, payload, currentAuthOverrides);
-            } catch (err) {
-                const status = err.status || err.statusCode || err.response?.status;
-                logger.error({
-                    status,
-                    body: err.response && (err.response.body || err.response.text),
-                    message: err.message,
-                    payload
-                }, 'SP-API createReport failed');
-                // If unauthorized/forbidden, force refresh token once and retry
-                if (status === 401 || status === 403) {
-					currentAuthOverrides = await authService.buildAuthOverrides(seller.AmazonSellerID, true);
-					if (!currentAuthOverrides.accessToken) {				
-						logger.error({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request');
-						requestError = new Error('No access token available for report request after forced refresh');
-						
-						// API Logger - Failed Request (No Token After Refresh)
-						const userId = user ? user.ID : null;
-						apiLogger.logRequestReport({
-							userId,
-							sellerId: seller.AmazonSellerID,
-							sellerAccountId: seller.idSellerAccount,
-							endpoint: 'SP-API Create Report',
-							requestPayload: payload,
-							response: null,
-							startTime: requestStartTime.log,
-							endTime:  dates.getNowDateTimeInUserTimezone().log,
-							executionTime: (Date.now() - startTime) / 1000,
-							status: 'failure',
-							reportId: null,
-							reportType,
-							range: `${range.start} to ${range.end}`,
-							error: requestError,
-							retryCount: currentRetry,
-							attempt
-						});
-						
-						throw requestError;
-					}
-					resp = await sp.createReport(seller, payload, currentAuthOverrides);
-                } else {
-					requestError = err;
-					throw err;
-				}
-            }
-			const reportId = resp.reportId;
+            // 1️⃣ Create report
+			const { reportId } = await sp.createReport(seller, payload, currentAuthOverrides);
+			if(!reportId){
+				logger.error({ reportId, payload, range: range.range, attempt }, 'Report creation failed');
+				throw new Error('Report creation failed - no reportId returned');
+			}
 			const requestEndTime =  dates.getNowDateTimeInUserTimezone();
 			
 			// API Logger - Successful Request Report
@@ -321,7 +277,7 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 				sellerAccountId: seller.idSellerAccount,
 				endpoint: 'SP-API Create Report',
 				requestPayload: payload,
-				response: resp,
+				response: reportId,
 				startTime: requestStartTime.log,
 				endTime: requestEndTime.log,
 				executionTime: (Date.now() - startTime) / 1000,
@@ -329,7 +285,7 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 				reportId,
 				reportType,
 				range: `${range.start} to ${range.end}`,
-				error: requestError,
+				error: null,
 				retryCount: currentRetry,
 				attempt
 			});
@@ -522,48 +478,13 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 				throw new Error('No access token available for report request');
 			}
 			
-            let res;
-			let statusError = null;
-            try {
-                res = await sp.getReportStatus(seller, reportId, currentAuthOverrides);
-            } catch (err) {
-                const status = err.status || err.statusCode || err.response?.status;
-                if (status === 401 || status === 403) {
-                    // Force refresh and retry once
-                    const refreshed = await authService.buildAuthOverrides(seller.AmazonSellerID, true);
-                    if (!refreshed.accessToken) {				
-                        logger.error({ amazonSellerID: seller.AmazonSellerID, attempt, user: user ? user.ID : null }, 'No access token available for request');
-						statusError = new Error('No access token available for report request after forced refresh');
-						
-						// API Logger - Failed Status Check (No Token After Refresh)
-						const userId = user ? user.ID : null;
-						apiLogger.logRequestStatus({
-							userId,
-							sellerId: seller.AmazonSellerID,
-							sellerAccountId: seller.idSellerAccount,
-							reportId,
-							reportType,
-							range: `${range.start} to ${range.end}`,
-							currentStatus: 'UNKNOWN',
-							response: null,
-							retryCount: currentRetry,
-							attempt,
-							startTime: statusStartTime.log,
-							endTime:  dates.getNowDateTimeInUserTimezone().log,
-							executionTime: (Date.now() - startTime) / 1000,
-							status: 'failure',
-							error: statusError
-						});
-						
-                        throw statusError;
-                    }
-                    res = await sp.getReportStatus(seller, reportId, refreshed);
-                } else {
-					statusError = err;
-					throw err;
-				}
-            }
-			const status = res.processingStatus;
+			const { processingStatus, reportDocumentId } = await sp.getReportStatus(seller, reportId, currentAuthOverrides);
+			if(!processingStatus || !reportDocumentId){
+				logger.error({ reportId, processingStatus, reportDocumentId, range: range.range, attempt }, 'Report status check failed');
+				throw new Error('Report status check failed - no processingStatus or reportDocumentId returned');
+			}
+
+			const status = processingStatus;
 			const statusEndTime =  dates.getNowDateTimeInUserTimezone();
 			
 			// API Logger - Status Check
@@ -576,20 +497,20 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 				reportType,
 				range: `${range.start} to ${range.end}`,
 				currentStatus: status,
-				response: res,
+				response: status,
 				retryCount: currentRetry,
 				attempt,
 				startTime: statusStartTime.log,
 				endTime: statusEndTime.log,
 				executionTime: (Date.now() - startTime) / 1000,
 				status: status ? 'success' : 'failure',
-				error: statusError,
-				reportDocumentId: res.reportDocumentId || null
+				error: null,
+				reportDocumentId: reportDocumentId || null
 			});
 			
             if (status === 'DONE') {
 				// Keep ReportID_* as the original reportId; store documentId separately
-				const documentId = res.reportDocumentId || null;
+				const documentId = reportDocumentId || null;
 
 				// Enqueue for download processing (store in sqp_download_urls as PENDING)
                 await downloadUrls.storeDownloadUrl({
@@ -610,7 +531,7 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 				// ProcessRunningStatus = 3 (Download)
                 await model.setProcessRunningStatus(row.ID, reportType, 3);
                 
-				const downloadResult = await downloadReportByType(row, reportType, authOverrides, reportId, user, range);
+				const downloadResult = await downloadReportByType(row, reportType, authOverrides, reportId, user, range, reportDocumentId);
 				return {
 					message: downloadResult?.message ? downloadResult?.message : `Report ready on attempt ${attempt}. Report ID: ${reportId}${documentId ? ' | Document ID: ' + documentId : ''}`,
 					action: downloadResult?.action ? downloadResult?.action : 'Check Status and Download Report',
@@ -706,7 +627,7 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 	return result;
 }
 
-async function downloadReportByType(row, reportType, authOverrides = {}, reportId = null, user = null, range = null) {
+async function downloadReportByType(row, reportType, authOverrides = {}, reportId = null, user = null, range = null, downloadDocumentId = null) {
     if (!reportId) {
         reportId = await model.getLatestReportId(row.ID, reportType);
         if (!reportId) {
@@ -729,7 +650,7 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 		amazonSellerID: row.AmazonSellerID,
 		reportType,
 		action: 'Download Report',
-		context: { row, reportId, seller, authOverrides, user, range },
+		context: { row, reportId, seller, authOverrides, user, range, downloadDocumentId },
 		model,
 		sendFailureNotification: (cronDetailID, amazonSellerID, reportType, errorMessage, retryCount, reportId, isFatalError, range) => {
 			return sendFailureNotification({
@@ -748,7 +669,7 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 			});
 		},
 		operation: async ({ attempt, currentRetry, context, startTime }) => {
-			const { row, reportId, seller, authOverrides, user, range } = context;
+			const { row, reportId, seller, authOverrides, user, range, downloadDocumentId } = context;
 			const downloadStartTime =  dates.getNowDateTimeInUserTimezone();
 			const timezone = await model.getUserTimezone(user);
 			logger.info({ reportId, reportType, attempt }, 'Starting download for report');
@@ -763,6 +684,10 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
                 null,
                 true
             );
+			
+			// Use the reportDocumentId from status response
+			const documentId = downloadDocumentId || reportId;
+			logger.info({ documentId, attempt }, 'Using document ID for download');
 			
 			// Ensure access token for download as well
 			const currentAuthOverrides = await authService.buildAuthOverrides(seller.AmazonSellerID);
@@ -788,87 +713,19 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 					endTime:  dates.getNowDateTimeInUserTimezone().log,
 					executionTime: (Date.now() - startTime) / 1000,
 					status: 'failure',
-					error: { message: 'No access token available for report request but retry again on catch block' },
+					error: { message: 'No access token available for report request' },
 					retryCount: currentRetry,
 					attempt
 				});
 				
-				throw new Error('No access token available for report request but retry again on catch block');
+				throw new Error('No access token available for report request');
 			}
-			
-			const requestDelaySeconds = Number(process.env.REQUEST_DELAY_SECONDS) || 30;
-        	await DelayHelpers.wait(requestDelaySeconds, 'Between report download and status check (rate limiting)');
-
-			// First get report status to ensure we have the latest reportDocumentId
-			let statusRes;
-			try {
-				statusRes = await sp.getReportStatus(seller, reportId, currentAuthOverrides);
-			} catch (err) {
-				const status = err.status || err.statusCode || err.response?.status;
-				if (status === 401 || status === 403) {
-					const refreshed = await authService.buildAuthOverrides(seller.AmazonSellerID, true);
-					if (!refreshed.accessToken) {				
-						logger.error({ amazonSellerID: seller.AmazonSellerID, attempt, user: user ? user.ID : null }, 'No access token available for request');
-						throw new Error('No access token available for report request after forced refresh');
-					}
-					statusRes = await sp.getReportStatus(seller, reportId, refreshed);
-				}
-			}
-			
-			logger.info({ status: statusRes.processingStatus, reportDocumentId: statusRes.reportDocumentId, attempt }, 'Report status check');
-			
-			if (statusRes.processingStatus !== 'DONE') {
-				throw new Error(`Report not ready, status: ${statusRes.processingStatus}`);
-			}
-			
-			// Use the reportDocumentId from status response
-			const documentId = statusRes.reportDocumentId || reportId;
-			logger.info({ documentId, attempt }, 'Using document ID for download');
-			
 			// Download the report document
-			let res;
-			let downloadError = null;
-			try {
-				res = await sp.downloadReport(seller, documentId, currentAuthOverrides);
-			} catch (err) {
-				const status = err.status || err.statusCode || err.response?.status;
-				if (status === 401 || status === 403) {
-					const refreshed = await authService.buildAuthOverrides(seller.AmazonSellerID, true);
-					if (!refreshed.accessToken) {				
-						logger.error({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request');
-						downloadError = new Error('No access token available for report request after forced refresh');
-						
-						// API Logger - Failed Download (No Token After Refresh)
-						const userId = user ? user.ID : null;
-						apiLogger.logDownload({
-							userId,
-							sellerId: seller.AmazonSellerID,
-							sellerAccountId: seller.idSellerAccount,
-							reportId,
-							reportDocumentId: documentId,
-							reportType,
-							range: `${range.start} to ${range.end}`,
-							fileUrl: null,
-							filePath: null,
-							fileSize: 0,
-							rowCount: 0,
-							downloadPayload: { documentId },
-							startTime: downloadStartTime.log,
-							endTime:  dates.getNowDateTimeInUserTimezone().log,
-							executionTime: (Date.now() - startTime) / 1000,
-							status: 'failure',
-							error: downloadError,
-							retryCount: currentRetry,
-							attempt
-						});
-						
-						throw downloadError;
-					}
-					res = await sp.downloadReport(seller, documentId, refreshed);
-				} else {
-					downloadError = err;
-					throw err;
-				}
+			const { resp: downloadResponse } = await sp.downloadReport(seller, documentId, currentAuthOverrides);
+			let res = downloadResponse?.data || downloadResponse;
+			if(!res){
+				logger.error({ downloadResponse, documentId, range: range.range, attempt }, 'Download report failed');
+				throw new Error('Download report failed - no data returned');
 			}
 			
 			// Get JSON data directly (no Excel needed)

@@ -686,50 +686,14 @@ class InitialPullService {
                 }
 
                 // Create report via SP-API
-                let resp;
-                let requestError = null;
-                try {
-                    resp = await sp.createReport(seller, payload, currentAuthOverrides);
-                } catch (err) {
-                    const status = err.status || err.statusCode || err.response?.status;
-                    if (status === 401 || status === 403) {
-                        currentAuthOverrides = await authService.buildAuthOverrides(seller.AmazonSellerID, true);
-                        if (!currentAuthOverrides.accessToken) {
-                            logger.error({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request after forced refresh');
-                            requestError = new Error('No access token available for report request after forced refresh');
-                            
-                            // API Logger - Failed Request (No Token After Refresh)
-                            const userId = user ? user.ID : null;
-                            apiLogger.logRequestReport({
-                                userId,
-                                sellerId: seller.AmazonSellerID,
-                                sellerAccountId: seller.idSellerAccount,
-                                endpoint: 'SP-API Create Report',
-                                requestPayload: payload,
-                                response: null,
-                                startTime: requestStartTime,
-                                endTime: dates.getNowDateTimeInUserTimezone().log,
-                                executionTime: (Date.now() - startTime) / 1000,
-                                status: 'failure',
-                                reportId: null,
-                                reportType,
-                                range: range.range,
-                                error: requestError,
-                                retryCount: currentRetry,
-                                attempt
-                            });
-                            
-                            throw requestError;
-                        }
-                        resp = await sp.createReport(seller, payload, currentAuthOverrides);
-                    } else {
-                        requestError = err;
-                        throw err;
-                    }
-                }
-                const reportId = resp.reportId;
+                const { reportId } = await sp.createReport(seller, payload, currentAuthOverrides);
                 const requestEndTime = dates.getNowDateTimeInUserTimezone().log;
                 
+                if(!reportId){
+                    logger.error({ reportId, payload, range: range.range, attempt }, 'Initial pull report creation failed');
+                    throw new Error('Initial pull report creation failed - no reportId returned');
+                }
+
                 logger.info({ reportId, range: range.range, attempt }, 'Initial pull report created');
                 
                 // API Logger - Successful Request Report
@@ -740,7 +704,7 @@ class InitialPullService {
                     sellerAccountId: seller.idSellerAccount,
                     endpoint: 'SP-API Create Report',
                     requestPayload: payload,
-                    response: resp,
+                    response: reportId,
                     startTime: requestStartTime,
                     endTime: requestEndTime,
                     executionTime: (Date.now() - startTime) / 1000,
@@ -748,7 +712,7 @@ class InitialPullService {
                     reportId,
                     reportType,
                     range: range.range,
-                    error: requestError,
+                    error: null,
                     retryCount: currentRetry,
                     attempt
                 });
@@ -1094,48 +1058,14 @@ class InitialPullService {
                     
                     throw new Error('No access token available for report request but retry again on catch block');
                 }
-                // Check report status with force refresh+retry on 401/403
-                let res;
-                let statusError = null;
-                try {
-                    res = await sp.getReportStatus(seller, reportId, currentAuthOverrides);
-                } catch (err) {
-                    const status = err.status || err.statusCode || err.response?.status;
-                    if (status === 401 || status === 403) {
-                        const refreshedOverrides = await authService.buildAuthOverrides(seller.AmazonSellerID, true);
-                        if(!refreshedOverrides.accessToken) {
-                            logger.error({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request after forced refresh');
-                            statusError = new Error('No access token available for report request after forced refresh');
-                            
-                            // API Logger - Failed Status Check (No Token After Refresh)
-                            const userId = user ? user.ID : null;
-                            apiLogger.logRequestStatus({
-                                userId,
-                                sellerId: seller.AmazonSellerID,
-                                sellerAccountId: seller.idSellerAccount,
-                                reportId,
-                                reportType,
-                                range: range.range,
-                                currentStatus: 'UNKNOWN',
-                                response: null,
-                                retryCount: currentRetry,
-                                attempt,
-                                startTime: statusStartTime,
-                                endTime: dates.getNowDateTimeInUserTimezone().log,
-                                executionTime: (Date.now() - startTime) / 1000,
-                                status: 'failure',
-                                error: statusError
-                            });
-                            
-                            throw statusError;
-                        }
-                        res = await sp.getReportStatus(seller, reportId, refreshedOverrides);
-                    } else {
-                        statusError = err;
-                        throw err;
-                    }
+
+                const { processingStatus, reportDocumentId } = await sp.getReportStatus(seller, reportId, currentAuthOverrides);
+                if(!processingStatus || !reportDocumentId){
+                    logger.error({ reportId, processingStatus, reportDocumentId, range: range.range, attempt }, 'Report status check failed');
+                    throw new Error('Report status check failed - no processingStatus or reportDocumentId returned');
                 }
-                const status = res.processingStatus;
+
+                const status = processingStatus;
                 const statusEndTime = dates.getNowDateTimeInUserTimezone().log;
                 
                 // API Logger - Status Check
@@ -1148,18 +1078,18 @@ class InitialPullService {
                     reportType,
                     range: range.range,
                     currentStatus: status,
-                    response: res,
+                    response: processingStatus,
                     retryCount: currentRetry,
                     attempt,
                     startTime: statusStartTime,
                     endTime: statusEndTime,
                     executionTime: (Date.now() - startTime) / 1000,
                     status: status ? 'success' : 'failure',
-                    error: statusError,
-                    reportDocumentId: res.reportDocumentId || null
+                    error: null,
+                    reportDocumentId: reportDocumentId || null
                 });
                 if (status === 'DONE') {
-                    const documentId = res.reportDocumentId || null;
+                    const documentId = reportDocumentId || null;
 
                     // Store for download queue                    
                     await downloadUrls.storeDownloadUrl({
@@ -1350,50 +1280,11 @@ class InitialPullService {
                     throw new Error('No access token available for report request but retry again on catch block');
                 }
                 
-                // Download report with force refresh+retry on 401/403
-                let res;
-                let downloadError = null;
-                try {
-                    res = await sp.downloadReport(seller, documentId || reportId, currentAuthOverrides);
-                } catch (err) {
-                    const status = err.status || err.statusCode || err.response?.status;
-                    if (status === 401 || status === 403) {
-                        const refreshedOverrides = await authService.buildAuthOverrides(seller.AmazonSellerID, true);
-                        if(!refreshedOverrides.accessToken) {
-                            logger.error({ amazonSellerID: seller.AmazonSellerID, attempt }, 'No access token available for request after forced refresh');
-                            downloadError = new Error('No access token available for report request after forced refresh');
-                            
-                            // API Logger - Failed Download (No Token After Refresh)
-                            const userId = user ? user.ID : null;
-                            apiLogger.logDownload({
-                                userId,
-                                sellerId: seller.AmazonSellerID,
-                                sellerAccountId: seller.idSellerAccount,
-                                reportId,
-                                reportDocumentId: documentId,
-                                reportType,
-                                range: range.range,
-                                fileUrl: null,
-                                filePath: null,
-                                fileSize: 0,
-                                rowCount: 0,
-                                downloadPayload: { documentId: documentId || reportId },
-                                startTime: downloadStartTime,
-                                endTime: dates.getNowDateTimeInUserTimezone().log,
-                                executionTime: (Date.now() - startTime) / 1000,
-                                status: 'failure',
-                                error: downloadError,
-                                retryCount: currentRetry,
-                                attempt
-                            });
-                            
-                            throw downloadError;
-                        }
-                        res = await sp.downloadReport(seller, documentId || reportId, refreshedOverrides);
-                    } else {
-                        downloadError = err;
-                        throw err;
-                    }
+                const { resp: downloadReportResponse } = await sp.downloadReport(seller, documentId || reportId, currentAuthOverrides);
+                let res = downloadReportResponse?.data || downloadReportResponse;
+                if(!res){
+                    logger.error({ downloadReportResponse, documentId, range: range.range, attempt }, 'Initial pull report download failed');
+                    throw new Error('Initial pull report download failed - no data returned for documentId: ' + documentId);
                 }
                 
                 // Extract data

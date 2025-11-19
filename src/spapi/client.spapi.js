@@ -2,6 +2,7 @@ const logger = require('../utils/logger.utils');
 const config = require('../config/env.config');
 const axios = require('axios');
 const zlib = require('zlib');
+const authService = require('../services/auth.service');
 
 async function getReportsApiModule() {
 	// ESM dynamic import to satisfy SDK module type
@@ -98,156 +99,87 @@ async function buildReportsClient(opts = {}) {
 }
 
 async function createReport(sellerProfile, payload, authOverrides = {}) {
-	try {
-		logger.info({ 
-			sellerProfile: {
-				AmazonSellerID: sellerProfile.AmazonSellerID,
-				MerchantRegion: sellerProfile.MerchantRegion,
-				MerchantRegionType: typeof sellerProfile.MerchantRegion
-			}
-		}, 'createReport input');
-		
-		// Add merchant region to auth overrides
-		const clientOpts = {
-			...authOverrides,
-			merchantRegion: sellerProfile.MerchantRegion
-		};
-		const reportsApi = await buildReportsClient(clientOpts);
-		const body = {
-			reportType: payload.reportType || config.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT,
-			marketplaceIds: payload.marketplaceIds,
-			dataStartTime: payload.dataStartTime,
-			dataEndTime: payload.dataEndTime,
-			reportOptions: payload.reportOptions,
-		};
-		
-		logger.info({ 
-			sellerId: sellerProfile.AmazonSellerID,
-			marketplaceIds: payload.marketplaceIds,
-        	reportType: body.reportType,
-			dataStartTime: payload.dataStartTime,
-			dataEndTime: payload.dataEndTime
-		}, 'Creating SP-API report request');
-		
-		const res = await reportsApi.createReport(body);
-		// SDK may wrap in data property depending on version
-		const reportId = res?.data?.reportId || res?.reportId;
-		if (!reportId) throw new Error('createReport: reportId missing in response');
-		return { reportId };
-	} catch (error) {
-		logger.error({ 
-			error: error.message,
-			status: error.status,
-			statusText: error.statusText,
-			response: error.response?.data,
-			sellerId: sellerProfile.AmazonSellerID
-		}, 'SP-API createReport failed');
-		throw error;
-	}
+    const makeRequest = async (auth) => {
+        const reportsApi = await buildReportsClient({ ...auth, merchantRegion: sellerProfile.MerchantRegion });
+        const body = {
+            reportType: payload.reportType || config.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT,
+            marketplaceIds: payload.marketplaceIds,
+            dataStartTime: payload.dataStartTime,
+            dataEndTime: payload.dataEndTime,
+            reportOptions: payload.reportOptions,
+        };
+        const res = await reportsApi.createReport(body);
+        const reportId = res?.data?.reportId || res?.reportId;
+        if (!reportId) throw new Error('reportId missing in response');
+        return { reportId };
+    };
+
+    try {
+        return await makeRequest(authOverrides);
+    } catch (err) {
+        const status = err.status || err.statusCode || err.response?.status;
+        if (status === 401 || status === 403) {
+            const refreshed = await authService.buildAuthOverrides(sellerProfile.AmazonSellerID, true);
+            if (!refreshed?.accessToken) throw new Error('No access token after refresh');
+            return await makeRequest(refreshed);
+        }
+        throw err;
+    }
 }
 
 async function getReportStatus(sellerProfile, reportId, authOverrides = {}) {
-	try {
-		// Add merchant region to auth overrides
-		const clientOpts = {
-			...authOverrides,
-			merchantRegion: sellerProfile.MerchantRegion
-		};
-		const reportsApi = await buildReportsClient(clientOpts);
-		const res = await reportsApi.getReport(reportId);
-		const data = res?.data || res;
-		logger.info({ sellerId: sellerProfile.AmazonSellerID, reportId, raw: data }, 'getReport raw response');
-		const status = data?.processingStatus;
-		const reportDocumentId = data?.reportDocumentId || data?.payload?.reportDocumentId;
-		return { processingStatus: status, reportDocumentId };
-	} catch (error) {
-        logger.error({ 
-            error: error.message,
-            status: error.status,
-            statusText: error.statusText,
-            response: error.response?.data,
-            sellerId: sellerProfile.AmazonSellerID,
-            reportId
-        }, 'SP-API getReportStatus failed');
-        // Normalize 403 Forbidden into a clear, non-retryable error with preserved status
-        if ((error.status || error.response?.status) === 403) {
-            const e = new Error('Forbidden: SP-API Brand Analytics permission missing or token/seller mismatch');
-            e.status = 403;
-            throw e;
+    const makeRequest = async (auth) => {
+        const reportsApi = await buildReportsClient({ ...auth, merchantRegion: sellerProfile.MerchantRegion });
+        const res = await reportsApi.getReport(reportId);
+        const data = res?.data || res;
+        return {
+            processingStatus: data?.processingStatus,
+            reportDocumentId: data?.reportDocumentId || data?.payload?.reportDocumentId
+        };
+    };
+
+    try {
+        return await makeRequest(authOverrides);
+    } catch (err) {
+        const status = err.status || err.statusCode || err.response?.status;
+        if (status === 401 || status === 403) {
+            const refreshed = await authService.buildAuthOverrides(sellerProfile.AmazonSellerID, true);
+            if (!refreshed?.accessToken) throw new Error('No access token after refresh');
+            return await makeRequest(refreshed);
         }
-        throw error;
-	}
+        throw err;
+    }
 }
 
 async function downloadReport(sellerProfile, documentId, authOverrides = {}) {
-	try {
-	  // Build reports client with correct region
-	  const clientOpts = {
-		...authOverrides,
-		merchantRegion: sellerProfile.MerchantRegion,
-	  };
-	  const reportsApi = await buildReportsClient(clientOpts);
-  
-	  logger.info({ sellerId: sellerProfile.AmazonSellerID }, "Building Reports API client");
-  
-	  // Step 1: Get document metadata
-	  const metaResp = await reportsApi.getReportDocument(documentId);
-	  const doc = metaResp?.data || metaResp;
-  
-	  logger.info(
-		{
-		  sellerId: sellerProfile.AmazonSellerID,
-		  documentId,
-		  hasUrl: !!doc?.url,
-		  compression: doc?.compressionAlgorithm,
-		},
-		"getReportDocument response"
-	  );
-  
-	  if (!doc?.url) {
-		throw new Error(`Missing download URL for documentId=${documentId}`);
-	  }
-  
-	  // Step 2: Download from pre-signed S3 URL (no auth needed)
-	  const resp = await axios.get(doc.url, {
-		responseType: "arraybuffer",
-		timeout: 60_000, // 60 sec safety
-	  });
-  
-	  let buffer = Buffer.from(resp.data);
-  
-	  // Step 3: Decompress if needed
-	  const compression = (doc.compressionAlgorithm || "").toUpperCase();
-	  if (compression === "GZIP") {
-		buffer = zlib.gunzipSync(buffer);
-	  }
-  
-	  // Step 4: Parse JSON (if valid JSON)
-	  let parsed = null;
-	  try {
-		parsed = JSON.parse(buffer.toString("utf8"));
-	  } catch {
-		logger.warn(
-		  { sellerId: sellerProfile.AmazonSellerID, documentId },
-		  "Downloaded report is not valid JSON, returning raw buffer"
-		);
-	  }
-  
-	  return { meta: doc, data: parsed, raw: buffer };
-	} catch (error) {
-	  logger.error(
-		{
-		  error: error.message,
-		  status: error.response?.status,
-		  response: error.response?.data,
-		  sellerId: sellerProfile.AmazonSellerID,
-		  documentId,
-		},
-		"SP-API downloadReport failed"
-	  );
-	  throw error;
-	}
+    const fetchReport = async (auth) => {
+        const reportsApi = await buildReportsClient({ ...auth, merchantRegion: sellerProfile.MerchantRegion });
+        const metaResp = await reportsApi.getReportDocument(documentId);
+        const doc = metaResp?.data || metaResp;
+        if (!doc?.url) throw new Error(`Missing download URL for documentId=${documentId}`);
+
+        let buffer = Buffer.from((await axios.get(doc.url, { responseType: 'arraybuffer', timeout: 60_000 })).data);
+        if ((doc.compressionAlgorithm || '').toUpperCase() === 'GZIP') buffer = zlib.gunzipSync(buffer);
+
+        let parsed = null;
+        try { parsed = JSON.parse(buffer.toString('utf8')); } catch {}
+        return { meta: doc, data: parsed, raw: buffer };
+    };
+
+    try {
+        return await fetchReport(authOverrides);
+    } catch (err) {
+        const status = err.status || err.statusCode || err.response?.status;
+        if (status === 401 || status === 403) {
+            const refreshed = await authService.buildAuthOverrides(sellerProfile.AmazonSellerID, true);
+            if (!refreshed?.accessToken) throw new Error('No access token after refresh');
+            return await fetchReport(refreshed);
+        }
+        throw err;
+    }
 }
+
+
 module.exports = { createReport, getReportStatus, downloadReport };
 
 

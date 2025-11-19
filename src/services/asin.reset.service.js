@@ -20,6 +20,7 @@ class AsinResetService {
             const month = today.getMonth() + 1, day = today.getDate();
             return day === Number(process.env.QUARTER_REPORT_DELAY || 20) && [1,4,7,10].includes(month);
         }
+        logger.info({'userId': null, 'operation': 'resetAsinStatus isNewPeriod', 'period': period}, 'No period start detected');
         return false;
     }
 
@@ -84,8 +85,8 @@ class AsinResetService {
 
     // Main reset method
     async resetAsinStatus() {
-        try {
-            logger.info('Starting automatic ASIN reset check');
+        try {            
+            logger.info({'userId': null, 'operation': 'resetAsinStatus'}, 'Starting automatic ASIN reset check');
             var periods = env.TYPE_ARRAY;
             const results = [];
             for (const period of periods) {
@@ -93,6 +94,8 @@ class AsinResetService {
                     logger.info(`New ${period.toLowerCase()} detected - resetting`);
                     const result = await this.resetStatus(period);
                     results.push(result);
+                } else {
+                    logger.info({'userId': null, 'operation': 'resetAsinStatus function for loop detected no period start', 'period': period}, 'No period start detected');
                 }
             }
             return results.length ? { success: true, message: 'Automatic reset completed', results }
