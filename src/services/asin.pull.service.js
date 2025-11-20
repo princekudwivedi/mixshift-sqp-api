@@ -61,7 +61,8 @@ class AsinPullService {
                 sellerID: seller?.idSellerAccount,
                 amazonSellerID: validatedAmazonSellerID,
                 insertedCount: result.insertedCount,
-                totalCount: result.totalCount
+                totalCount: result.totalCount,
+                updatedCount: result.updatedCount
             }, 'ASIN sync completed successfully');
 
         } catch (error) {
@@ -149,13 +150,37 @@ class AsinPullService {
             });
 
             // Create a set of existing combinations: ASIN + SellerID
-            const existingSet = new Set(existingAsinsInDB.map(item => `${item.ASIN}_${item.SellerID}`));
+            const normalizeKey = (asin, sellerId) => {
+                const normalizedAsin = (asin || '').trim().toUpperCase();
+                const normalizedSeller = parseInt(sellerId) || 0;
+                return `${normalizedAsin}_${normalizedSeller}`;
+            };
 
+            const existingSet = new Set(
+                existingAsinsInDB.map(item => normalizeKey(item.ASIN, item.SellerID))
+            );
+
+            const updates = [];
             // Filter new ASINs: insert only if combination does not exist
             const asinsToInsert = newAsins
                 .filter(item => {
-                    const key = `${item.ASIN}_${item.SellerID}`;
-                    return !existingSet.has(key);
+                    const normalizedSellerId = parseInt(item.SellerID) || 0;
+                    const normalizedAsin = (item.ASIN || '').trim().toUpperCase();
+                    const key = normalizeKey(normalizedAsin, normalizedSellerId);
+                    if (existingSet.has(key)) {
+                        updates.push({
+                            SellerID: normalizedSellerId,
+                            ASIN: normalizedAsin,
+                            SellerName: item.SellerName || '',
+                            MarketPlaceName: item.MarketPlaceName || '',
+                            ItemName: item.ItemName || '',
+                            SKU: item.SKU || '',
+                            AmazonSellerID: item.AmazonSellerID || '',
+                            ID: item.ID || 0
+                        });
+                        return false;
+                    }
+                    return true;
                 })
                 .map(item => ({
                     SellerID: parseInt(item.SellerID) || 0,
@@ -170,6 +195,7 @@ class AsinPullService {
                 }));
 
             let insertedCount = 0;
+            let updatedCount = 0;
             if (asinsToInsert.length > 0) {
                 const chunkSize = 50;
                 for (let i = 0; i < asinsToInsert.length; i += chunkSize) {
@@ -202,12 +228,52 @@ class AsinPullService {
                     }
                 }
             }
+
+            if (updates.length > 0) {
+                const chunkSize = 50;
+                for (let i = 0; i < updates.length; i += chunkSize) {
+                    const chunk = updates.slice(i, i + chunkSize);
+                    await Promise.all(
+                        chunk.map(record => {
+                            const payload = {
+                                SellerName: record.SellerName,
+                                MarketPlaceName: record.MarketPlaceName,
+                                ItemName: record.ItemName,
+                                SKU: record.SKU,
+                                dtUpdatedOn: dates.getNowDateTimeInUserTimezone().db
+                            };
+
+                            return SellerAsinList.update(payload, {
+                                where: {
+                                    SellerID: record.SellerID,
+                                    ASIN: record.ASIN,
+                                    AmazonSellerID: record.AmazonSellerID
+                                }
+                            })
+                            .then(([affected]) => {
+                                if (affected > 0) {
+                                    updatedCount += affected;
+                                }
+                            })
+                            .catch(updateError => {
+                                logger.warn(
+                                    {
+                                        error: updateError.message,
+                                        record
+                                    },
+                                    'ASIN update failed'
+                                );
+                            });
+                        })
+                    );
+                }
+            }
     
             const afterCount = await SellerAsinList.count({
                 where: { SellerID: seller.idSellerAccount }
             });
     
-            return { insertedCount, totalCount: afterCount, error: null };
+            return { insertedCount, totalCount: afterCount, updatedCount, error: null };
     
         } catch (error) {
             logger.error({
