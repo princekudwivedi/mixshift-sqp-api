@@ -10,6 +10,7 @@ const sellerModel = require('../models/sequelize/seller.model');
 const logger = require('../utils/logger.utils');
 const env = require('../config/env.config');
 const dates = require('../utils/dates.utils');
+const { Op, literal } = require("sequelize");
 
 class AsinPullService {
 
@@ -47,7 +48,6 @@ class AsinPullService {
             
             // Use the helper function
             const result = await this._syncSellerAsinsInternal(validatedAmazonSellerID, 0, 'AmazonSellerID');
-
             if (result.error) {
                 logger.error({ error: result.error }, 'ASIN sync failed');
                 return;
@@ -96,20 +96,48 @@ class AsinPullService {
                 logger.error({ sellerID: seller.idSellerAccount, seller }, 'Seller AmazonSellerID is missing');
                 return { insertedCount: 0, totalCount: 0, error: 'Seller AmazonSellerID is missing' };
             }
-        
-            // Get new ASINs from mws_items (group by ASIN only)
-            const newAsins = await MwsItems.findAll({
+            
+            // Get new ASINs from mws_items - select newest ItemName per ASIN
+            // Priority: InCatalog = 1 first, then by highest ID or most recent dtUpdatedOn
+            const newAsinsList = await MwsItems.findAll({
                 where: {
                     AmazonSellerID: seller.AmazonSellerID,
                     ASIN: {
-                        [require('sequelize').Op.ne]: null,
-                        [require('sequelize').Op.ne]: ''
+                        [Op.and]: [
+                            { [Op.ne]: null },
+                            { [Op.ne]: '' }
+                        ]
                     }
                 },
-                attributes: ['SellerID','ASIN','ItemName','SKU','SellerName','MarketPlaceName','AmazonSellerID'],
-                raw: true,
-                group: ['ASIN']
+                attributes: [
+                    "SellerID",
+                    "ASIN",
+                    "ItemName",
+                    "SKU",
+                    "SellerName",
+                    "MarketPlaceName",
+                    "AmazonSellerID",
+                    "ID",
+                    "dtUpdatedOn",
+                    [
+                        literal(`
+                            ROW_NUMBER() OVER (
+                                PARTITION BY ASIN 
+                                ORDER BY
+                                    CASE WHEN InCatalog = 1 THEN 0 ELSE 1 END,
+                                    COALESCE(dtUpdatedOn, '1970-01-01') DESC,
+                                    ID DESC
+                            )
+                        `),
+                        "rn"
+                    ]
+                ],
+                raw: true
             });
+
+            // Keep ONLY the newest record per ASIN
+            const newAsins = newAsinsList.filter(x => x.rn === 1);
+
             // Fetch existing ASINs for this seller
             const existingAsinsInDB = await SellerAsinList.findAll({
                 where: { 
