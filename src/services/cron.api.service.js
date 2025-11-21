@@ -209,7 +209,6 @@ class CronApiService {
                 await loadDatabase(0);
                 const users = validatedUserId ? [{ ID: validatedUserId }] : await getAllAgencyUserList();
                 
-                let totalRetryNotifications = 0;
                 let totalErrors = 0;
                 const allResults = [];
                 
@@ -432,9 +431,8 @@ class CronApiService {
         await asinInitialPull.updateInitialPullStatusByASIN(record.AmazonSellerID, record.ASIN_List, record.SellerID, updateData);
 
         await model.updateSQPReportStatus(record.ID, reportType, 2, startDate, null, 4, true); // 4 is retry mark running status
-        let res = null;
         try {
-            res = await ctrl.checkReportStatuses(authOverrides, { cronDetailID: [record.ID], reportType: reportType, cronDetailData: [record], user: user }, true);
+            await ctrl.checkReportStatuses(authOverrides, { cronDetailID: [record.ID], reportType: reportType, cronDetailData: [record], user: user }, true);
         } catch (e) {
             logger.error({ id: record.ID, reportType, error: e.message }, 'Retry status check failed');
         }

@@ -34,12 +34,6 @@ async function checkAllowedReportTypes(reportTypes, user, seller, chunk) {
 	// IF ANY REPORT TYPES ARE DELAYED
 	// -----------------------------
 	if (delayedReportTypes.length > 0) {
-
-		const reasons = delayedReportTypes.reduce((acc, curr) => {
-			acc[curr.type] = curr.reason;
-			return acc;
-		}, {});
-
 		const ranges = delayedReportTypes.map(info => {
 			const range = dates.getDateRangeForPeriod(info.type);
 			return {
@@ -181,7 +175,7 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 			});
 		},
 		operation: async ({ attempt, currentRetry, context, startTime }) => {
-			const { chunk, seller, authOverrides, user } = context;
+			const { chunk, seller, user } = context;
 			
 			// Set start date when beginning the report request
 			const startDate =  dates.getNowDateTimeInUserTimezone();
@@ -215,7 +209,7 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
                 }
                 asinString = parts.join(' ');
             } else if (chunk.asin_string) {
-                asinString = String(chunk.asin_string).replace(/\s+/g, ' ').trim().slice(0, 200);
+                asinString = String(chunk.asin_string).replaceAll(/\s+/g, ' ').trim().slice(0, 200);
             }
 
             if (!asinString) {
@@ -446,7 +440,7 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 			});
 		},
 		operation: async ({ attempt, currentRetry, context, startTime }) => {
-			const { row, reportId, seller, authOverrides, isRetry, user, range } = context;
+			const { row, reportId, seller, user, range } = context;
 			const statusStartTime =  dates.getNowDateTimeInUserTimezone();
 			
 			// Ensure access token for this seller during status checks
@@ -550,7 +544,7 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 					reportType, 
 					action: 'Check Status', 
 					status: 0, 
-					message: `Report ${status.toLowerCase().replace('_',' ')} on attempt ${attempt}, waiting ${delaySeconds}s before retry`, 
+					message: `Report ${status.toLowerCase().replaceAll('_',' ')} on attempt ${attempt}, waiting ${delaySeconds}s before retry`, 
 					reportID: reportId, 
 					retryCount: currentRetry,
 					executionTime: (Date.now() - startTime) / 1000 
@@ -583,7 +577,7 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 
 					// Max retries reached - return failure instead of retrying
 					return {
-						message: `Report still ${status.toLowerCase().replace('_',' ')} after ${maxRetries} attempts`,
+						message: `Report still ${status.toLowerCase().replaceAll('_',' ')} after ${maxRetries} attempts`,
 						action: 'Check Status',
 						reportID: reportId,
 						data: { status, attempt, maxRetries },
@@ -595,7 +589,7 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 				await DelayHelpers.wait(delaySeconds, 'Before retry IN_QUEUE or IN_PROGRESS');
 
 				// Throw error to trigger retry mechanism
-				const pendingError = new Error(`Report still ${status.toLowerCase().replace('_',' ')} after ${delaySeconds}s wait - retrying`);
+				const pendingError = new Error(`Report still ${status.toLowerCase().replaceAll('_',' ')} after ${delaySeconds}s wait - retrying`);
 				pendingError.code = 'REPORT_PENDING';
 				pendingError.isRetryable = true;
 				pendingError.suppressErrorLog = true; // Don't log as error, just retry
@@ -612,10 +606,8 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 				return res;
 			} else {
 				// Unknown status - treat as error
-				if(!status) {
-					status = 'UNKNOWN';
-				}
-				const res = await handleFatalOrUnknownStatus(row, reportType, status, reportId);
+				const finalStatus = status || 'UNKNOWN';
+				const res = await handleFatalOrUnknownStatus(row, reportType, finalStatus, reportId);
 				const requestDelaySeconds = Number(process.env.REQUEST_DELAY_SECONDS) || 30;
 				await DelayHelpers.wait(requestDelaySeconds, 'Between report status checks and unknown status (rate limiting)');
 				return res;
@@ -679,7 +671,7 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 			});
 		},
 		operation: async ({ attempt, currentRetry, context, startTime }) => {
-			const { row, reportId, seller, authOverrides, user, range, downloadDocumentId } = context;
+			const { row, reportId, seller, user, range, downloadDocumentId } = context;
 			const downloadStartTime =  dates.getNowDateTimeInUserTimezone();
 			const timezone = await model.getUserTimezone(user);
 			logger.info({ reportId, reportType, attempt }, 'Starting download for report');
@@ -759,7 +751,7 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 					const saveResult = await jsonSvc.saveReportJsonFile(downloadMeta, data);
 					filePath = saveResult?.path || saveResult?.url || null;
 					if (filePath) {
-						const fs = require('fs');
+						const fs = require('node:fs');
 						const stat = await fs.promises.stat(filePath).catch(() => null);
 						fileSize = stat ? stat.size : 0;
 						logger.info({ filePath, fileSize, attempt }, 'Report JSON saved to disk');
@@ -789,8 +781,8 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 						attempt
 					});
 					
-				} catch (fileErr) {
-					logger.warn({ error: fileErr ? (fileErr.message || String(fileErr)) : 'Unknown error', attempt }, 'Failed to save JSON file');
+				} catch (error_) {
+					logger.warn({ error: error_ ? (error_.message || String(error_)) : 'Unknown error', attempt }, 'Failed to save JSON file');
 					
 					// API Logger - Download Success but File Save Failed
 					const userId = user ? user.ID : null;
@@ -811,7 +803,7 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 						endTime:  dates.getNowDateTimeInUserTimezone().log,
 						executionTime: (Date.now() - startTime) / 1000,
 						status: 'partial_success',
-						error: fileErr,
+						error: error_,
 						retryCount: currentRetry,
 						attempt
 					});
@@ -830,7 +822,8 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
                 );
 
 				
-				const newRow = await downloadUrls.getCompletedDownloadsWithFiles(filter = { cronDetailID: row.ID, ReportType: reportType });
+				const filter = { cronDetailID: row.ID, ReportType: reportType };
+				const newRow = await downloadUrls.getCompletedDownloadsWithFiles(filter);
 				
 				if (newRow.length > 0) {					
 					// Process saved JSON files immediately after download
@@ -1037,9 +1030,8 @@ async function finalizeCronRunningStatus(cronDetailID, user = null) {
         // Get only statuses for active reports
         const statuses = activeReports.map(r => r.status);
         
-        const anyInProgress = statuses.some(s => s === 0);
-        const anyRetryNeeded = statuses.some(s => s === 2);
-        const anyFatal = statuses.some(s => s === 3);
+        const anyInProgress = statuses.includes(0);
+        const anyRetryNeeded = statuses.includes(2);
         const allCompleted = statuses.every(s => s === 1);
         const allFinalizedOrFatal = statuses.every(s => s === 1 || s === 3);
 

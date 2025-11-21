@@ -1,5 +1,5 @@
-const fs = require('fs').promises;
-const path = require('path');
+const fs = require('node:fs').promises;
+const path = require('node:path');
 const logger = require('../utils/logger.utils');
 const dates = require('../utils/dates.utils');
 
@@ -259,7 +259,6 @@ class RetryHelpers {
                     // Final failure - set status to error and EndDate, but do NOT clear existing ReportID fields
                     // DO NOT set cronRunningStatus directly - let finalizeCronRunningStatus decide based on all reports
                     try {
-                        const existingReportId = (context && (context.reportId || context.reportID)) || null;
                         await model.updateSQPReportStatus(
                             cronDetailID,
                             reportType,
@@ -268,8 +267,8 @@ class RetryHelpers {
                              dates.getNowDateTimeInUserTimezone().db, // endDate set on failure
                             null // DO NOT set cronRunningStatus here - will be calculated by finalizeCronRunningStatus
                         );                       
-                    } catch (updateErr) {
-                        logger.error({ error: updateErr.message, cronDetailID, reportType }, 'Failed to set EndDate on failure');
+                    } catch (error_) {
+                        logger.error({ error: error_.message, cronDetailID, reportType }, 'Failed to set EndDate on failure');
                     }
 
                     // Also log the failure row
@@ -443,10 +442,10 @@ class ValidationHelpers {
         return input
             .trim()
             .substring(0, maxLength)
-            .replace(/[<>\"'&]/g, '')  // XSS protection
-            .replace(/[';-]/g, '')  // SQL injection protection
-            .replace(/[^\w\s\-\.@]/g, '') // Allow only safe characters
-            .replace(/\s+/g, ' ')      // Normalize whitespace
+            .replaceAll(/[<>"'&]/g, '')  // XSS protection
+            .replaceAll(/[';-]/g, '')  // SQL injection protection
+            .replaceAll(/[^\w\s\-.@]/g, '') // Allow only safe characters
+            .replaceAll(/\s+/g, ' ')      // Normalize whitespace
             .trim();
     }
 
@@ -459,7 +458,7 @@ class ValidationHelpers {
         }
         
         const num = Number(input);
-        if (isNaN(num) || !isFinite(num)) {
+        if (Number.isNaN(num) || !Number.isFinite(num)) {
             return defaultValue;
         }
         
@@ -476,7 +475,7 @@ class ValidationHelpers {
     static sanitizeDate(input) {
         if (!input) return null;
         const date = new Date(input);
-        return isNaN(date.getTime()) ? null : date.toISOString().split('T')[0];
+        return Number.isNaN(date.getTime()) ? null : date.toISOString().split('T')[0];
     }
 
     /**
@@ -498,8 +497,8 @@ class ValidationHelpers {
         }
         
         const num = Number(userId);
-        if (isNaN(num) || !isFinite(num)) {
-            throw new Error('Invalid user ID: must be between 1 and 999999999');
+        if (Number.isNaN(num) || !Number.isFinite(num)) {
+            throw new TypeError('Invalid user ID: must be between 1 and 999999999');
         }
         
         if (num < 1 || num > 999999999) {
@@ -561,8 +560,8 @@ class DateHelpers {
         }
         
         const date = new Date(dateString);
-        if (isNaN(date.getTime())) {
-            throw new Error('Invalid date format');
+        if (Number.isNaN(date.getTime())) {
+            throw new TypeError('Invalid date format');
         }
         
         return date;
@@ -1069,8 +1068,8 @@ class MemoryMonitor {
             logger.warn(stats, 'High memory usage detected');
             
             // Force garbage collection if available
-            if (global.gc) {
-                global.gc();
+            if (globalThis.gc) {
+                globalThis.gc();
                 logger.info('Forced garbage collection');
             }
         }
