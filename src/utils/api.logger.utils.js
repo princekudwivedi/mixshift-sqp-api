@@ -410,11 +410,11 @@ class APILogger {
         const sanitized = { ...headers };
         const sensitiveKeys = ['authorization', 'x-amz-access-token', 'x-api-key', 'cookie'];
         
-        sensitiveKeys.forEach(key => {
+        for (const key of sensitiveKeys) {
             if (sanitized[key]) {
                 sanitized[key] = '[REDACTED]';
             }
-        });
+        }
 
         return sanitized;
     }
@@ -459,7 +459,7 @@ class APILogger {
             let size = 0;
             try {
                 const files = fs.readdirSync(dir);
-                files.forEach((file) => {
+                for (const file of files) {
                     const filePath = path.join(dir, file);
                     const stat = fs.statSync(filePath);
                     if (stat.isDirectory()) {
@@ -467,7 +467,7 @@ class APILogger {
                     } else {
                         size += stat.size;
                     }
-                });
+                }
             } catch (error) {
                 logger.error(`Error calculating size for ${dir}:`, error.message);
             }
@@ -490,7 +490,7 @@ class APILogger {
             logger.info('\n📂 Cleaning root date folders...');
             const rootFolders = fs.readdirSync(logsRootDir);
             
-            rootFolders.forEach(folder => {
+            for (const folder of rootFolders) {
                 const folderPath = path.join(logsRootDir, folder);
                 
                 if (!fs.statSync(folderPath).isDirectory()) return;
@@ -512,7 +512,7 @@ class APILogger {
                     totalBytesFreed += folderSize;
                     logger.info(`   ✓ Deleted: ${folder} (${(folderSize / 1024 / 1024).toFixed(2)} MB)`);
                 }
-            });
+            }
 
             // 2. Clean API logs (logs/api_logs/user_X/<DD-MM-YYYY>/)
             if (fs.existsSync(this.baseLogPath)) {
@@ -523,7 +523,7 @@ class APILogger {
 
                 let apiLogsDeleted = 0;
 
-                userFolders.forEach(userFolder => {
+                for (const userFolder of userFolders) {
                     const userPath = path.join(this.baseLogPath, userFolder);
 
                     // Check if it's a directory
@@ -547,7 +547,7 @@ class APILogger {
                     const dateFolders = fs.readdirSync(userPath);
                     logger.info(`      Found ${dateFolders.length} date folders`);
 
-                    dateFolders.forEach(dateFolder => {
+                    for (const dateFolder of dateFolders) {
                         const datePath = path.join(userPath, dateFolder);
 
                         if (!fs.statSync(datePath).isDirectory()) return;
@@ -572,7 +572,7 @@ class APILogger {
                         } else {
                             logger.info(`      ✓ Keeping (recent): ${dateFolder}`);
                         }
-                    });
+                    }
 
                     // Remove empty user folder if no date folders remain
                     try {
@@ -584,7 +584,7 @@ class APILogger {
                     } catch (err) {
                         // Ignore errors for empty folder removal
                     }
-                });
+                }
 
                 if (apiLogsDeleted === 0) {
                     logger.info(`   ℹ️  No old API log folders found to delete`);
@@ -602,7 +602,7 @@ class APILogger {
                 const dateFolders = fs.readdirSync(reportsBasePath);
                 logger.info(`   Found ${dateFolders.length} date folders in reports`);
 
-                dateFolders.forEach((dateFolder) => {
+                for (const dateFolder of dateFolders) {
                     const datePath = path.join(reportsBasePath, dateFolder);
                     if (!fs.statSync(datePath).isDirectory()) return;
 
@@ -619,7 +619,7 @@ class APILogger {
                         totalBytesFreed += folderSize;
                         logger.info(`   ✓ Deleted report date folder: ${dateFolder} (${(folderSize / 1024 / 1024).toFixed(2)} MB)`);
                     }
-                });
+                }
             } else {
                 logger.info('\n📂 Reports directory not found');
                 logger.info(`   Expected path: ${reportsBasePath}`);

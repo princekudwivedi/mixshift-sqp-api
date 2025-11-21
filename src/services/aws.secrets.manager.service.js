@@ -74,15 +74,15 @@ class AwsSecretsManagerService {
                 const response = await this.client.send(command);
 
                 if (Array.isArray(response?.Parameters)) {
-                    response.Parameters.forEach(param => {
+                    for (const param of response.Parameters) {
                         const name = param?.Name;
-                        if (!name || typeof param.Value === 'undefined') return;
+                        if (!name || typeof param.Value === 'undefined') continue;
 
                         const key = name.split('/').filter(Boolean).pop();
-                        if (!key) return;
+                        if (!key) continue;
 
                         parameters[key] = param.Value;
-                    });
+                    }
                 }
 
                 nextToken = response?.NextToken;
@@ -110,12 +110,12 @@ class AwsSecretsManagerService {
         const { overwrite = true } = options;
         const parameters = await this.getAllParameters(pathPrefix, options);
 
-        Object.entries(parameters).forEach(([key, value]) => {
+        for (const [key, value] of Object.entries(parameters)) {
             if (!overwrite && Object.prototype.hasOwnProperty.call(process.env, key)) {
-                return;
+                continue;
             }
             process.env[key] = value;
-        });
+        }
 
         return parameters;
     }

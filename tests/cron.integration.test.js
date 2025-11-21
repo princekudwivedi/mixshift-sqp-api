@@ -206,11 +206,11 @@ describe('Cron Integration Tests', () => {
     });
     
     describe('File Operations Integration', () => {
-        const testDir = require('path').join(__dirname, 'integration-test-files');
-        const testFile = require('path').join(testDir, 'integration-test.json');
+        const testDir = require('node:path').join(__dirname, 'integration-test-files');
+        const testFile = require('node:path').join(testDir, 'integration-test.json');
         
         beforeAll(async () => {
-            const fs = require('fs').promises;
+            const fs = require('node:fs').promises;
             await fs.mkdir(testDir, { recursive: true });
             await fs.writeFile(testFile, JSON.stringify({ 
                 test: 'integration data',
@@ -219,7 +219,7 @@ describe('Cron Integration Tests', () => {
         });
         
         afterAll(async () => {
-            const fs = require('fs').promises;
+            const fs = require('node:fs').promises;
             await fs.rm(testDir, { recursive: true, force: true });
         });
         
@@ -287,12 +287,14 @@ describe('Cron Integration Tests', () => {
             expect(afterMemory.heapUsed).toBeGreaterThanOrEqual(initialMemory.heapUsed);
             
             // Clean up
-            arrays.forEach(arr => arr.length = 0);
+            for (const arr of arrays) {
+                arr.length = 0;
+            }
             arrays.length = 0;
             
             // Force garbage collection if available
-            if (global.gc) {
-                global.gc();
+            if (globalThis.gc) {
+                globalThis.gc();
             }
         });
     });

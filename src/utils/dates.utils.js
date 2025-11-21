@@ -68,28 +68,19 @@ function resolveTimezone(preferred) {
     if (DEFAULT_TZ && DEFAULT_TZ.trim().length > 0 && DEFAULT_TZ !== 'UTC') {
         return DEFAULT_TZ;
     }
-    try {
-        const resolved = Intl.DateTimeFormat().resolvedOptions().timeZone;
-        if (resolved && resolved !== 'UTC') {
-            return resolved;
-        }
-    } catch (err) {
-        // ignore
+    
+    const resolved = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (resolved && resolved !== 'UTC') {
+        return resolved;
     }
+    
     if (preferred && preferred.trim().length > 0) {
         return preferred;
     }
     if (DEFAULT_TZ && DEFAULT_TZ.trim().length > 0) {
         return DEFAULT_TZ;
     }
-    try {
-        const resolved = Intl.DateTimeFormat().resolvedOptions().timeZone;
-        if (resolved) {
-            return resolved;
-        }
-    } catch (err) {
-        // ignore
-    }
+    
     return 'UTC';
 }
 
@@ -99,8 +90,8 @@ function parseOffset(timeZoneName) {
         return { minutes: 0, string: '+00:00' };
     }
     const sign = match[1] === '-' ? -1 : 1;
-    const hours = parseInt(match[2] || '0', 10);
-    const minutes = parseInt(match[3] || '0', 10);
+    const hours = Number.parseInt(match[2] || '0', 10);
+    const minutes = Number.parseInt(match[3] || '0', 10);
     const totalMinutes = sign * (hours * 60 + minutes);
     const normalized = `${sign === -1 ? '-' : '+'}${String(Math.abs(hours)).padStart(2, '0')}:${String(Math.abs(minutes)).padStart(2, '0')}`;
     return { minutes: totalMinutes, string: normalized };
@@ -122,9 +113,9 @@ function getTimeZoneParts(date, timeZone) {
 
     const parts = formatter.formatToParts(date);
     const map = {};
-    parts.forEach(({ type, value }) => {
+    for (const { type, value } of parts) {
         map[type] = value;
-    });
+    }
 
     const datePart = `${map.year}-${map.month}-${map.day}`;
     const timePart = `${map.hour}:${map.minute}:${map.second}`;
@@ -195,7 +186,7 @@ function getNowRangeForPeriodInUserTimezone(timezone = null) {
 /**
  * Calculate historical week ranges (Sunday–Saturday)
  */
-function calculateWeekRanges(numberOfWeeks = 52, skipLatest = true, timezone) {
+function calculateWeekRanges(numberOfWeeks = 52, skipLatest = true, timezone = null) {
     const ranges = [];
     const today = getNowDateTimeInUserTimezoneDate(new Date(), timezone);
     const currentSunday = startOfWeek(today, { weekStartsOn: 0 }); // Sunday
@@ -220,7 +211,7 @@ function calculateWeekRanges(numberOfWeeks = 52, skipLatest = true, timezone) {
 /**
  * Calculate historical month ranges
  */
-function calculateMonthRanges(numberOfMonths = 12, skipCurrent = true, timezone) {
+function calculateMonthRanges(numberOfMonths = 12, skipCurrent = true, timezone = null) {
     const ranges = [];
     const today = getNowDateTimeInUserTimezoneDate(new Date(), timezone);
     const startMonthIndex = skipCurrent ? -2 : 0;
@@ -244,7 +235,7 @@ function calculateMonthRanges(numberOfMonths = 12, skipCurrent = true, timezone)
 /**
  * Calculate historical quarter ranges
  */
-function calculateQuarterRanges(numberOfQuarters = 4, skipCurrent = true, timezone) {
+function calculateQuarterRanges(numberOfQuarters = 4, skipCurrent = true, timezone = null) {
     const ranges = [];
     const today = getNowDateTimeInUserTimezoneDate(new Date(), timezone);
     const currentQuarter = Math.floor(today.getMonth() / 3); // 0 = Q1
@@ -278,9 +269,9 @@ function calculateQuarterRanges(numberOfQuarters = 4, skipCurrent = true, timezo
  * Combined full ranges
  */
 function calculateFullRanges(timezone) {
-    const weeksToPull = parseInt(process.env.WEEKS_TO_PULL || 52);
-    const monthsToPull = parseInt(process.env.MONTHS_TO_PULL || 12);
-    const quartersToPull = parseInt(process.env.QUARTERS_TO_PULL || 4);
+    const weeksToPull = Number.parseInt(process.env.WEEKS_TO_PULL || 52, 10);
+    const monthsToPull = Number.parseInt(process.env.MONTHS_TO_PULL || 12, 10);
+    const quartersToPull = Number.parseInt(process.env.QUARTERS_TO_PULL || 4, 10);
 
     const weekRanges = calculateWeekRanges(weeksToPull, true, timezone);
     const monthRanges = calculateMonthRanges(monthsToPull, true, timezone);

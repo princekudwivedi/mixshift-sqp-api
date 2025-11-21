@@ -1,5 +1,5 @@
-const fs = require('fs');
-const path = require('path');
+const fs = require('node:fs');
+const path = require('node:path');
 require('dotenv').config({ path: path.resolve(process.cwd(), '.env') });
 
 /**
@@ -12,7 +12,7 @@ function env(name, defaultValue = null) {
 
 // Safe integer parser
 function toInt(value, defaultValue) {
-  const parsed = parseInt(value, 10);
+  const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : defaultValue;
 }
 
@@ -190,9 +190,9 @@ async function loadPath(rawPath, { overwrite, service, label }) {
 }
 
 function applyLocalVariables(data, { overwrite, label }) {
-  Object.entries(data).forEach(([key, value]) => {
+  for (const [key, value] of Object.entries(data)) {
     setEnvIfAllowed(key, value, overwrite);
-  });
+  }
 }
 
 function setEnvIfAllowed(key, value, overwrite) {

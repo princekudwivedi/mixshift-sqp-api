@@ -71,7 +71,7 @@ class ConnectionMonitor {
                         lastChecked: new Date().toISOString()
                     };
                     
-                    const connectionLimit = parseInt(process.env.DB_CONNECTION_LIMIT, 10) || 5;
+                    const connectionLimit = Number.parseInt(process.env.DB_CONNECTION_LIMIT, 10) || 5;
 
                     if (totalConnections > connectionLimit) {
                         logger.warn({
@@ -138,11 +138,11 @@ function getHealthCheckData() {
         status: 'healthy',
         timestamp: new Date().toISOString(),
         database: {
-            connected: sequelize ? true : false,
+            connected: !!sequelize,
             connectionStats: stats,
-            connectionLimit: parseInt(process.env.DB_CONNECTION_LIMIT) || 5,
+            connectionLimit: Number.parseInt(process.env.DB_CONNECTION_LIMIT, 10) || 5,
             connectionUsage: stats.totalConnections ? 
-                Math.round((stats.totalConnections / (parseInt(process.env.DB_CONNECTION_LIMIT) || 5)) * 100) : 0
+                Math.round((stats.totalConnections / (Number.parseInt(process.env.DB_CONNECTION_LIMIT, 10) || 5)) * 100) : 0
         },
         memory: {
             used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),

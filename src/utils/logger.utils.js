@@ -1,6 +1,6 @@
 const pino = require('pino');
-const fs = require('fs');
-const path = require('path');
+const fs = require('node:fs');
+const path = require('node:path');
 const envConfig = require('../config/env.config');
 const LOG_TO_FILE = process.env.LOG_TO_FILE === 'true';
 const LOG_DIR = process.env.LOG_DIR || path.join(process.cwd(), 'logs');
@@ -60,8 +60,8 @@ function sanitizeValue(value, visited = new WeakSet()) {
 
 	if (typeof value === 'string') {
 		return value
-			.replace(/(tenantDb|tenant_Db|daysToKeep|logCleanupDays|validatedUserId|userId|hasToken|token|access_token|refresh_token|id_token)=([^&\s]+)/gi, '$1=[REDACTED]')
-			.replace(/(api[_-]?key|secret|password)=([^&\s]+)/gi, '$1=[REDACTED]');
+			.replaceAll(/(tenantDb|tenant_Db|daysToKeep|logCleanupDays|validatedUserId|userId|hasToken|token|access_token|refresh_token|id_token)=([^&\s]+)/g, '$1=[REDACTED]')
+			.replaceAll(/(api[_-]?key|secret|password)=([^&\s]+)/gi, '$1=[REDACTED]');
 	}
 
 	if (typeof value !== 'object') {
@@ -91,7 +91,7 @@ function sanitizeValue(value, visited = new WeakSet()) {
 	}
 
 	const redacted = {};
-	Object.entries(value).forEach(([key, val]) => {
+	for (const [key, val] of Object.entries(value)) {
 		const lowerKey = key.toLowerCase();
 		const shouldRedact =
 			lowerKey === 'userid' ||
@@ -126,7 +126,7 @@ function sanitizeValue(value, visited = new WeakSet()) {
 		} else {
 			redacted[key] = sanitizeValue(val, visited);
 		}
-	});
+	}
 
 	return redacted;
 }
@@ -173,9 +173,9 @@ if (LOG_TO_FILE) {
 		{ level: 'fatal', fileName: 'fatal.log' }
 	];
 
-	levelStreams.forEach(({ level, fileName }) => {
+	for (const { level, fileName } of levelStreams) {
 		streams.push({ level, stream: createLevelStream(fileName) });
-	});
+	}
 }
 
 const logger = pino(

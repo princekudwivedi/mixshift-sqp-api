@@ -46,11 +46,11 @@ class BaseModel {
             };
 
             // Remove undefined values
-            Object.keys(queryOptions).forEach(key => {
+            for (const key of Object.keys(queryOptions)) {
                 if (queryOptions[key] === undefined) {
                     delete queryOptions[key];
                 }
-            });
+            }
 
             const results = await sequelize.query(
                 `SELECT * FROM ${this.tableName}`,
@@ -123,10 +123,12 @@ class BaseModel {
         try {
             const sequelize = this.getSequelize();
             const fields = Object.keys(data);
-            const setClause = fields.map(field => `${field} = :${field}`).join(', ');
             
+            const columns = fields.join(', ');
+            const placeholders = fields.map(f => `:${f}`).join(', ');
+
             const result = await sequelize.query(
-                `INSERT INTO ${this.tableName} (${fields.join(', ')}) VALUES (${fields.map(f => `:${f}`).join(', ')})`,
+                `INSERT INTO ${this.tableName} (${columns}) VALUES (${placeholders})`,
                 {
                     replacements: data,
                     type: sequelize.QueryTypes.INSERT

@@ -80,7 +80,7 @@ function getAllowedUsers() {
         // Fallback: if comma-separated string like "8,3"
         return envUsers
             .split(',')
-            .map(id => parseInt(id.trim(), 10))
+            .map(id => Number.parseInt(id.trim(), 10))
             .filter(id => !isNaN(id));
     }
 

@@ -9,8 +9,8 @@ const {
     RateLimiter,
     MemoryMonitor
 } = require('../src/helpers/sqp.helpers');
-const fs = require('fs').promises;
-const path = require('path');
+const fs = require('node:fs').promises;
+const path = require('node:path');
 
 describe('Helper Methods Tests', () => {
     
@@ -36,9 +36,9 @@ describe('Helper Methods Tests', () => {
                 { message: 'Gateway timeout', statusCode: 504 }
             ];
             
-            retryableErrors.forEach(error => {
+            for (const error of retryableErrors) {
                 expect(RetryHelpers.isRetryableError(error)).toBe(true);
-            });
+            }
         });
         
         test('should classify non-retryable errors correctly', () => {
@@ -52,9 +52,9 @@ describe('Helper Methods Tests', () => {
                 { message: 'Not found', statusCode: 404 }
             ];
             
-            nonRetryableErrors.forEach(error => {
+            for (const error of nonRetryableErrors) {
                 expect(RetryHelpers.isRetryableError(error)).toBe(false);
-            });
+            }
         });
         
         test('should execute operation successfully on first attempt', async () => {
@@ -255,7 +255,7 @@ describe('Helper Methods Tests', () => {
             const record = {
                 impressionData: { asinImpressionCount: 1000 },
                 clickData: { asinClickCount: 100, asinMedianClickPrice: { amount: 0.5 } },
-                purchaseData: { asinPurchaseCount: 10, asinMedianPurchasePrice: { amount: 25.0 } }
+                purchaseData: { asinPurchaseCount: 10, asinMedianPurchasePrice: { amount: 25 } }
             };
             
             const metrics = DataProcessingHelpers.calculateDerivedMetrics(record);

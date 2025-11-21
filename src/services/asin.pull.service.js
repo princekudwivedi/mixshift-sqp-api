@@ -152,7 +152,7 @@ class AsinPullService {
             // Create a set of existing combinations: ASIN + SellerID
             const normalizeKey = (asin, sellerId) => {
                 const normalizedAsin = (asin || '').trim().toUpperCase();
-                const normalizedSeller = parseInt(sellerId) || 0;
+                const normalizedSeller = Number.parseInt(sellerId, 10) || 0;
                 return `${normalizedAsin}_${normalizedSeller}`;
             };
 
@@ -164,7 +164,7 @@ class AsinPullService {
             // Filter new ASINs: insert only if combination does not exist
             const asinsToInsert = newAsins
                 .filter(item => {
-                    const normalizedSellerId = parseInt(item.SellerID) || 0;
+                    const normalizedSellerId = Number.parseInt(item.SellerID, 10) || 0;
                     const normalizedAsin = (item.ASIN || '').trim().toUpperCase();
                     const key = normalizeKey(normalizedAsin, normalizedSellerId);
                     if (existingSet.has(key)) {
@@ -183,7 +183,7 @@ class AsinPullService {
                     return true;
                 })
                 .map(item => ({
-                    SellerID: parseInt(item.SellerID) || 0,
+                    SellerID: Number.parseInt(item.SellerID, 10) || 0,
                     SellerName: item.SellerName || '',
                     MarketPlaceName: item.MarketPlaceName || '',
                     AmazonSellerID: item.AmazonSellerID || '',
