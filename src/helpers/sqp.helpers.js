@@ -358,6 +358,10 @@ class RetryHelpers {
     static isRetryableError(error) {
         if (!error || !error.message) return false;
         
+        // Explicitly check for retryable flag or REPORT_PENDING code
+        if (error.isRetryable === true || error.code === 'REPORT_PENDING') {
+            return true;
+        }
         const message = error.message.toLowerCase();
         const status = error.status || error.statusCode || error.code;
         
