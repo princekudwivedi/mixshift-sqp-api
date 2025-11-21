@@ -1,4 +1,4 @@
-const path = require('path');
+const path = require('node:path');
 require('dotenv').config({ path: path.resolve(process.cwd(), '.env') });
 
 /**
@@ -14,7 +14,7 @@ function env(name, defaultValue = null) {
 
 // Safe parsers
 function toInt(value, defaultValue) {
-    const parsed = parseInt(String(value), 10);
+    const parsed = Number.parseInt(String(value), 10);
     return Number.isFinite(parsed) ? parsed : defaultValue;
 }
 

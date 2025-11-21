@@ -64,7 +64,7 @@ class ConnectionMonitor {
                 }
                 
                 // Log if connections are at limit
-                if (stats >= (parseInt(process.env.DB_CONNECTION_LIMIT) || 5)) {
+                if (stats >= (Number.parseInt(process.env.DB_CONNECTION_LIMIT) || 5)) {
                     logger.error({
                         connectionStats: this.connectionStats
                     }, 'Database connection limit reached');
@@ -122,9 +122,9 @@ function getHealthCheckData() {
         database: {
             connected: sequelize ? true : false,
             connectionStats: stats,
-            connectionLimit: parseInt(process.env.DB_CONNECTION_LIMIT) || 5,
+            connectionLimit: Number.parseInt(process.env.DB_CONNECTION_LIMIT) || 5,
             connectionUsage: stats.totalConnections ? 
-                Math.round((stats.totalConnections / (parseInt(process.env.DB_CONNECTION_LIMIT) || 5)) * 100) : 0
+                Math.round((stats.totalConnections / (Number.parseInt(process.env.DB_CONNECTION_LIMIT) || 5)) * 100) : 0
         },
         memory: {
             used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),

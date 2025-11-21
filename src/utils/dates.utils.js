@@ -99,8 +99,8 @@ function parseOffset(timeZoneName) {
         return { minutes: 0, string: '+00:00' };
     }
     const sign = match[1] === '-' ? -1 : 1;
-    const hours = parseInt(match[2] || '0', 10);
-    const minutes = parseInt(match[3] || '0', 10);
+    const hours = Number.parseInt(match[2] || '0', 10);
+    const minutes = Number.parseInt(match[3] || '0', 10);
     const totalMinutes = sign * (hours * 60 + minutes);
     const normalized = `${sign === -1 ? '-' : '+'}${String(Math.abs(hours)).padStart(2, '0')}:${String(Math.abs(minutes)).padStart(2, '0')}`;
     return { minutes: totalMinutes, string: normalized };
@@ -195,7 +195,7 @@ function getNowRangeForPeriodInUserTimezone(timezone = null) {
 /**
  * Calculate historical week ranges (Sunday–Saturday)
  */
-function calculateWeekRanges(numberOfWeeks = 52, skipLatest = true, timezone) {
+function calculateWeekRanges(numberOfWeeks = 52, skipLatest = true, timezone = null) {
     const ranges = [];
     const today = getNowDateTimeInUserTimezoneDate(new Date(), timezone);
     const currentSunday = startOfWeek(today, { weekStartsOn: 0 }); // Sunday
@@ -220,7 +220,7 @@ function calculateWeekRanges(numberOfWeeks = 52, skipLatest = true, timezone) {
 /**
  * Calculate historical month ranges
  */
-function calculateMonthRanges(numberOfMonths = 12, skipCurrent = true, timezone) {
+function calculateMonthRanges(numberOfMonths = 12, skipCurrent = true, timezone = null) {
     const ranges = [];
     const today = getNowDateTimeInUserTimezoneDate(new Date(), timezone);
     const startMonthIndex = skipCurrent ? -2 : 0;
@@ -278,9 +278,9 @@ function calculateQuarterRanges(numberOfQuarters = 4, skipCurrent = true, timezo
  * Combined full ranges
  */
 function calculateFullRanges(timezone) {
-    const weeksToPull = parseInt(process.env.WEEKS_TO_PULL || 52);
-    const monthsToPull = parseInt(process.env.MONTHS_TO_PULL || 12);
-    const quartersToPull = parseInt(process.env.QUARTERS_TO_PULL || 4);
+    const weeksToPull = Number.parseInt(process.env.WEEKS_TO_PULL || 52);
+    const monthsToPull = Number.parseInt(process.env.MONTHS_TO_PULL || 12);
+    const quartersToPull = Number.parseInt(process.env.QUARTERS_TO_PULL || 4);
 
     const weekRanges = calculateWeekRanges(weeksToPull, true, timezone);
     const monthRanges = calculateMonthRanges(monthsToPull, true, timezone);

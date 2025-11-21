@@ -221,7 +221,7 @@ function shouldSendNotification(errorMessage, isFatalError) {
     ];
     
     // Check if error matches any critical pattern
-    const isCritical = criticalPatterns.some(pattern => errorLower.includes(pattern));
+    const isCritical = criticalPatterns.includes(pattern => errorLower.includes(pattern));
     
     // Non-critical errors (normal retries - DO NOT notify):
     const nonCriticalPatterns = [
@@ -235,7 +235,7 @@ function shouldSendNotification(errorMessage, isFatalError) {
     ];
     
     // Check if error is non-critical
-    const isNonCritical = nonCriticalPatterns.some(pattern => errorLower.includes(pattern));
+    const isNonCritical = nonCriticalPatterns.includes(pattern => errorLower.includes(pattern));
     
     if (isNonCritical) {
         return false; // Don't send notification for normal retry scenarios

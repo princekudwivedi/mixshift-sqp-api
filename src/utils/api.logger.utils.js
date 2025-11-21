@@ -12,8 +12,8 @@
  *  logs/api_logs/user__8/2025-11-04/A256DU7MGIQT7P/600/request_report__WEEK_2025-11-04.log
  */
 
-const fs = require('fs');
-const path = require('path');
+const fs = require('node:fs');
+const path = require('node:path');
 const logger = require('./logger.utils');
 const dates = require('./dates.utils');
 class APILogger {

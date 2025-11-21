@@ -1,7 +1,7 @@
 const logger = require('../utils/logger.utils');
 const config = require('../config/env.config');
 const axios = require('axios');
-const zlib = require('zlib');
+const zlib = require('node:zlib');
 
 async function getReportsApiModule() {
 	// ESM dynamic import to satisfy SDK module type
@@ -55,7 +55,7 @@ async function buildReportsClient(opts = {}) {
 	
 	// Validate baseUrl is a string
 	if (typeof baseUrl !== 'string') {
-		throw new Error(`baseUrl must be a string, got: ${typeof baseUrl} - ${baseUrl}`);
+		throw new TypeError(`baseUrl must be a string, got: ${typeof baseUrl} - ${baseUrl}`);
 	}
 	
 	logger.info({ 

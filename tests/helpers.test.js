@@ -9,8 +9,8 @@ const {
     RateLimiter,
     MemoryMonitor
 } = require('../src/helpers/sqp.helpers');
-const fs = require('fs').promises;
-const path = require('path');
+const fs = require('node:fs').promises;
+const path = require('node:path');
 
 describe('Helper Methods Tests', () => {
     

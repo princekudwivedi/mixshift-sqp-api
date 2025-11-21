@@ -74,14 +74,14 @@ function getAllowedUsers() {
         // Try to parse as JSON if provided like [8,3]
         const parsed = JSON.parse(envUsers);
         if (Array.isArray(parsed)) {
-            return parsed.map(Number).filter(id => !isNaN(id));
+            return parsed.map(Number).filter(id => !Number.isNaN(id));
         }
     } catch {
         // Fallback: if comma-separated string like "8,3"
         return envUsers
             .split(',')
-            .map(id => parseInt(id.trim(), 10))
-            .filter(id => !isNaN(id));
+            .map(id => Number.parseInt(id.trim(), 10))
+            .filter(id => !Number.isNaN(id));
     }
 
     return [];

@@ -1,5 +1,5 @@
 // Test setup file
-const path = require('path');
+const path = require('node:path');
 
 // Set test environment variables
 process.env.NODE_ENV = 'test';

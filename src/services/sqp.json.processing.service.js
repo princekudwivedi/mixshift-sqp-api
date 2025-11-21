@@ -1,6 +1,6 @@
 const axios = require('axios');
-const fs = require('fs').promises;
-const path = require('path');
+const fs = require('node:fs').promises;
+const path = require('node:path');
 const { uploadJson } = require('../utils/s3.utils');
 const model = require('../models/sqp.cron.model');
 const { getModel: getSqpWeekly } = require('../models/sequelize/sqpWeekly.model');
@@ -93,7 +93,7 @@ async function handleReportCompletion(cronJobID, reportType, amazonSellerID = nu
 		}
 
 		// 🧩 Step 4 & 5: Update each ASIN's date range using utility		
-		const sellerId = parseInt(cronDetail.SellerID) || 0;
+		const sellerId = Number.parseInt(cronDetail.SellerID) || 0;
 		for (const asin of cronAsins) {
 			try {
 				const dateRanges = await SqpModel.findOne({
@@ -261,9 +261,7 @@ async function saveReportJsonFile(download, jsonContent) {
  */
 async function parseAndStoreJsonData(download, jsonContent, filePath, reportDateOverride) {
 	try {        
-        const { DateHelpers } = require('../helpers/sqp.helpers');
-        
-		let records = [];
+        let records = [];
 		
 		// Handle different JSON shapes
 		if (Array.isArray(jsonContent)) {
@@ -421,7 +419,8 @@ function buildMetricsRow(download, record, filePath, reportDateOverride) {
 			ASIN: asin,
 			dtCreatedOn: dates.getNowDateTimeInUserTimezone().db
 		};
-	} catch (_) {
+	} catch (error) {
+		logger.error({ error: error.message }, 'Error building metrics row');
 		return null;
 	}
 }
@@ -551,7 +550,7 @@ async function deleteExistingRows(model, rows) {
 
     rows.forEach((row) => {
         const keyParts = [row.AmazonSellerID, row.ASIN, row.SellerID, row.StartDate, row.EndDate];
-        if (keyParts.some((value) => value === undefined || value === null)) {
+        if (keyParts.includes((value) => value === undefined || value === null)) {
             return;
         }
         const key = keyParts.join('|');
@@ -723,10 +722,11 @@ async function __importJson(row, processed = 0, errors = 0, iInitialPull = 0, ti
             jsonContent = null;
         }
 
-        if (global.gc) {
+        if (globalThis.gc) {
             try {
-                global.gc();
-            } catch (_) {
+                globalThis.gc();
+            } catch (error) {
+				logger.error({ error: error.message }, 'Error forcing garbage collection');
                 // ignore if GC not exposed
             }
         }
@@ -743,7 +743,8 @@ async function getRequestStartDate(cronJobID, reportType) {
 		const prefix = reportType === 'WEEK' ? 'Weekly' : reportType === 'MONTH' ? 'Monthly' : reportType === 'QUARTER' ? 'Quarterly' : '';
 		const field = `${prefix}SQPDataPullStartDate`;
 		return row[field] ? new Date(row[field]) : null;
-	} catch (_) {
+	} catch (error) {
+		logger.error({ error: error.message }, 'Error getting request start date');
 		return null;
 	}
 }

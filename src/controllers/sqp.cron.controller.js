@@ -35,11 +35,6 @@ async function checkAllowedReportTypes(reportTypes, user, seller, chunk) {
 	// -----------------------------
 	if (delayedReportTypes.length > 0) {
 
-		const reasons = delayedReportTypes.reduce((acc, curr) => {
-			acc[curr.type] = curr.reason;
-			return acc;
-		}, {});
-
 		const ranges = delayedReportTypes.map(info => {
 			const range = dates.getDateRangeForPeriod(info.type);
 			return {
@@ -164,7 +159,8 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 		action: 'Request Report',
 		context: { chunk, seller, authOverrides, user },
 		model,
-		sendFailureNotification: (cronDetailID, amazonSellerID, reportType, errorMessage, retryCount, reportId, isFatalError, range) => {
+		sendFailureNotification: (params) => {
+			const { cronDetailID, amazonSellerID, reportType, errorMessage, retryCount, reportId, isFatalError, range } = params;
 			return sendFailureNotification({
 				cronDetailID,
 				amazonSellerID,
@@ -181,7 +177,7 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 			});
 		},
 		operation: async ({ attempt, currentRetry, context, startTime }) => {
-			const { chunk, seller, authOverrides, user } = context;
+			const { chunk, seller, user } = context;
 			
 			// Set start date when beginning the report request
 			const startDate =  dates.getNowDateTimeInUserTimezone();
@@ -306,7 +302,6 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 					}
 					resp = await sp.createReport(seller, payload, currentAuthOverrides);
                 } else {
-					requestError = err;
 					throw err;
 				}
             }
@@ -473,7 +468,9 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 		maxRetries: statusMaxRetries,
 		context: { row, reportId, seller, authOverrides, isRetry: retry, user, range, maxRetries: statusMaxRetries },
 		model,
-		sendFailureNotification: (cronDetailID, amazonSellerID, reportType, errorMessage, retryCount, reportId, isFatalError, range) => {
+		sendFailureNotification: (params) => {
+			const { cronDetailID, amazonSellerID, reportType, errorMessage, retryCount, reportId, isFatalError, range } = params;
+
 			return sendFailureNotification({
 				cronDetailID,
 				amazonSellerID,
@@ -490,7 +487,7 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 			});
 		},
 		operation: async ({ attempt, currentRetry, context, startTime }) => {
-			const { row, reportId, seller, authOverrides, isRetry, user, range } = context;
+			const { row, reportId, seller, authOverrides, user, range } = context;
 			const statusStartTime =  dates.getNowDateTimeInUserTimezone();
 			
 			// Ensure access token for this seller during status checks
@@ -563,7 +560,7 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 					throw err;
 				}
             }
-			const status = res.processingStatus;
+			let status = res.processingStatus;
 			const statusEndTime =  dates.getNowDateTimeInUserTimezone();
 			
 			// API Logger - Status Check
@@ -659,27 +656,13 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 							status: 3
 						}, `After 3 attempts Updated ${asins.length} ASINs to failed status (3) for ${reportType}`);
 					}
-
-					// Max retries reached - return failure instead of retrying
-					return {
-						message: `Report still ${status.toLowerCase().replace('_',' ')} after ${maxRetries} attempts`,
-						action: 'Check Status',
-						reportID: reportId,
-						data: { status, attempt, maxRetries },
-						success: false
-					};
 				}
 				
 				// Wait before retrying
 				await DelayHelpers.wait(delaySeconds, 'Before retry IN_QUEUE or IN_PROGRESS');
 
 				// Throw error to trigger retry mechanism
-				const pendingError = new Error(`Report still ${status.toLowerCase().replace('_',' ')} after ${delaySeconds}s wait - retrying`);
-				pendingError.code = 'REPORT_PENDING';
-				pendingError.isRetryable = true;
-				pendingError.suppressErrorLog = true; // Don't log as error, just retry
-				throw pendingError;
-
+				throw new Error(`Report still ${status.toLowerCase().replace('_',' ')} after ${delaySeconds}s wait - retrying`);
 				
 			} else if (status === 'FATAL' || status === 'CANCELLED') {                
 				// Fatal or cancelled status - treat as error
@@ -741,7 +724,8 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 		action: 'Download Report',
 		context: { row, reportId, seller, authOverrides, user, range },
 		model,
-		sendFailureNotification: (cronDetailID, amazonSellerID, reportType, errorMessage, retryCount, reportId, isFatalError, range) => {
+		sendFailureNotification: (params) => {
+            const { cronDetailID, amazonSellerID, reportType, errorMessage, retryCount, reportId, isFatalError, range } = params;
 			return sendFailureNotification({
 				cronDetailID,
 				amazonSellerID,
@@ -902,7 +886,7 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 					const saveResult = await jsonSvc.saveReportJsonFile(downloadMeta, data);
 					filePath = saveResult?.path || saveResult?.url || null;
 					if (filePath) {
-						const fs = require('fs');
+						const fs = require('node:fs');
 						const stat = await fs.promises.stat(filePath).catch(() => null);
 						fileSize = stat ? stat.size : 0;
 						logger.info({ filePath, fileSize, attempt }, 'Report JSON saved to disk');
@@ -1180,9 +1164,9 @@ async function finalizeCronRunningStatus(cronDetailID, user = null) {
         // Get only statuses for active reports
         const statuses = activeReports.map(r => r.status);
         
-        const anyInProgress = statuses.some(s => s === 0);
-        const anyRetryNeeded = statuses.some(s => s === 2);
-        const anyFatal = statuses.some(s => s === 3);
+        const anyInProgress = statuses.includes(s => s === 0);
+        const anyRetryNeeded = statuses.includes(s => s === 2);
+        const anyFatal = statuses.includes(s => s === 3);
         const allCompleted = statuses.every(s => s === 1);
         const allFinalizedOrFatal = statuses.every(s => s === 1 || s === 3);
 

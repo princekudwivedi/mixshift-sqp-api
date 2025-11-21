@@ -206,11 +206,11 @@ describe('Cron Integration Tests', () => {
     });
     
     describe('File Operations Integration', () => {
-        const testDir = require('path').join(__dirname, 'integration-test-files');
-        const testFile = require('path').join(testDir, 'integration-test.json');
+        const testDir = require('node:path').join(__dirname, 'integration-test-files');
+        const testFile = require('node:path').join(testDir, 'integration-test.json');
         
         beforeAll(async () => {
-            const fs = require('fs').promises;
+            const fs = require('node:fs').promises;
             await fs.mkdir(testDir, { recursive: true });
             await fs.writeFile(testFile, JSON.stringify({ 
                 test: 'integration data',
@@ -219,7 +219,7 @@ describe('Cron Integration Tests', () => {
         });
         
         afterAll(async () => {
-            const fs = require('fs').promises;
+            const fs = require('node:fs').promises;
             await fs.rm(testDir, { recursive: true, force: true });
         });
         

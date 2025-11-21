@@ -53,7 +53,7 @@ class InitialPullService {
         return initDatabaseContext(async () => {
             try {
                 await loadDatabase(0);
-                const users = validatedUserId ? [{ ID: parseInt(validatedUserId) }] : await getAllAgencyUserList();
+                const users = validatedUserId ? [{ ID: Number.parseInt(validatedUserId) }] : await getAllAgencyUserList();
                 
                 let totalRetried = 0;
                 let totalSuccess = 0;
@@ -75,7 +75,7 @@ class InitialPullService {
                         
                         // Filter by cronDetailID if specified
                         if (validatedCronDetailID) {
-                            failedRecords = failedRecords.filter(r => r.ID === parseInt(validatedCronDetailID));
+                            failedRecords = failedRecords.filter(r => r.ID === Number.parseInt(validatedCronDetailID));
                         }
                         
                         // Filter by sellerId if specified
@@ -282,7 +282,7 @@ class InitialPullService {
 
         try {
             // STEP 1: Check status and trigger download (reuse existing function)
-            const statusResult = await this.circuitBreaker.execute(
+            await this.circuitBreaker.execute(
                 () => this._checkInitialPullReportStatus(
                     cronDetailID,
                     seller,
@@ -379,7 +379,7 @@ class InitialPullService {
         return initDatabaseContext(async () => {
             try {
                 await loadDatabase(0);
-                const users = validatedUserId ? [{ ID: parseInt(validatedUserId) }] : await getAllAgencyUserList();
+                const users = validatedUserId ? [{ ID: Number.parseInt(validatedUserId) }] : await getAllAgencyUserList();
                 let breakUserProcessing = false;
                 for (const user of users) {
                     try {
@@ -723,7 +723,6 @@ class InitialPullService {
                         }
                         resp = await sp.createReport(seller, payload, currentAuthOverrides);
                     } else {
-                        requestError = err;
                         throw err;
                     }
                 }
@@ -752,9 +751,6 @@ class InitialPullService {
                     retryCount: currentRetry,
                     attempt
                 });
-                
-                // Update status column based on report type with start date
-                const startDate = range.startDate;
                 
                 if(range.range !== '' && range.range !== null && range.range !== undefined){
                     await model.updateSQPReportStatus(cronDetailID, reportType, 0, dates.getNowDateTimeInUserTimezone().db);
@@ -910,8 +906,8 @@ class InitialPullService {
         for (const id of uniqueIDs) {
             const rLogs = logs.filter(l => l.ReportID === id);
             const latest = rLogs[0];
-            const isDone = rLogs.some(l => l.Status === 1);
-            const isFatal = rLogs.some(l => /FATAL|CANCELLED/.test(l.Message || ''));
+            const isDone = rLogs.includes(l => l.Status === 1);
+            const isFatal = rLogs.includes(l => /FATAL|CANCELLED/.test(l.Message || ''));
             const isInProgress = !isDone && !isFatal && (latest.Status === 0 || latest.Status === 2 || /Failure Notification/.test(latest.Message || ''));
         
             if (isDone) done++;
@@ -1006,9 +1002,9 @@ class InitialPullService {
           const row = await SqpCronDetails.findOne({ where: { ID: cronDetailID }, raw: true });          
           if (row) {            
             const statuses = [row.WeeklySQPDataPullStatus, row.MonthlySQPDataPullStatus, row.QuarterlySQPDataPullStatus];
-            const anyFatal = statuses.some(s => s === 3);
+            const anyFatal = statuses.includes(s => s === 3);
             const allDone = statuses.every(s => s === 1);
-            const needsRetry = statuses.some(s => [0, 2, null].includes(s));
+            const needsRetry = statuses.includes(s => [0, 2, null].includes(s));
             const newStatus = needsRetry ? 3 : (allDone || anyFatal ? 2 : row.cronRunningStatus);
             if (newStatus !== row.cronRunningStatus){
               await SqpCronDetails.update({ cronRunningStatus: newStatus, dtUpdatedOn: dates.getNowDateTimeInUserTimezone().db }, { where: { ID: cronDetailID } });
@@ -1039,7 +1035,8 @@ class InitialPullService {
             action: retry ? 'Initial Pull - Retry Check Status' : 'Initial Pull - Check Status',
             context: { seller, reportId, range, reportType, retry, user },
             model,
-            sendFailureNotification: (cronDetailID, amazonSellerID, reportType, errorMessage, retryCount, reportId, isFatalError, range) => {
+            sendFailureNotification: (params) => {
+                const { cronDetailID, amazonSellerID, reportType, errorMessage, retryCount, reportId, isFatalError, range } = params;
                 return sendFailureNotification({
                     cronDetailID,
                     amazonSellerID,
@@ -1254,7 +1251,8 @@ class InitialPullService {
     /**
      * Download initial pull report (Step 3: Download)
      */
-    async _downloadInitialPullReport(cronDetailID, seller, reportId, documentId, range, reportType, authOverrides = {}, retry = false, user = null) {
+    async _downloadInitialPullReport(params) {
+        const { cronDetailID, seller, reportId, documentId, range, reportType, authOverrides = {}, retry = false, user = null } = params;
         const result = await RetryHelpers.executeWithRetry({
             cronDetailID,
             amazonSellerID: seller.AmazonSellerID,
@@ -1262,7 +1260,8 @@ class InitialPullService {
             action: retry ? 'Initial Pull - Retry Download Report' : 'Initial Pull - Download Report',
             context: { seller, reportId, documentId, range, reportType, user },
             model,
-            sendFailureNotification: (cronDetailID, amazonSellerID, reportType, errorMessage, retryCount, reportId, isFatalError, range) => {
+            sendFailureNotification: (params) => {
+                const { cronDetailID, amazonSellerID, reportType, errorMessage, retryCount, reportId, isFatalError, range } = params;
                 return sendFailureNotification({
                     cronDetailID,
                     amazonSellerID,
@@ -1391,7 +1390,6 @@ class InitialPullService {
                         }
                         res = await sp.downloadReport(seller, documentId || reportId, refreshedOverrides);
                     } else {
-                        downloadError = err;
                         throw err;
                     }
                 }
@@ -1427,7 +1425,7 @@ class InitialPullService {
                         const saveResult = await jsonSvc.saveReportJsonFile(downloadMeta, data);
                         filePath = saveResult?.path || saveResult?.url || null;
                         if (filePath) {
-                            const fs = require('fs');
+                            const fs = require('node:fs');
                             const stat = await fs.promises.stat(filePath).catch(() => null);
                             fileSize = stat ? stat.size : 0;
                             logger.info({ filePath, fileSize, range: range.range }, 'Initial pull JSON saved');
@@ -1457,8 +1455,8 @@ class InitialPullService {
                             attempt
                         });
                         
-                    } catch (fileErr) {
-                        logger.warn({ error: fileErr.message, range: range.range }, 'Failed to save JSON file');
+                    } catch (error) {
+                        logger.warn({ error: error.message, range: range.range }, 'Failed to save JSON file');
                         
                         // API Logger - Download Success but File Save Failed
                         const userId = user ? user.ID : null;
@@ -1479,7 +1477,7 @@ class InitialPullService {
                             endTime: dates.getNowDateTimeInUserTimezone().log,
                             executionTime: (Date.now() - startTime) / 1000,
                             status: 'partial_success',
-                            error: fileErr,
+                            error: error,
                             retryCount: currentRetry,
                             attempt
                         });
