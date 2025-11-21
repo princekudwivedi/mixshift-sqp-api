@@ -499,9 +499,9 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 			}
 			
 			const { processingStatus, reportDocumentId } = await sp.getReportStatus(seller, reportId, currentAuthOverrides);
-			if(!processingStatus || !reportDocumentId){
-				logger.error({ reportId, processingStatus, reportDocumentId, range: range.range, attempt }, 'Report status check failed');
-				throw new Error('Report status check failed - no processingStatus or reportDocumentId returned');
+			if(!processingStatus){
+				logger.error({ reportId, processingStatus, reportDocumentId, range: range.range, attempt }, 'Report status check failed - no processingStatus returned');
+				throw new Error('Report status check failed - no processingStatus returned');
 			}
 
 			const status = processingStatus;
