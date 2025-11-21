@@ -580,6 +580,15 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 							status: 3
 						}, `After 3 attempts Updated ${asins.length} ASINs to failed status (3) for ${reportType}`);
 					}
+
+					// Max retries reached - return failure instead of retrying
+					return {
+						message: `Report still ${status.toLowerCase().replace('_',' ')} after ${maxRetries} attempts`,
+						action: 'Check Status',
+						reportID: reportId,
+						data: { status, attempt, maxRetries },
+						success: false
+					};
 				}
 				
 				// Wait before retrying
@@ -588,7 +597,8 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 				// Throw error to trigger retry mechanism
 				const pendingError = new Error(`Report still ${status.toLowerCase().replace('_',' ')} after ${delaySeconds}s wait - retrying`);
 				pendingError.code = 'REPORT_PENDING';
-				pendingError.logLevel = attempt >= maxRetries ? 'error' : 'info';
+				pendingError.isRetryable = true;
+				pendingError.suppressErrorLog = true; // Don't log as error, just retry
 				throw pendingError;
 
 				
