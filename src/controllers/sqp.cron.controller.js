@@ -158,7 +158,17 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 		action: 'Request Report',
 		context: { chunk, seller, authOverrides, user },
 		model,
-		sendFailureNotification: (cronDetailID, amazonSellerID, reportType, errorMessage, retryCount, reportId, isFatalError, range) => {
+		sendFailureNotification: (...notificationArgs) => {
+			const [
+				cronDetailID,
+				amazonSellerID,
+				reportType,
+				errorMessage,
+				retryCount,
+				reportId,
+				isFatalError,
+				range
+			] = notificationArgs;
 			return sendFailureNotification({
 				cronDetailID,
 				amazonSellerID,
@@ -379,7 +389,13 @@ async function checkReportStatuses(authOverrides = {}, filter = {}, retry = fals
     }
 
     // Finalize cronRunningStatus after status checks
-    try { if (cronDetailID) await finalizeCronRunningStatus(cronDetailID, user); } catch (_) {}
+    if (cronDetailID) {
+        try {
+            await finalizeCronRunningStatus(cronDetailID, user);
+        } catch (error_) {
+            logger.warn({ error: error_.message, cronDetailID }, 'Failed to finalize cron running status');
+        }
+    }
     return retry ? res : undefined;
 }
 
@@ -423,7 +439,17 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 		maxRetries: statusMaxRetries,
 		context: { row, reportId, seller, authOverrides, isRetry: retry, user, range, maxRetries: statusMaxRetries },
 		model,
-		sendFailureNotification: (cronDetailID, amazonSellerID, reportType, errorMessage, retryCount, reportId, isFatalError, range) => {
+		sendFailureNotification: (...notificationArgs) => {
+			const [
+				cronDetailID,
+				amazonSellerID,
+				reportType,
+				errorMessage,
+				retryCount,
+				reportId,
+				isFatalError,
+				range
+			] = notificationArgs;
 			return sendFailureNotification({
 				cronDetailID,
 				amazonSellerID,
@@ -526,9 +552,12 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
                 await model.setProcessRunningStatus(row.ID, reportType, 3);
                 
 				const downloadResult = await downloadReportByType(row, reportType, authOverrides, reportId, user, range, reportDocumentId);
+				const documentIdSuffix = documentId ? ` | Document ID: ${documentId}` : '';
+				const resultMessage = downloadResult?.message || `Report ready on attempt ${attempt}. Report ID: ${reportId}${documentIdSuffix}`;
+				const resultAction = downloadResult?.action || 'Check Status and Download Report';
 				return {
-					message: downloadResult?.message ? downloadResult?.message : `Report ready on attempt ${attempt}. Report ID: ${reportId}${documentId ? ' | Document ID: ' + documentId : ''}`,
-					action: downloadResult?.action ? downloadResult?.action : 'Check Status and Download Report',
+					message: resultMessage,
+					action: resultAction,
 					reportID: reportId,
 					reportDocumentID: documentId,
 					data: { status, documentId },
@@ -654,7 +683,17 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 		action: 'Download Report',
 		context: { row, reportId, seller, authOverrides, user, range, downloadDocumentId },
 		model,
-		sendFailureNotification: (cronDetailID, amazonSellerID, reportType, errorMessage, retryCount, reportId, isFatalError, range) => {
+		sendFailureNotification: (...notificationArgs) => {
+			const [
+				cronDetailID,
+				amazonSellerID,
+				reportType,
+				errorMessage,
+				retryCount,
+				reportId,
+				isFatalError,
+				range
+			] = notificationArgs;
 			return sendFailureNotification({
 				cronDetailID,
 				amazonSellerID,
@@ -1068,7 +1107,18 @@ async function finalizeCronRunningStatus(cronDetailID, user = null) {
             reason = 'No status change needed';
         }
 
-        if (newStatus !== row.cronRunningStatus) {
+        const statusUnchanged = newStatus === row.cronRunningStatus;
+        if (statusUnchanged) {
+            logger.info({ 
+                cronDetailID, 
+                cronRunningStatus: row.cronRunningStatus, 
+                reason,
+                activeReports: activeReports.map(r => `${r.type}(status:${r.status})`).join(', '),
+                weekly, 
+                monthly, 
+                quarterly 
+            }, 'cronRunningStatus unchanged');
+        } else {
             logger.info({ 
                 cronDetailID, 
                 oldStatus: row.cronRunningStatus, 
@@ -1086,16 +1136,6 @@ async function finalizeCronRunningStatus(cronDetailID, user = null) {
             }, { 
                 where: { ID: cronDetailID } 
             });
-        } else {
-            logger.info({ 
-                cronDetailID, 
-                cronRunningStatus: row.cronRunningStatus, 
-                reason,
-                activeReports: activeReports.map(r => `${r.type}(status:${r.status})`).join(', '),
-                weekly, 
-                monthly, 
-                quarterly 
-            }, 'cronRunningStatus unchanged');
         }
     } catch (e) {
         logger.error({ cronDetailID, error: e.message }, 'Failed to finalize cronRunningStatus');

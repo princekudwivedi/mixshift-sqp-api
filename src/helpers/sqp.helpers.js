@@ -807,32 +807,34 @@ class DelayHelpers {
         }
 
         // Use provided delay or get from environment
-        const effectiveDelay = delaySeconds !== undefined 
-            ? delaySeconds 
-            : Number(process.env.INITIAL_DELAY_SECONDS) || 30;
+        const effectiveDelay = delaySeconds === undefined 
+            ? (Number(process.env.INITIAL_DELAY_SECONDS) || 30)
+            : delaySeconds;
 
         logger.info({ 
             initialDelaySeconds: process.env.INITIAL_DELAY_SECONDS,
             effectiveDelay 
-        }, `Initial delay seconds${context ? ` ${context}` : ''}`);
+        }, context ? `Initial delay seconds ${context}` : 'Initial delay seconds');
 
+        const operationContext = context ? ` (${context})` : '';
         logger.info({ 
             cronDetailID, 
             reportType, 
             reportId, 
             delaySeconds: effectiveDelay,
             context
-        }, `Waiting ${effectiveDelay}s before operation${context ? ` (${context})` : ''}`);
+        }, `Waiting ${effectiveDelay}s before operation${operationContext}`);
 
         // Wait
         await this.wait(effectiveDelay, context);
 
+        const delayContext = context ? ` (${context})` : '';
         logger.info({ 
             cronDetailID, 
             reportType, 
             reportId,
             context 
-        }, `Delay completed${context ? ` (${context})` : ''}, ready to proceed`);
+        }, `Delay completed${delayContext}, ready to proceed`);
 
         return effectiveDelay;
     }
@@ -870,18 +872,20 @@ class DelayHelpers {
             }, 'Wait time capped to prevent excessive delays');
         }
         
+        const waitContext = context ? ` (${context})` : '';
         logger.info({ 
             seconds: safeSeconds, 
             original: seconds,
             context 
-        }, `Waiting ${safeSeconds}s${context ? ` (${context})` : ''}`);
+        }, `Waiting ${safeSeconds}s${waitContext}`);
         
         await new Promise(resolve => setTimeout(resolve, safeSeconds * 1000));
         
+        const completedContext = context ? ` (${context})` : '';
         logger.info({ 
             seconds: safeSeconds, 
             context 
-        }, `Delay completed${context ? ` (${context})` : ''}, ready to proceed`);
+        }, `Delay completed${completedContext}, ready to proceed`);
     }
 }
 

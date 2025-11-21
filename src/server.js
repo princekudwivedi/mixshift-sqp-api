@@ -74,19 +74,22 @@ function validateEnv() {
 }
 
 async function startServer() {
-    await env.loadAwsSecrets({ overwrite: false });
-    validateEnv();
+    try {
+        await env.loadAwsSecrets({ overwrite: false });
+        validateEnv();
 
-    app.listen(PORT, () => {
-        logger.info({
-            PORT,
-            environment: process.env.NODE_ENV || 'development',
-            version: process.env.npm_package_version || '1.0.0'
-        }, 'SQP API server running');
-    });
+        app.listen(PORT, () => {
+            logger.info({
+                PORT,
+                environment: process.env.NODE_ENV || 'development',
+                version: process.env.npm_package_version || '1.0.0'
+            }, 'SQP API server running');
+        });
+    } catch (error) {
+        logger.error({ error: error.message }, 'Failed to start server');
+        process.exit(1);
+    }
 }
 
-startServer().catch(error => {
-    logger.error({ error: error.message }, 'Failed to start server');
-    process.exit(1);
-});
+// eslint-disable-next-line sonarjs/prefer-top-level-await
+void startServer();

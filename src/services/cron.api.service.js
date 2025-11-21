@@ -65,7 +65,6 @@ class CronApiService {
                 for (const user of users) {
                     if (isDevEnv && !isUserAllowed(user.ID)) {
                         logger.info(sanitizeLogData({ userId: user.ID }), 'Skip user as it is not allowed');
-                        continue;
                     } else {
                         logger.info({ userId: user.ID }, 'Process user started');
                         await loadDatabase(user.ID);
