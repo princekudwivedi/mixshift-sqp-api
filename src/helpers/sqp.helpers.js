@@ -290,14 +290,7 @@ class RetryHelpers {
                             contextReportID: context?.reportID
                         }, 'Sending failure notification with reportId and range');
                         await sendFailureNotification(
-                            cronDetailID, 
-                            amazonSellerID, 
-                            reportType, 
-                            errorMsg, 
-                            newRetryCount, 
-                            reportId, 
-                            false, // isFatalError
-                            range
+                            { cronDetailID, amazonSellerID, reportType, errorMessage: errorMsg, retryCount: newRetryCount, reportId, isFatalError: false, range }
                         );
                     }
 
@@ -375,7 +368,7 @@ class RetryHelpers {
         ];
         
         // Check for non-retryable patterns
-        if (nonRetryablePatterns.includes(pattern => pattern.test(message))) {
+        if (nonRetryablePatterns.some(pattern => pattern.test(message))) {
             return false;
         }
         
@@ -400,7 +393,7 @@ class RetryHelpers {
         ];
         
         // Check for retryable patterns
-        if (retryablePatterns.includes(pattern => pattern.test(message))) {
+        if (retryablePatterns.some(pattern => pattern.test(message))) {
             return true;
         }
         
@@ -656,7 +649,7 @@ class FileHelpers {
         
         // Check for absolute paths in restricted directories
         const restrictedPaths = ['/etc/', '/sys/', '/proc/', '/dev/'];
-        if (restrictedPaths.includes(path => filePath.startsWith(path))) {
+        if (restrictedPaths.some(path => filePath.startsWith(path))) {
             throw new Error('Invalid file path: access to restricted directory');
         }
         

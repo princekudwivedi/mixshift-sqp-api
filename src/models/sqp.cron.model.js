@@ -531,14 +531,19 @@ async function logCronActivity({ cronJobID, reportType, action, status, message,
             iInitialPull: iInitialPull
         }
         : { CronJobID: cronJobID, ReportType: reportType};
-    
+    let executionTimeValue;
+    if(executionTime){
+        executionTimeValue = Number(executionTime);
+    } else {
+        executionTimeValue = undefined; 
+    }
     const payload = {
         Status: status,
         Action: action,
         Message: message,
         ReportID: reportID,
         RetryCount: retryCount,
-        ExecutionTime: executionTime != null ? Number(executionTime) : undefined,
+        ExecutionTime: executionTimeValue,
         dtUpdatedOn: dates.getNowDateTimeInUserTimezone().db
     };      
     
@@ -575,7 +580,7 @@ async function getLatestReportId(cronJobID, reportType, reportID = null, range =
         where.Range = range;
     }
     
-    if (reportID != null) {
+    if (reportID) {
         where.ReportID = reportID;
     } else {
         where.ReportID = { [Op.ne]: null };
@@ -625,7 +630,7 @@ async function checkCronDetailsOfSellersByDate(
     HoursAgo = literal(`'${HoursAgo}'`) ;
     // Build date filter
     let dateFilter = {};
-    if (date !== '') {
+    if (date) {
         const targetDate = new Date(date);
         const startOfDay = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate(), 0, 0, 0);
         const endOfDay = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate(), 23, 59, 59);

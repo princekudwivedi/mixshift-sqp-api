@@ -617,7 +617,8 @@ class InitialPullService {
             action: 'Initial Pull - Request Report',
             context: { seller, asinList, range, reportType, reportId: null, user },
             model,
-            sendFailureNotification: (cronDetailID, amazonSellerID, reportType, errorMessage, retryCount, reportId, isFatalError, range) => {
+            sendFailureNotification: (params) => {
+                const { cronDetailID, amazonSellerID, reportType, errorMessage, retryCount, reportId, isFatalError, range } = params;
                 return sendFailureNotification({
                     cronDetailID,
                     amazonSellerID,
@@ -906,8 +907,8 @@ class InitialPullService {
         for (const id of uniqueIDs) {
             const rLogs = logs.filter(l => l.ReportID === id);
             const latest = rLogs[0];
-            const isDone = rLogs.includes(l => l.Status === 1);
-            const isFatal = rLogs.includes(l => /FATAL|CANCELLED/.test(l.Message || ''));
+            const isDone = rLogs.some(l => l.Status === 1);
+            const isFatal = rLogs.some(l => /FATAL|CANCELLED/.test(l.Message || ''));
             const isInProgress = !isDone && !isFatal && (latest.Status === 0 || latest.Status === 2 || /Failure Notification/.test(latest.Message || ''));
         
             if (isDone) done++;
@@ -1002,9 +1003,9 @@ class InitialPullService {
           const row = await SqpCronDetails.findOne({ where: { ID: cronDetailID }, raw: true });          
           if (row) {            
             const statuses = [row.WeeklySQPDataPullStatus, row.MonthlySQPDataPullStatus, row.QuarterlySQPDataPullStatus];
-            const anyFatal = statuses.includes(s => s === 3);
+            const anyFatal = statuses.some(s => s === 3);
             const allDone = statuses.every(s => s === 1);
-            const needsRetry = statuses.includes(s => [0, 2, null].includes(s));
+            const needsRetry = statuses.some(s => [0, 2, null].includes(s));
             const newStatus = needsRetry ? 3 : (allDone || anyFatal ? 2 : row.cronRunningStatus);
             if (newStatus !== row.cronRunningStatus){
               await SqpCronDetails.update({ cronRunningStatus: newStatus, dtUpdatedOn: dates.getNowDateTimeInUserTimezone().db }, { where: { ID: cronDetailID } });
@@ -1187,7 +1188,7 @@ class InitialPullService {
                     await DelayHelpers.wait(requestDelaySeconds, 'Between report status checks and downloads (rate limiting)');
 
                     const downloadResult = await this.circuitBreaker.execute(
-                        () => this._downloadInitialPullReport(cronDetailID, seller, reportId, documentId, range, reportType, authOverrides, retry, user),
+                        () => this._downloadInitialPullReport({ cronDetailID, seller, reportId, documentId, range, reportType, authOverrides, retry, user }),
                         { sellerId: seller.idSellerAccount, operation: 'downloadInitialPullReport' }
                     );
 
@@ -1253,6 +1254,7 @@ class InitialPullService {
      */
     async _downloadInitialPullReport(params) {
         const { cronDetailID, seller, reportId, documentId, range, reportType, authOverrides = {}, retry = false, user = null } = params;
+        
         const result = await RetryHelpers.executeWithRetry({
             cronDetailID,
             amazonSellerID: seller.AmazonSellerID,
