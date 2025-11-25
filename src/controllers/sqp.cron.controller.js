@@ -35,6 +35,11 @@ async function checkAllowedReportTypes(reportTypes, user, seller, chunk) {
 	// -----------------------------
 	if (delayedReportTypes.length > 0) {
 
+		delayedReportTypes.reduce((acc, curr) => {
+			acc[curr.type] = curr.reason;
+			return acc;
+		}, {});
+
 		const ranges = delayedReportTypes.map(info => {
 			const range = dates.getDateRangeForPeriod(info.type);
 			return {
@@ -264,12 +269,6 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
                 resp = await sp.createReport(seller, payload, currentAuthOverrides);
             } catch (err) {
                 const status = err.status || err.statusCode || err.response?.status;
-                logger.error({
-                    status,
-                    body: err.response && (err.response.body || err.response.text),
-                    message: err.message,
-                    payload
-                }, 'SP-API createReport failed');
                 // If unauthorized/forbidden, force refresh token once and retry
                 if (status === 401 || status === 403) {
 					currentAuthOverrides = await authService.buildAuthOverrides(seller.AmazonSellerID, true);
@@ -302,6 +301,12 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 					}
 					resp = await sp.createReport(seller, payload, currentAuthOverrides);
                 } else {
+					logger.error({
+						status,
+						body: err.response && (err.response.body || err.response.text),
+						message: err.message,
+						payload
+					}, 'SP-API createReport failed');
 					throw err;
 				}
             }
@@ -556,6 +561,12 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
                     }
                     res = await sp.getReportStatus(seller, reportId, refreshed);
                 } else {
+					logger.error({
+						status,
+						body: err.response && (err.response.body || err.response.text),
+						message: err.message,
+						payload
+					}, 'SP-API getReportStatus failed');
 					throw err;
 				}
             }
@@ -698,7 +709,7 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 	return result;
 }
 
-async function downloadReportByType(row, reportType, authOverrides = {}, reportId = null, user = null, range = null, reportDocumentId = null) {
+async function downloadReportByType(row, reportType, authOverrides = {}, reportId = null, user = null, range = null, reportDocumentId = '') {
     if (!reportId) {
         reportId = await model.getLatestReportId(row.ID, reportType);
         if (!reportId) {
@@ -834,7 +845,6 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 					}
 					res = await sp.downloadReport(seller, documentId, refreshed);
 				} else {
-					downloadError = err;
 					throw err;
 				}
 			}
@@ -1140,7 +1150,6 @@ async function finalizeCronRunningStatus(cronDetailID, user = null) {
         
         const anyInProgress = statuses.some(s => s === 0);
         const anyRetryNeeded = statuses.some(s => s === 2);
-        const anyFatal = statuses.some(s => s === 3);
         const allCompleted = statuses.every(s => s === 1);
         const allFinalizedOrFatal = statuses.every(s => s === 1 || s === 3);
 
