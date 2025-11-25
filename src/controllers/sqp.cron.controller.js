@@ -35,7 +35,7 @@ async function checkAllowedReportTypes(reportTypes, user, seller, chunk) {
 	// -----------------------------
 	if (delayedReportTypes.length > 0) {
 
-		const reasons = delayedReportTypes.reduce((acc, curr) => {
+		delayedReportTypes.reduce((acc, curr) => {
 			acc[curr.type] = curr.reason;
 			return acc;
 		}, {});
@@ -268,12 +268,6 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
                 resp = await sp.createReport(seller, payload, currentAuthOverrides);
             } catch (err) {
                 const status = err.status || err.statusCode || err.response?.status;
-                logger.error({
-                    status,
-                    body: err.response && (err.response.body || err.response.text),
-                    message: err.message,
-                    payload
-                }, 'SP-API createReport failed');
                 // If unauthorized/forbidden, force refresh token once and retry
                 if (status === 401 || status === 403) {
 					currentAuthOverrides = await authService.buildAuthOverrides(seller.AmazonSellerID, true);
@@ -306,7 +300,12 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 					}
 					resp = await sp.createReport(seller, payload, currentAuthOverrides);
                 } else {
-					requestError = err;
+					logger.error({
+						status,
+						body: err.response && (err.response.body || err.response.text),
+						message: err.message,
+						payload
+					}, 'SP-API createReport failed');
 					throw err;
 				}
             }
@@ -559,7 +558,12 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
                     }
                     res = await sp.getReportStatus(seller, reportId, refreshed);
                 } else {
-					statusError = err;
+					logger.error({
+						status,
+						body: err.response && (err.response.body || err.response.text),
+						message: err.message,
+						payload
+					}, 'SP-API getReportStatus failed');
 					throw err;
 				}
             }
@@ -610,7 +614,7 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 				// ProcessRunningStatus = 3 (Download)
                 await model.setProcessRunningStatus(row.ID, reportType, 3);
                 
-				const downloadResult = await downloadReportByType(row, reportType, authOverrides, reportId, user, range);
+				const downloadResult = await downloadReportByType(row, reportType, authOverrides, reportId, user, range, documentId);
 				return {
 					message: downloadResult?.message ? downloadResult?.message : `Report ready on attempt ${attempt}. Report ID: ${reportId}${documentId ? ' | Document ID: ' + documentId : ''}`,
 					action: downloadResult?.action ? downloadResult?.action : 'Check Status and Download Report',
@@ -702,7 +706,7 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 	return result;
 }
 
-async function downloadReportByType(row, reportType, authOverrides = {}, reportId = null, user = null, range = null) {
+async function downloadReportByType(row, reportType, authOverrides = {}, reportId = null, user = null, range = null, reportDocumentId = '') {
     if (!reportId) {
         reportId = await model.getLatestReportId(row.ID, reportType);
         if (!reportId) {
@@ -725,7 +729,7 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 		amazonSellerID: row.AmazonSellerID,
 		reportType,
 		action: 'Download Report',
-		context: { row, reportId, seller, authOverrides, user, range },
+		context: { row, reportId, seller, authOverrides, user, range, reportDocumentId },
 		model,
 		sendFailureNotification: (cronDetailID, amazonSellerID, reportType, errorMessage, retryCount, reportId, isFatalError, range) => {
 			return sendFailureNotification({
@@ -744,7 +748,7 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 			});
 		},
 		operation: async ({ attempt, currentRetry, context, startTime }) => {
-			const { row, reportId, seller, authOverrides, user, range } = context;
+			const { row, reportId, seller, authOverrides, user, range, reportDocumentId } = context;
 			const downloadStartTime =  dates.getNowDateTimeInUserTimezone();
 			const timezone = await model.getUserTimezone(user);
 			logger.info({ reportId, reportType, attempt }, 'Starting download for report');
@@ -792,33 +796,8 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 				throw new Error('No access token available for report request but retry again on catch block');
 			}
 			
-			const requestDelaySeconds = Number(process.env.REQUEST_DELAY_SECONDS) || 30;
-        	await DelayHelpers.wait(requestDelaySeconds, 'Between report download and status check (rate limiting)');
-
-			// First get report status to ensure we have the latest reportDocumentId
-			let statusRes;
-			try {
-				statusRes = await sp.getReportStatus(seller, reportId, currentAuthOverrides);
-			} catch (err) {
-				const status = err.status || err.statusCode || err.response?.status;
-				if (status === 401 || status === 403) {
-					const refreshed = await authService.buildAuthOverrides(seller.AmazonSellerID, true);
-					if (!refreshed.accessToken) {				
-						logger.error({ amazonSellerID: seller.AmazonSellerID, attempt, user: user ? user.ID : null }, 'No access token available for request');
-						throw new Error('No access token available for report request after forced refresh');
-					}
-					statusRes = await sp.getReportStatus(seller, reportId, refreshed);
-				}
-			}
-			
-			logger.info({ status: statusRes.processingStatus, reportDocumentId: statusRes.reportDocumentId, attempt }, 'Report status check');
-			
-			if (statusRes.processingStatus !== 'DONE') {
-				throw new Error(`Report not ready, status: ${statusRes.processingStatus}`);
-			}
-			
 			// Use the reportDocumentId from status response
-			const documentId = statusRes.reportDocumentId || reportId;
+			const documentId = reportDocumentId || reportId;
 			logger.info({ documentId, attempt }, 'Using document ID for download');
 			
 			// Download the report document
@@ -862,7 +841,6 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 					}
 					res = await sp.downloadReport(seller, documentId, refreshed);
 				} else {
-					downloadError = err;
 					throw err;
 				}
 			}
@@ -888,7 +866,7 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 					const saveResult = await jsonSvc.saveReportJsonFile(downloadMeta, data);
 					filePath = saveResult?.path || saveResult?.url || null;
 					if (filePath) {
-						const fs = require('fs');
+						const fs = require('node:fs');
 						const stat = await fs.promises.stat(filePath).catch(() => null);
 						fileSize = stat ? stat.size : 0;
 						logger.info({ filePath, fileSize, attempt }, 'Report JSON saved to disk');
@@ -1168,7 +1146,6 @@ async function finalizeCronRunningStatus(cronDetailID, user = null) {
         
         const anyInProgress = statuses.some(s => s === 0);
         const anyRetryNeeded = statuses.some(s => s === 2);
-        const anyFatal = statuses.some(s => s === 3);
         const allCompleted = statuses.every(s => s === 1);
         const allFinalizedOrFatal = statuses.every(s => s === 1 || s === 3);
 
