@@ -82,10 +82,14 @@ async function handleReportCompletion(cronJobID, reportType, amazonSellerID = nu
 		await model.setProcessRunningStatus(cronJobID, reportType, 4);
 		await model.updateSQPReportStatus(cronJobID, reportType, 1, undefined, dates.getNowDateTimeInUserTimezone().db);
 
-		const SqpModel = reportType === 'WEEK' ? getSqpWeekly()
-			: reportType === 'MONTH' ? getSqpMonthly()
-			: reportType === 'QUARTER' ? getSqpQuarterly()
-			: null;
+		let SqpModel = null;
+		if (reportType === 'WEEK') {
+			SqpModel = getSqpWeekly();
+		} else if (reportType === 'MONTH') {
+			SqpModel = getSqpMonthly();
+		} else if (reportType === 'QUARTER') {
+			SqpModel = getSqpQuarterly();
+		}
 
 		if (!SqpModel) {
 			console.error(`❌ Invalid report type: ${reportType}`);
@@ -227,7 +231,7 @@ async function saveReportJsonFile(download, jsonContent) {
 
 		const dateObj = dates.getNowDateTimeInUserTimezone(new Date(), null).log;
 		// Replace space with 'T' and colons with '-' for filename safety
-		const timestamp = dateObj.replace(' ', 'T').replace(/[:]/g, '-').slice(0, 19);
+		const timestamp = dateObj.replace(' ', 'T').replaceAll(':', '-').slice(0, 19);
 		const date = timestamp.slice(0, 10);
 		const reportType = (download.ReportType || download.reportType || '').toString().toLowerCase();
 
@@ -283,11 +287,13 @@ async function parseAndStoreJsonData(download, jsonContent, filePath, reportDate
         let maxRange = null;
 		for (const record of records) {
 			const row = buildMetricsRow(download, record, filePath, reportDateOverride);
-			if (row) rows.push(row);
-            const s = record.startDate || null;
-            const e = record.endDate || null;
-            if (s) minRange = !minRange || s < minRange ? s : minRange;
-            if (e) maxRange = !maxRange || e > maxRange ? e : maxRange;
+			if (row) {
+				rows.push(row);
+				const s = row.StartDate || null;
+				const e = row.EndDate || null;
+				if (s) minRange = !minRange || s < minRange ? s : minRange;
+				if (e) maxRange = !maxRange || e > maxRange ? e : maxRange;
+			}
 		}
 
 		const total = records.length;
@@ -548,13 +554,13 @@ async function deleteExistingRows(model, rows) {
     const uniqueKeys = [];
     const seen = new Set();
 
-    rows.forEach((row) => {
+    for (const row of rows) {
         const keyParts = [row.AmazonSellerID, row.ASIN, row.SellerID, row.StartDate, row.EndDate];
-        if (keyParts.includes((value) => value === undefined || value === null)) {
-            return;
+        if (keyParts.some((value) => value === undefined || value === null)) {
+            continue;
         }
         const key = keyParts.join('|');
-        if (seen.has(key)) return;
+        if (seen.has(key)) continue;
         seen.add(key);
         uniqueKeys.push({
             AmazonSellerID: row.AmazonSellerID,
@@ -563,7 +569,7 @@ async function deleteExistingRows(model, rows) {
             StartDate: row.StartDate,
             EndDate: row.EndDate
         });
-    });
+    }
 
     if (uniqueKeys.length === 0) return;
 
@@ -740,7 +746,15 @@ async function getRequestStartDate(cronJobID, reportType) {
 		const SqpCronDetails = getSqpCronDetails();
 		const row = await SqpCronDetails.findOne({ where: { ID: cronJobID } });
 		if (!row) return null;
-		const prefix = reportType === 'WEEK' ? 'Weekly' : reportType === 'MONTH' ? 'Monthly' : reportType === 'QUARTER' ? 'Quarterly' : '';
+		
+		// Map report types to their prefix names
+		const reportTypePrefixMap = {
+			'WEEK': 'Weekly',
+			'MONTH': 'Monthly',
+			'QUARTER': 'Quarterly'
+		};
+		
+		const prefix = reportTypePrefixMap[reportType] || '';
 		const field = `${prefix}SQPDataPullStartDate`;
 		return row[field] ? new Date(row[field]) : null;
 	} catch (error) {

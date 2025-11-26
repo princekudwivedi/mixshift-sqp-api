@@ -216,7 +216,7 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
                 }
                 asinString = parts.join(' ');
             } else if (chunk.asin_string) {
-                asinString = String(chunk.asin_string).replace(/\s+/g, ' ').trim().slice(0, 200);
+                asinString = String(chunk.asin_string).replaceAll(/\s+/g, ' ').trim().slice(0, 200);
             }
 
             if (!asinString) {
@@ -429,7 +429,13 @@ async function checkReportStatuses(authOverrides = {}, filter = {}, retry = fals
     }
 
     // Finalize cronRunningStatus after status checks
-    try { if (cronDetailID) await finalizeCronRunningStatus(cronDetailID, user); } catch (_) {}
+    try { 
+		if (cronDetailID) {
+			await finalizeCronRunningStatus(cronDetailID, user); 
+		}
+	} catch (error) {
+        logger.error({ error: error.message }, 'Error finalizing cron running status');
+    }
     return retry ? res : undefined;
 }
 
@@ -618,9 +624,19 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
                 await model.setProcessRunningStatus(row.ID, reportType, 3);
                 
 				const downloadResult = await downloadReportByType(row, reportType, authOverrides, reportId, user, range, documentId);
+				
+				// Build message without nested ternary
+				let message = downloadResult?.message;
+				if (!message) {
+					const documentIdSuffix = documentId ? ` | Document ID: ${documentId}` : '';
+					message = `Report ready on attempt ${attempt}. Report ID: ${reportId}${documentIdSuffix}`;
+				}
+				
+				const action = downloadResult?.action || 'Check Status and Download Report';
+				
 				return {
-					message: downloadResult?.message ? downloadResult?.message : `Report ready on attempt ${attempt}. Report ID: ${reportId}${documentId ? ' | Document ID: ' + documentId : ''}`,
-					action: downloadResult?.action ? downloadResult?.action : 'Check Status and Download Report',
+					message,
+					action,
 					reportID: reportId,
 					reportDocumentID: documentId,
 					data: { status, documentId },
@@ -636,7 +652,7 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 					reportType, 
 					action: 'Check Status', 
 					status: 0, 
-					message: `Report ${status.toLowerCase().replace('_',' ')} on attempt ${attempt}, waiting ${delaySeconds}s before retry`, 
+					message: `Report ${status.toLowerCase().replaceAll('_',' ')} on attempt ${attempt}, waiting ${delaySeconds}s before retry`, 
 					reportID: reportId, 
 					retryCount: currentRetry,
 					executionTime: (Date.now() - startTime) / 1000 
@@ -672,7 +688,7 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 				await DelayHelpers.wait(delaySeconds, 'Before retry IN_QUEUE or IN_PROGRESS');
 
 				// Throw error to trigger retry mechanism
-				throw new Error(`Report still ${status.toLowerCase().replace('_',' ')} after ${delaySeconds}s wait - retrying`);
+				throw new Error(`Report still ${status.toLowerCase().replaceAll('_',' ')} after ${delaySeconds}s wait - retrying`);
 				
 			} else if (status === 'FATAL' || status === 'CANCELLED') {                
 				// Fatal or cancelled status - treat as error
@@ -752,7 +768,7 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 			});
 		},
 		operation: async ({ attempt, currentRetry, context, startTime }) => {
-			const { row, reportId, seller, authOverrides, user, range, reportDocumentId } = context;
+			const { row, reportId, seller, user, range } = context;
 			const downloadStartTime =  dates.getNowDateTimeInUserTimezone();
 			const timezone = await model.getUserTimezone(user);
 			logger.info({ reportId, reportType, attempt }, 'Starting download for report');
@@ -900,8 +916,8 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 						attempt
 					});
 					
-				} catch (fileErr) {
-					logger.warn({ error: fileErr ? (fileErr.message || String(fileErr)) : 'Unknown error', attempt }, 'Failed to save JSON file');
+				} catch (error) {
+					logger.warn({ error: error ? (error.message || String(error)) : 'Unknown error', attempt }, 'Failed to save JSON file');
 					
 					// API Logger - Download Success but File Save Failed
 					const userId = user ? user.ID : null;
@@ -922,7 +938,7 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 						endTime:  dates.getNowDateTimeInUserTimezone().log,
 						executionTime: (Date.now() - startTime) / 1000,
 						status: 'partial_success',
-						error: fileErr,
+						error: error,
 						retryCount: currentRetry,
 						attempt
 					});
@@ -941,7 +957,8 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
                 );
 
 				
-				const newRow = await downloadUrls.getCompletedDownloadsWithFiles(filter = { cronDetailID: row.ID, ReportType: reportType });
+				const filter = { cronDetailID: row.ID, ReportType: reportType };
+				let newRow = await downloadUrls.getCompletedDownloadsWithFiles(filter);
 				
 				if (newRow.length > 0) {					
 					// Process saved JSON files immediately after download
@@ -1145,11 +1162,14 @@ async function finalizeCronRunningStatus(cronDetailID, user = null) {
             return;
         }
 
-        // Get only statuses for active reports
-        const statuses = activeReports.map(r => r.status);
+        // Get only statuses for active reports and normalize to numbers so includes/equals checks work
+        const statuses = activeReports.map(r => {
+            const parsedStatus = Number.parseInt(r.status, 10);
+            return Number.isNaN(parsedStatus) ? -1 : parsedStatus;
+        });
         
-        const anyInProgress = statuses.some(s => s === 0);
-        const anyRetryNeeded = statuses.some(s => s === 2);
+        const anyInProgress = statuses.includes(0);
+        const anyRetryNeeded = statuses.includes(2);
         const allCompleted = statuses.every(s => s === 1);
         const allFinalizedOrFatal = statuses.every(s => s === 1 || s === 3);
 
@@ -1186,7 +1206,17 @@ async function finalizeCronRunningStatus(cronDetailID, user = null) {
             reason = 'No status change needed';
         }
 
-        if (newStatus !== row.cronRunningStatus) {
+        if (newStatus === row.cronRunningStatus) {
+            logger.info({ 
+                cronDetailID, 
+                cronRunningStatus: row.cronRunningStatus, 
+                reason,
+                activeReports: activeReports.map(r => `${r.type}(status:${r.status})`).join(', '),
+                weekly, 
+                monthly, 
+                quarterly 
+            }, 'cronRunningStatus unchanged');
+        } else {
             logger.info({ 
                 cronDetailID, 
                 oldStatus: row.cronRunningStatus, 
@@ -1204,16 +1234,6 @@ async function finalizeCronRunningStatus(cronDetailID, user = null) {
             }, { 
                 where: { ID: cronDetailID } 
             });
-        } else {
-            logger.info({ 
-                cronDetailID, 
-                cronRunningStatus: row.cronRunningStatus, 
-                reason,
-                activeReports: activeReports.map(r => `${r.type}(status:${r.status})`).join(', '),
-                weekly, 
-                monthly, 
-                quarterly 
-            }, 'cronRunningStatus unchanged');
         }
     } catch (e) {
         logger.error({ cronDetailID, error: e.message }, 'Failed to finalize cronRunningStatus');

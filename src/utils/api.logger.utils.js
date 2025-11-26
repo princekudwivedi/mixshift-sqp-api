@@ -51,7 +51,7 @@ class APILogger {
         }
 
         const dateObj = dates.getNowDateTimeInUserTimezone(new Date(), null).log;
-        const date = dateObj.slice(0, 10).replace(/\//g, '-'); // extract YYYY-MM-DD
+        const date = dateObj.slice(0, 10).replaceAll('/', '-'); // extract YYYY-MM-DD
         const userFolder = `user__${userId}`;
         const dateFolder = date;
         const sellerAccountFolder = sellerAccountId.toString();
@@ -410,11 +410,11 @@ class APILogger {
         const sanitized = { ...headers };
         const sensitiveKeys = ['authorization', 'x-amz-access-token', 'x-api-key', 'cookie'];
         
-        sensitiveKeys.forEach(key => {
+        for (const key of sensitiveKeys) {
             if (sanitized[key]) {
                 sanitized[key] = '[REDACTED]';
             }
-        });
+        }
 
         return sanitized;
     }
@@ -459,7 +459,7 @@ class APILogger {
             let size = 0;
             try {
                 const files = fs.readdirSync(dir);
-                files.forEach((file) => {
+                for (const file of files) {
                     const filePath = path.join(dir, file);
                     const stat = fs.statSync(filePath);
                     if (stat.isDirectory()) {
@@ -467,7 +467,7 @@ class APILogger {
                     } else {
                         size += stat.size;
                     }
-                });
+                }
             } catch (error) {
                 logger.error(`Error calculating size for ${dir}:`, error.message);
             }
@@ -490,17 +490,17 @@ class APILogger {
             logger.info('\n📂 Cleaning root date folders...');
             const rootFolders = fs.readdirSync(logsRootDir);
             
-            rootFolders.forEach(folder => {
+            for (const folder of rootFolders) {
                 const folderPath = path.join(logsRootDir, folder);
                 
-                if (!fs.statSync(folderPath).isDirectory()) return;
+                if (!fs.statSync(folderPath).isDirectory()) continue;
 
                 // Skip api_logs folder (will be processed separately)
-                if (folder === 'api_logs') return;
+                if (folder === 'api_logs') continue;
 
                 // Parse date from folder name
                 const folderDate = parseDateFolder(folder);
-                if (!folderDate) return; // Not a date folder
+                if (!folderDate) continue; // Not a date folder
 
                 if (folderDate < cutoffDate) {
                     const folderSize = getSize(folderPath);
@@ -512,7 +512,7 @@ class APILogger {
                     totalBytesFreed += folderSize;
                     logger.info(`   ✓ Deleted: ${folder} (${(folderSize / 1024 / 1024).toFixed(2)} MB)`);
                 }
-            });
+            }
 
             // 2. Clean API logs (logs/api_logs/user_X/<DD-MM-YYYY>/)
             if (fs.existsSync(this.baseLogPath)) {
@@ -523,40 +523,40 @@ class APILogger {
 
                 let apiLogsDeleted = 0;
 
-                userFolders.forEach(userFolder => {
+                for (const userFolder of userFolders) {
                     const userPath = path.join(this.baseLogPath, userFolder);
 
                     // Check if it's a directory
                     try {
                         if (!fs.statSync(userPath).isDirectory()) {
                             logger.info(`   ⊘ Skipped (not a directory): ${userFolder}`);
-                            return;
+                            continue;
                         }
                     } catch (err) {
                         logger.info(`   ⊘ Error accessing: ${userFolder} - ${err.message}`);
-                        return;
+                        continue;
                     }
 
                     // Check if it's a user folder (user_X or user__X pattern)
                     if (!userFolder.match(/^user_+\d+$|^user__unknown$/)) {
                         logger.info(`   ⊘ Skipped (not user_* pattern): ${userFolder}`);
-                        return;
+                        continue;
                     }
 
                     logger.info(`   📁 Processing: ${userFolder}`);
                     const dateFolders = fs.readdirSync(userPath);
                     logger.info(`      Found ${dateFolders.length} date folders`);
 
-                    dateFolders.forEach(dateFolder => {
+                    for (const dateFolder of dateFolders) {
                         const datePath = path.join(userPath, dateFolder);
 
-                        if (!fs.statSync(datePath).isDirectory()) return;
+                        if (!fs.statSync(datePath).isDirectory()) continue;
 
                         // Parse date from folder name (DD-MM-YYYY format)
                         const folderDate = parseDateFolder(dateFolder);
                         if (!folderDate) {
                             logger.info(`      ⊘ Invalid date format: ${dateFolder}`);
-                            return; // Not a valid date folder
+                            continue; // Not a valid date folder
                         }
 
                         if (folderDate < cutoffDate) {
@@ -572,7 +572,7 @@ class APILogger {
                         } else {
                             logger.info(`      ✓ Keeping (recent): ${dateFolder}`);
                         }
-                    });
+                    }
 
                     // Remove empty user folder if no date folders remain
                     try {
@@ -582,9 +582,9 @@ class APILogger {
                             logger.info(`      ✓ Removed empty user folder: ${userFolder}`);
                         }
                     } catch (err) {
-                        // Ignore errors for empty folder removal
+                        logger.info(`      ⊘ Error removing empty user folder: ${userFolder} - ${err.message}`);
                     }
-                });
+                }
 
                 if (apiLogsDeleted === 0) {
                     logger.info(`   ℹ️  No old API log folders found to delete`);
@@ -602,14 +602,14 @@ class APILogger {
                 const dateFolders = fs.readdirSync(reportsBasePath);
                 logger.info(`   Found ${dateFolders.length} date folders in reports`);
 
-                dateFolders.forEach((dateFolder) => {
+                for (const dateFolder of dateFolders) {
                     const datePath = path.join(reportsBasePath, dateFolder);
-                    if (!fs.statSync(datePath).isDirectory()) return;
+                    if (!fs.statSync(datePath).isDirectory()) continue;
 
                     const folderDate = parseDateFolder(dateFolder);
                     if (!folderDate) {
                         logger.info(`   ⊘ Invalid date format in reports: ${dateFolder}`);
-                        return;
+                        continue;
                     }
 
                     if (folderDate < cutoffDate) {
@@ -619,7 +619,7 @@ class APILogger {
                         totalBytesFreed += folderSize;
                         logger.info(`   ✓ Deleted report date folder: ${dateFolder} (${(folderSize / 1024 / 1024).toFixed(2)} MB)`);
                     }
-                });
+                }
             } else {
                 logger.info('\n📂 Reports directory not found');
                 logger.info(`   Expected path: ${reportsBasePath}`);

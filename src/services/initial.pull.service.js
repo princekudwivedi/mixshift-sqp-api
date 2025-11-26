@@ -283,16 +283,15 @@ class InitialPullService {
         try {
             // STEP 1: Check status and trigger download (reuse existing function)
             await this.circuitBreaker.execute(
-                () => this._checkInitialPullReportStatus(
+                () => this._checkInitialPullReportStatus({
                     cronDetailID,
                     seller,
                     reportId,
-                    rangeObj,
+                    range: rangeObj,
                     reportType,
-                    authOverrides,
-                    true, // retry flag
+                    retry: true, // retry flag
                     user
-                ),
+                }),
                 { sellerId: seller.idSellerAccount, operation: 'recheckInitialPullReportStatus' }
             );
 
@@ -522,9 +521,14 @@ class InitialPullService {
             const reportRequests = []; // Track all requested reports with their IDs
             
             for (const type of typesToPull) {
-                const rangesToProcess = type === 'WEEK' ? ranges.weekRanges 
-                    : type === 'MONTH' ? ranges.monthRanges 
-                    : ranges.quarterRanges;
+                let rangesToProcess;
+                if (type === 'WEEK') {
+                    rangesToProcess = ranges.weekRanges;
+                } else if (type === 'MONTH') {
+                    rangesToProcess = ranges.monthRanges;
+                } else {
+                    rangesToProcess = ranges.quarterRanges;
+                }
                 
                 logger.info({
                     type: type,
@@ -822,16 +826,15 @@ class InitialPullService {
       
             try {
               await this.circuitBreaker.execute(
-                () => this._checkInitialPullReportStatus(
-                  cronDetailRow.ID,
+                () => this._checkInitialPullReportStatus({
+                  cronDetailID: cronDetailRow.ID,
                   seller,
-                  request.reportId,
-                  request.range,
-                  request.type,
-                  authOverrides,
+                  reportId: request.reportId,
+                  range: request.range,
+                  reportType: request.type,
                   retry,
                   user
-                ),
+                }),
                 { sellerId: seller.idSellerAccount, operation: 'checkInitialPullReportStatus' }
               );
       
@@ -884,7 +887,7 @@ class InitialPullService {
         } else if (fatal === total) {
           pull = 3; // ❌ all fatal
         } else if ((done > 0 && progress > 0) || (progress > 0 && fatal > 0)) {
-          pull = 2; // ⚙️ mixed state (some done + some progress/fatal)
+          // ⚙️ mixed state (some done + some progress/fatal) - keep default pull = 2
         } else if(done > 0 && fatal > 0){
           pull = 3; // ❌ some done and some fatal
         }
@@ -982,7 +985,7 @@ class InitialPullService {
             } else if (fatal === total) {
               pull = 3;
             } else if ((done > 0 && progress > 0) || (progress > 0 && fatal > 0)) {
-              pull = 2;
+              // Mixed state - keep default pull = 2
               overallAsinStatus = 3;
             } else if(done > 0 && fatal > 0){
               pull = 3;
@@ -1003,10 +1006,20 @@ class InitialPullService {
           const row = await SqpCronDetails.findOne({ where: { ID: cronDetailID }, raw: true });          
           if (row) {            
             const statuses = [row.WeeklySQPDataPullStatus, row.MonthlySQPDataPullStatus, row.QuarterlySQPDataPullStatus];
-            const anyFatal = statuses.some(s => s === 3);
+            const anyFatal = statuses.includes(3);
             const allDone = statuses.every(s => s === 1);
             const needsRetry = statuses.some(s => [0, 2, null].includes(s));
-            const newStatus = needsRetry ? 3 : (allDone || anyFatal ? 2 : row.cronRunningStatus);
+            
+            // Determine new status based on conditions (extracted from nested ternary)
+            let newStatus;
+            if (needsRetry) {
+              newStatus = 3;
+            } else if (allDone || anyFatal) {
+              newStatus = 2;
+            } else {
+              newStatus = row.cronRunningStatus;
+            }
+            
             if (newStatus !== row.cronRunningStatus){
               await SqpCronDetails.update({ cronRunningStatus: newStatus, dtUpdatedOn: dates.getNowDateTimeInUserTimezone().db }, { where: { ID: cronDetailID } });
             }
@@ -1028,7 +1041,8 @@ class InitialPullService {
     /**
      * Check initial pull report status (Step 2: Check Status)
      */
-    async _checkInitialPullReportStatus(cronDetailID, seller, reportId, range, reportType, authOverrides = {}, retry = false, user = null) {
+    async _checkInitialPullReportStatus(params) {
+        const { cronDetailID, seller, reportId, range, reportType, retry = false, user = null } = params;
         const result = await RetryHelpers.executeWithRetry({
             cronDetailID,
             amazonSellerID: seller.AmazonSellerID,
@@ -1129,7 +1143,6 @@ class InitialPullService {
                         }
                         res = await sp.getReportStatus(seller, reportId, refreshedOverrides);
                     } else {
-                        statusError = err;
                         throw err;
                     }
                 }
@@ -1188,7 +1201,7 @@ class InitialPullService {
                     await DelayHelpers.wait(requestDelaySeconds, 'Between report status checks and downloads (rate limiting)');
 
                     const downloadResult = await this.circuitBreaker.execute(
-                        () => this._downloadInitialPullReport({ cronDetailID, seller, reportId, documentId, range, reportType, authOverrides, retry, user }),
+                        () => this._downloadInitialPullReport({ cronDetailID, seller, reportId, documentId, range, reportType, retry, user }),
                         { sellerId: seller.idSellerAccount, operation: 'downloadInitialPullReport' }
                     );
 
@@ -1253,8 +1266,7 @@ class InitialPullService {
      * Download initial pull report (Step 3: Download)
      */
     async _downloadInitialPullReport(params) {
-        const { cronDetailID, seller, reportId, documentId, range, reportType, authOverrides = {}, retry = false, user = null } = params;
-        
+        const { cronDetailID, seller, reportId, documentId, range, reportType, retry = false, user = null } = params;
         const result = await RetryHelpers.executeWithRetry({
             cronDetailID,
             amazonSellerID: seller.AmazonSellerID,
@@ -1538,8 +1550,6 @@ class InitialPullService {
                                 importResult 
                             }, retry ? 'Initial pull import completed successfully (retry)' : 'Initial pull import completed successfully', 'Initial pull import completed successfully');
                             
-                            //await model.updateSQPReportStatus(cronDetailID, reportType, 0, null, dates.getNowDateTimeInUserTimezone().db);
-                            
                             // Log import success
                             await model.logCronActivity({
                                 cronJobID: cronDetailID,
@@ -1563,8 +1573,6 @@ class InitialPullService {
                                 range: range.range,
                                 retry
                             }, retry ? 'Error during initial pull import - file saved but import failed (retry)' : 'Error during initial pull import - file saved but import failed', 'Error during initial pull import - file saved but import failed');
-                            
-                            //await model.updateSQPReportStatus(cronDetailID, reportType, 0, null, dates.getNowDateTimeInUserTimezone().db);
                             
                             // Log import failure
                             await model.logCronActivity({

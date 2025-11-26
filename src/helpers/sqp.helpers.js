@@ -367,11 +367,12 @@ class RetryHelpers {
             /permission.*denied/i
         ];
         
-        // Check for non-retryable patterns
-        if (nonRetryablePatterns.some(pattern => pattern.test(message))) {
+        // Check if message matches any non-retryable pattern
+        const isNonRetryable = nonRetryablePatterns.some((pattern) => pattern.test(message));
+        if (isNonRetryable) {
             return false;
         }
-        
+
         // Check for non-retryable HTTP status codes
         if (status && [400, 401, 403, 404, 422].includes(status)) {
             return false;
@@ -420,10 +421,10 @@ class ValidationHelpers {
         return input
             .trim()
             .substring(0, maxLength)
-            .replace(/[<>\"'&]/g, '')  // XSS protection
-            .replace(/[';-]/g, '')  // SQL injection protection
-            .replace(/[^\w\s\-\.@]/g, '') // Allow only safe characters
-            .replace(/\s+/g, ' ')      // Normalize whitespace
+            .replaceAll(/[<>"'&]/g, '')  // XSS protection
+            .replaceAll(/[';-]/g, '')  // SQL injection protection
+            .replaceAll(/[^\w\s\-.@]/g, '') // Allow only safe characters
+            .replaceAll(/\s+/g, ' ')      // Normalize whitespace
             .trim();
     }
 
@@ -785,32 +786,33 @@ class DelayHelpers {
         }
 
         // Use provided delay or get from environment
-        const effectiveDelay = delaySeconds !== undefined 
-            ? delaySeconds 
-            : Number(process.env.INITIAL_DELAY_SECONDS) || 30;
+        const effectiveDelay = delaySeconds ?? (Number(process.env.INITIAL_DELAY_SECONDS) || 30);
 
+        const contextSuffix = context ? ` ${context}` : '';
         logger.info({ 
             initialDelaySeconds: process.env.INITIAL_DELAY_SECONDS,
             effectiveDelay 
-        }, `Initial delay seconds${context ? ` ${context}` : ''}`);
+        }, `Initial delay seconds${contextSuffix}`);
 
+        const contextSuffixForWait = context ? ` (${context})` : '';
         logger.info({ 
             cronDetailID, 
             reportType, 
             reportId, 
             delaySeconds: effectiveDelay,
             context
-        }, `Waiting ${effectiveDelay}s before operation${context ? ` (${context})` : ''}`);
+        }, `Waiting ${effectiveDelay}s before operation${contextSuffixForWait}`);
 
         // Wait
         await this.wait(effectiveDelay, context);
 
+        const contextSuffixForComplete = context ? ` (${context})` : '';
         logger.info({ 
             cronDetailID, 
             reportType, 
             reportId,
             context 
-        }, `Delay completed${context ? ` (${context})` : ''}, ready to proceed`);
+        }, `Delay completed${contextSuffixForComplete}, ready to proceed`);
 
         return effectiveDelay;
     }
@@ -848,18 +850,20 @@ class DelayHelpers {
             }, 'Wait time capped to prevent excessive delays');
         }
         
+        const contextSuffixWait = context ? ` (${context})` : '';
         logger.info({ 
             seconds: safeSeconds, 
             original: seconds,
             context 
-        }, `Waiting ${safeSeconds}s${context ? ` (${context})` : ''}`);
+        }, `Waiting ${safeSeconds}s${contextSuffixWait}`);
         
         await new Promise(resolve => setTimeout(resolve, safeSeconds * 1000));
         
+        const contextSuffixCompleted = context ? ` (${context})` : '';
         logger.info({ 
             seconds: safeSeconds, 
             context 
-        }, `Delay completed${context ? ` (${context})` : ''}, ready to proceed`);
+        }, `Delay completed${contextSuffixCompleted}, ready to proceed`);
     }
 }
 

@@ -120,7 +120,7 @@ function getHealthCheckData() {
         status: 'healthy',
         timestamp: new Date().toISOString(),
         database: {
-            connected: sequelize ? true : false,
+            connected: !!sequelize,
             connectionStats: stats,
             connectionLimit: Number.parseInt(process.env.DB_CONNECTION_LIMIT) || 5,
             connectionUsage: stats.totalConnections ? 

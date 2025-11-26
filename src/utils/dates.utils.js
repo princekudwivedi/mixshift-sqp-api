@@ -73,7 +73,8 @@ function resolveTimezone(preferred) {
         if (resolved && resolved !== 'UTC') {
             return resolved;
         }
-    } catch (err) {
+    } catch (error) {
+        logger.error({ error: error.message }, 'Error resolving timezone');
         // ignore
     }
     if (preferred && preferred.trim().length > 0) {
@@ -87,8 +88,8 @@ function resolveTimezone(preferred) {
         if (resolved) {
             return resolved;
         }
-    } catch (err) {
-        // ignore
+    } catch (error) {
+        logger.error({ error: error.message }, 'Error resolving timezone');
     }
     return 'UTC';
 }
@@ -122,9 +123,9 @@ function getTimeZoneParts(date, timeZone) {
 
     const parts = formatter.formatToParts(date);
     const map = {};
-    parts.forEach(({ type, value }) => {
+    for (const { type, value } of parts) {
         map[type] = value;
-    });
+    }
 
     const datePart = `${map.year}-${map.month}-${map.day}`;
     const timePart = `${map.hour}:${map.minute}:${map.second}`;
@@ -244,7 +245,7 @@ function calculateMonthRanges(numberOfMonths = 12, skipCurrent = true, timezone 
 /**
  * Calculate historical quarter ranges
  */
-function calculateQuarterRanges(numberOfQuarters = 4, skipCurrent = true, timezone) {
+function calculateQuarterRanges(numberOfQuarters = 4, skipCurrent = true, timezone = null) {
     const ranges = [];
     const today = getNowDateTimeInUserTimezoneDate(new Date(), timezone);
     const currentQuarter = Math.floor(today.getMonth() / 3); // 0 = Q1

@@ -499,16 +499,18 @@ async function updateSQPReportStatus(cronDetailID, reportType, status, startDate
     if(cronStartDate){
         data.dtCronStartDate = dates.getNowDateTimeInUserTimezone().db;
     }
-    if(status){
-        data[`${prefix}SQPDataPullStatus`] =  status;
-    } else if(status == 0){
-        data[`${prefix}SQPDataPullStatus`] =  status;
+    let statusValue = `${prefix}SQPDataPullStatus`;
+    
+    if (status || status === 0) {
+        data[statusValue] = status;
     }
     if (startDate) {
-        data[`${prefix}SQPDataPullStartDate`] = startDate;
+        const startDateValue = `${prefix}SQPDataPullStartDate`;
+        data[startDateValue] = startDate;
     }
     if (endDate) {
-        data[`${prefix}SQPDataPullEndDate`] = endDate;
+        const endDateValue = `${prefix}SQPDataPullEndDate`;
+        data[endDateValue] = endDate;
     }
     if(cronRunningStatus != null){
         data.cronRunningStatus = Number(cronRunningStatus);
@@ -703,7 +705,7 @@ async function checkCronDetailsOfSellersByDate(
         order: [['ID', 'DESC']]
     });
     // Return single record if AmazonSellerID given
-    if (AmazonSellerID != '') {
+    if (AmazonSellerID) {
         return results.length > 0 ? results[0] : null;
     } else {
         return results;

@@ -287,13 +287,15 @@ describe('Cron Integration Tests', () => {
             expect(afterMemory.heapUsed).toBeGreaterThanOrEqual(initialMemory.heapUsed);
             
             // Clean up
-            arrays.forEach(arr => arr.length = 0);
+            for (const arr of arrays) {
+                arr.length = 0;
+            }
             arrays.length = 0;
             
             // Force garbage collection if available
-            if (global.gc) {
-                global.gc();
-            }
+            if (globalThis.gc) {
+                globalThis.gc();
+            } 
         });
     });
     
