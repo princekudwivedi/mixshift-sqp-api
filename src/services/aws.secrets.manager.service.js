@@ -13,20 +13,18 @@ class AwsSecretsManagerService {
     constructor(options = {}) {
         const {
             region = DEFAULT_REGION,
-            accessKeyId = process.env.AWS_CONSTANT_SECRET_MANAGER_KEY,
-            secretAccessKey = process.env.AWS_CONSTANT_SECRET_MANAGER_SECRET
+            // Use AWS SDK default credential provider chain; do not read from env overrides here
+            accessKeyId = undefined,
+            secretAccessKey = undefined
         } = options;
 
         if (!region) {
-            logger.warn('AWS SSM region not specified; defaulting to us-east-1');
-        }
-
-        if (!accessKeyId || !secretAccessKey) {
-            logger.warn('AWS SSM credentials missing; parameter retrieval may fail');
+            logger.log('AWS SSM region not specified; defaulting to us-east-2', 'warn');
         }
 
         this.client = new SSMClient({
-            region: region || 'us-east-1',
+            region: region || 'us-east-2',
+            // Let AWS SDK resolve credentials automatically (env vars, shared config, IAM role, etc.)
             credentials: accessKeyId && secretAccessKey
                 ? { accessKeyId, secretAccessKey }
                 : undefined
