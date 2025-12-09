@@ -1,5 +1,4 @@
 const { Sequelize } = require('sequelize');
-const { DB_HOST, DB_PORT, DB_USER, DB_PASS, DB_NAME } = require('./env.config');
 const logger = require('../utils/logger.utils');
 
 // Cache for Sequelize instances to prevent connection leaks
@@ -95,14 +94,20 @@ function createSequelize({ host, port, user, pass, db }) {
 }
 
 function getRootSequelize() {
-    return createSequelize({ host: DB_HOST, port: DB_PORT, user: DB_USER, pass: DB_PASS, db: DB_NAME });
+    return createSequelize({
+        host: process.env.DEFAULT_DB_HOSTNAME,
+        port: process.env.DB_PORT_NUMBER,
+        user: process.env.DEFAULT_DB_USERNAME,
+        pass: process.env.DEFAULT_DB_PASSWORD,
+        db: process.env.DEFAULT_DB_NAME
+    });
 }
 
 function getTenantSequelize(tenant) {
     // tenant: { host, port, user, pass, db }
     return createSequelize({
-        host: tenant.host || DB_HOST,
-        port: tenant.port || DB_PORT,
+        host: tenant.host || process.env.DEFAULT_DB_HOSTNAME,
+        port: tenant.port || process.env.DB_PORT_NUMBER,
         user: tenant.user,
         pass: tenant.pass,
         db: tenant.db

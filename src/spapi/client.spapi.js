@@ -37,8 +37,8 @@ async function buildReportsClient(opts = {}) {
 	const { ReportsSpApi } = await getReportsApiModule();
 	
 	// Use config defaults with per-user overrides (LWA credentials)
-	const clientId = opts.clientId || config.LWA_CLIENT_ID;
-	const clientSecret = opts.clientSecret || config.LWA_CLIENT_SECRET;
+	const clientId = opts.clientId || process.env.SP_API_DEVELOPER_CLIENT_ID;
+	const clientSecret = opts.clientSecret || process.env.SP_API_DEVELOPER_CLIENT_SECERET;
 	const accessToken = opts.accessToken; // Use access_token
 	const merchantRegion = opts.merchantRegion || 'NA';
 	

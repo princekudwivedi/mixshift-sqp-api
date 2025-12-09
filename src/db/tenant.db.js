@@ -12,7 +12,7 @@ const asyncLocalStorage = new AsyncLocalStorage();
  */
 function initDatabaseContext(callback) {
     const context = {
-        dbName: env.DB_NAME,
+        dbName: process.env.DEFAULT_DB_NAME,
         sequelize: null,
         userId: null,
         timezone: 'UTC'
@@ -45,7 +45,7 @@ async function loadDatabase(userId = 0) {
             logger.clearUserContext();
         }
         logger.info({ contextId: getContextId() }, 'Connecting to root database (userId = 0)');
-        context.dbName = env.DB_NAME;
+        context.dbName = process.env.DEFAULT_DB_NAME;
         context.sequelize = getRootSequelize();
         context.userId = 0;
         context.timezone = 'UTC';
@@ -60,23 +60,28 @@ async function loadDatabase(userId = 0) {
     const rootSequelize = getRootSequelize();
     
     try {
-        // Use Sequelize to query user mapping
         const userMapping = await rootSequelize.query(`
-            SELECT DB.DB_Name AS dbName, tz.Timezone AS tz
-            FROM users AS user
-            LEFT JOIN user_database_mapping AS map ON map.UserID = user.ID
-            LEFT JOIN user_databases AS DB ON map.MappedDB_ID = DB.DB_ID
-            LEFT JOIN timezones AS tz ON tz.ID = user.iTimezoneID
-            WHERE user.isDeleted = '0' AND DB.DB_AppType = '1' AND user.ID = :userId
+            SELECT 
+                db.DB_Name AS dbName,
+                tz.Timezone AS tz
+            FROM ${env.TBL_USERS} AS user
+            LEFT JOIN ${env.TBL_USER_DB_MAP} AS map ON map.UserID = user.ID
+            LEFT JOIN ${env.TBL_USER_DATABASES} AS db ON map.MappedDB_ID = db.DB_ID
+            LEFT JOIN ${env.TBL_TIMEZONES} AS tz ON tz.ID = user.iTimezoneID
+            WHERE 
+                user.isDeleted = ?  
+                AND db.DB_AppType = ?  
+                AND user.ID = ? 
             LIMIT 1
         `, {
-            replacements: { userId: Number(userId) },
+            replacements: [0, 1, Number(userId)],
             type: rootSequelize.QueryTypes.SELECT
         });
+        
 
         if (!userMapping || userMapping.length === 0 || !userMapping[0].dbName) {
             logger.warn({ userId, contextId: getContextId() }, 'User DB mapping not found; staying on root');
-            context.dbName = env.DB_NAME;
+            context.dbName = process.env.DEFAULT_DB_NAME;
             context.sequelize = rootSequelize;
             context.userId = userId;
             context.timezone = userMapping?.[0]?.tz || 'UTC';
@@ -95,8 +100,8 @@ async function loadDatabase(userId = 0) {
         context.dbName = userMapping[0].dbName;
         context.sequelize = getTenantSequelize({ 
             db: userMapping[0].dbName, 
-            user: env.DB_USER, 
-            pass: env.DB_PASS 
+            user: process.env.DEFAULT_DB_USERNAME, 
+            pass: process.env.DEFAULT_DB_PASSWORD 
         });
         context.userId = userId;
         context.timezone = userMapping[0].tz || 'UTC';
@@ -118,7 +123,7 @@ async function loadDatabase(userId = 0) {
             userId, 
             contextId: getContextId() 
         }, 'Error loading tenant database');
-        context.dbName = env.DB_NAME;
+        context.dbName = process.env.DEFAULT_DB_NAME;
         context.sequelize = rootSequelize;
         context.timezone = 'UTC';
         if (typeof logger.setUserContext === 'function') {
@@ -132,9 +137,9 @@ function getCurrentDbName() {
     const context = asyncLocalStorage.getStore();
     if (!context) {
         logger.warn('No database context - returning default DB name');
-        return env.DB_NAME;
+        return process.env.DEFAULT_DB_NAME;
     }
-    return context.dbName || env.DB_NAME;
+    return context.dbName || process.env.DEFAULT_DB_NAME;
 }
 
 function getCurrentSequelize() {
@@ -177,8 +182,8 @@ function clearModelCaches() {
 
 function getTenantSequelizeForCurrentDb() {
     const context = asyncLocalStorage.getStore();
-    const dbName = context?.dbName || env.DB_NAME;
-    return getTenantSequelize({ db: dbName, user: env.DB_USER, pass: env.DB_PASS });
+    const dbName = context?.dbName || process.env.DEFAULT_DB_NAME;
+    return getTenantSequelize({ db: dbName, user: process.env.DEFAULT_DB_USERNAME, pass: process.env.DEFAULT_DB_PASSWORD });
 }
 
 /**

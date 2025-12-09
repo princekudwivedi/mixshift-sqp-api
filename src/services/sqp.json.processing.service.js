@@ -1,7 +1,6 @@
 const axios = require('axios');
 const fs = require('fs').promises;
 const path = require('path');
-const { uploadJson } = require('../utils/s3.utils');
 const model = require('../models/sqp.cron.model');
 const { getModel: getSqpWeekly } = require('../models/sequelize/sqpWeekly.model');
 const { getModel: getSqpMonthly } = require('../models/sequelize/sqpMonthly.model');
