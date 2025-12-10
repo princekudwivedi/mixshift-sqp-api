@@ -32,8 +32,8 @@ function shouldAutoLoadSecrets(options = {}) {
  */
 async function loadAwsSecrets(options = {}) {
   const {
-    constantsPath = process.env.AWS_SECRETS_CONSTANTS_PATH || '/mixshift/constants/',
-    databasePath = process.env.AWS_SECRETS_DATABASE_PATH || '/mixshift/database/',
+    constantsPath = process.env.AWS_SECRETS_CONSTANTS_PATH,
+    databasePath = process.env.AWS_SECRETS_DATABASE_PATH,
     overwrite = false,
     force = false,
   } = options;
