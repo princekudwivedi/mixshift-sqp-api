@@ -172,11 +172,6 @@ async function loadPath(rawPath, { overwrite, service, label }) {
   const looksLikeSsm = trimmed.startsWith('/');
 
   if (looksLikeSsm) {
-    if (!process.env.AWS_CONSTANT_SECRET_MANAGER_KEY || !process.env.AWS_CONSTANT_SECRET_MANAGER_SECRET) {
-      console.info(`[env.config] AWS credentials missing; skipping SSM fetch for ${trimmed}`);
-      return {};
-    }
-
     const normalizedPath = trimmed.endsWith('/') ? trimmed : `${trimmed}/`;
     try {
       const data = await service.loadParametersIntoEnv(normalizedPath, { overwrite });

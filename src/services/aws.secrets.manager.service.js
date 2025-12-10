@@ -12,10 +12,7 @@ class AwsSecretsManagerService {
      */
     constructor(options = {}) {
         const {
-            region = DEFAULT_REGION,
-            // Use AWS SDK default credential provider chain; do not read from env overrides here
-            accessKeyId = undefined,
-            secretAccessKey = undefined
+            region = DEFAULT_REGION
         } = options;
 
         if (!region) {
@@ -23,11 +20,7 @@ class AwsSecretsManagerService {
         }
 
         this.client = new SSMClient({
-            region: region || 'us-east-2',
-            // Let AWS SDK resolve credentials automatically (env vars, shared config, IAM role, etc.)
-            credentials: accessKeyId && secretAccessKey
-                ? { accessKeyId, secretAccessKey }
-                : undefined
+            region: region || 'us-east-2'
         });
     }
 
