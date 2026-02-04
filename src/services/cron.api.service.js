@@ -432,6 +432,101 @@ class CronApiService {
         await asinInitialPull.updateInitialPullStatusByASIN(record.AmazonSellerID, record.ASIN_List, record.SellerID, updateData);
 
         await model.updateSQPReportStatus(record.ID, reportType, 2, startDate, null, 4, true); // 4 is retry mark running status
+
+        // Ensure we have a ReportID for this cron detail + report type before running
+        // status checks. If missing, re-request the report (like initial pull does)
+        // and keep the record in a retryable state when ReportID cannot be obtained.
+        let reportId = await model.getLatestReportId(record.ID, reportType);
+        if (!reportId) {
+            // Parse ASINs from the cron detail row
+            const asinList = record.ASIN_List
+                ? record.ASIN_List.split(/\s+/).filter(Boolean).map(a => a.trim())
+                : [];
+
+            if (asinList.length === 0) {
+                logger.warn({
+                    id: record.ID,
+                    amazonSellerID: record.AmazonSellerID,
+                    reportType
+                }, 'Missing ReportID and no ASINs available for retry; keeping record in retry state');
+            } else {
+                // Load seller profile
+                const seller = await sellerModel.getProfileDetailsByAmazonSellerID(record.AmazonSellerID);
+                if (!seller) {
+                    logger.error({
+                        id: record.ID,
+                        amazonSellerID: record.AmazonSellerID,
+                        reportType
+                    }, 'Seller profile not found while attempting to re-request report on retry');
+                } else {
+                    // Build a synthetic chunk compatible with requestSingleReport
+                    const chunk = {
+                        asins: asinList,
+                        asin_string: asinList.join(' '),
+                    };
+
+                    try {
+                        logger.info({
+                            id: record.ID,
+                            amazonSellerID: record.AmazonSellerID,
+                            reportType
+                        }, 'Missing ReportID on retry; re-requesting report to obtain new ReportID');
+
+                        const requestResult = await ctrl.requestSingleReport(
+                            chunk,
+                            seller,
+                            record.ID,
+                            reportType,
+                            authOverrides,
+                            env.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT,
+                            user
+                        );
+
+                        const newReportId = requestResult?.data?.reportId;
+
+                        if (newReportId) {
+                            reportId = newReportId;
+                            logger.info({
+                                id: record.ID,
+                                amazonSellerID: record.AmazonSellerID,
+                                reportType,
+                                reportId
+                            }, 'Successfully obtained new ReportID during retry; proceeding to status check and download');
+                        } else if (requestResult?.rateLimited || requestResult?.retryLater) {
+                            // Hit rate limit while re-requesting; leave in retry state
+                            logger.warn({
+                                id: record.ID,
+                                amazonSellerID: record.AmazonSellerID,
+                                reportType
+                            }, 'Rate limit encountered while re-requesting report on retry; leaving record in retry state');
+
+                            return {
+                                cronDetailID: record.ID,
+                                amazonSellerID: record.AmazonSellerID,
+                                reportType,
+                                retried: true,
+                                success: false,
+                                rateLimited: true
+                            };
+                        } else {
+                            logger.warn({
+                                id: record.ID,
+                                amazonSellerID: record.AmazonSellerID,
+                                reportType
+                            }, 'Re-requested report on retry but no ReportID returned; keeping record in retry state');
+                        }
+                    } catch (reqErr) {
+                        logger.error({
+                            id: record.ID,
+                            amazonSellerID: record.AmazonSellerID,
+                            reportType,
+                            error: reqErr.message
+                        }, 'Error while re-requesting report during retry; keeping record in retry state');
+                    }
+                }
+            }
+        }
+
         let res = null;
         try {
             res = await ctrl.checkReportStatuses(authOverrides, { cronDetailID: [record.ID], reportType: reportType, cronDetailData: [record], user: user }, true);

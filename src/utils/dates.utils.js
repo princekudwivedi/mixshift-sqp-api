@@ -126,8 +126,28 @@ function getTimeZoneParts(date, timeZone) {
         map[type] = value;
     });
 
+    // Normalize hour to 0-23 range (fix edge cases where hour might be 24)
+    // This can happen due to timezone conversion edge cases or DST transitions
+    let hour = Number.parseInt(map.hour, 10);
+    if (hour >= 24) {
+        hour = hour % 24;
+        // If hour wrapped past midnight, increment the day
+        const dateObj = new Date(date);
+        dateObj.setUTCDate(dateObj.getUTCDate() + 1);
+        const adjustedParts = formatter.formatToParts(dateObj);
+        const adjustedMap = {};
+        adjustedParts.forEach(({ type, value }) => {
+            adjustedMap[type] = value;
+        });
+        // Use adjusted date parts if hour wrapped
+        map.year = adjustedMap.year || map.year;
+        map.month = adjustedMap.month || map.month;
+        map.day = adjustedMap.day || map.day;
+    }
+    const normalizedHour = String(hour).padStart(2, '0');
+
     const datePart = `${map.year}-${map.month}-${map.day}`;
-    const timePart = `${map.hour}:${map.minute}:${map.second}`;
+    const timePart = `${normalizedHour}:${map.minute}:${map.second}`;
     const { string: offsetString } = parseOffset(map.timeZoneName || 'GMT');
     const iso = `${datePart}T${timePart}${offsetString === '+00:00' ? 'Z' : offsetString}`;
 

@@ -1220,6 +1220,7 @@ module.exports = {
 	requestForSeller,
 	checkReportStatuses,
 	finalizeCronRunningStatus,
+	requestSingleReport
 };
 
 
