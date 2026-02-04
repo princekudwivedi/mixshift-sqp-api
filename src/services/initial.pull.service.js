@@ -262,7 +262,7 @@ class InitialPullService {
         }
         
         const cronDetailID = recordLog.cronJobID;
-        const reportId = recordLog.reportId;
+        let reportId = recordLog.reportId;
         const range = recordLog.range;
         
         // Get seller profile
@@ -280,7 +280,81 @@ class InitialPullService {
             type: reportType 
         };
 
+        // Prepare ASIN list once (from the cron record)
+        const asinList = record.ASIN_List
+            ? record.ASIN_List.split(/\s+/).filter(Boolean)
+            : [];
+
         try {
+            // STEP 0: If we don't have a ReportID yet, re-run the initial pull request
+            // to obtain a fresh ReportID for this range before checking status.
+            if (!reportId) {
+                if (asinList.length === 0) {
+                    logger.warn({
+                        cronDetailID,
+                        amazonSellerID: record.AmazonSellerID,
+                        reportType,
+                        range
+                    }, 'No ASINs available on retry and missing ReportID; keeping record in retry state');
+
+                    return {
+                        success: false,
+                        cronDetailID,
+                        amazonSellerID: record.AmazonSellerID,
+                        reportType,
+                        retried: true,
+                        error: 'Missing ReportID and ASIN list; cannot re-request report'
+                    };
+                }
+
+                logger.info({
+                    cronDetailID,
+                    amazonSellerID: record.AmazonSellerID,
+                    reportType,
+                    range
+                }, 'Missing ReportID on retry; re-running initial pull request to obtain ReportID');
+
+                const requestResult = await this._requestInitialPullReport(
+                    cronDetailID,
+                    seller,
+                    asinList,
+                    rangeObj,
+                    reportType,
+                    authOverrides,
+                    user
+                );
+
+                const newReportId = requestResult?.data?.reportId;
+
+                if (newReportId) {
+                    reportId = newReportId;
+                    logger.info({
+                        cronDetailID,
+                        amazonSellerID: record.AmazonSellerID,
+                        reportType,
+                        range,
+                        reportId
+                    }, 'Successfully obtained new ReportID on retry; proceeding to status check and download');
+
+                } else {
+                    logger.warn({
+                        cronDetailID,
+                        amazonSellerID: record.AmazonSellerID,
+                        reportType,
+                        range
+                    }, 'Re-requested initial pull report but no ReportID was returned; keeping record in retry state');
+
+                    return {
+                        success: false,
+                        cronDetailID,
+                        amazonSellerID: record.AmazonSellerID,
+                        reportType,
+                        retried: true,
+                        error: 'Unable to obtain ReportID on retry; will remain in retry state'
+                    };
+                }
+            }
+
             // STEP 1: Check status and trigger download (reuse existing function)
             const statusResult = await this.circuitBreaker.execute(
                 () => this._checkInitialPullReportStatus(
@@ -909,27 +983,48 @@ class InitialPullService {
         
         for (const id of uniqueIDs) {
             const rLogs = logs.filter(l => l.ReportID === id);
-            const latest = rLogs[0];
             const isDone = rLogs.some(l => l.Status === 1);
             const isFatal = rLogs.some(l => /FATAL|CANCELLED/.test(l.Message || ''));
-            const isInProgress = !isDone && !isFatal && (latest.Status === 0 || latest.Status === 2 || /Failure Notification/.test(latest.Message || ''));
-        
+            const isInProgress = rLogs.some(l => {
+                if (/FATAL|CANCELLED/i.test(l.Message || '')) return false;
+              
+                return (
+                  [0, 2, 3].includes(l.Status) ||
+                  /Failure Notification|Too Many Requests/i.test(l.Message || '')
+                );
+            });
             if (isDone) done++;
             else if (isFatal) { fatal++; fatalIDs.push(id); }
             else if (isInProgress) progress++;
         }
-        
-        return { done, fatal, progress, total: uniqueIDs.length, fatalIDs };
+        let totalCount = 0        
+        if(type === 'WEEK'){
+            totalCount = Number(process.env.WEEKS_TO_PULL);
+        }
+        if(type === 'MONTH'){
+            totalCount = Number(process.env.MONTHS_TO_PULL);
+        }
+        if(type === 'QUARTER'){
+            totalCount = Number(process.env.QUARTERS_TO_PULL);
+        }
+        return { done, fatal, progress, total: totalCount, fatalIDs };
     }
     
     // update status in DB
     async updateStatus(cronDetailID, type, pull, user = null) {
         const SqpCronDetails = getSqpCronDetails();
         const prefix = model.mapPrefix(type);
+
         await SqpCronDetails.update(
             { [`${prefix}SQPDataPullStatus`]: pull, [`${prefix}SQPDataPullEndDate`]: dates.getNowDateTimeInUserTimezone().db },
             { where: { ID: cronDetailID } }
         );
+        if(pull === 1){
+            await SqpCronDetails.update(
+                { [`${prefix}ProcessRunningStatus`]: 4 },
+                { where: { ID: cronDetailID } }
+            );
+        }
     }
     
     /**
@@ -979,7 +1074,6 @@ class InitialPullService {
       
             const { done, fatal, progress, total } = await this.analyzeReports(cronDetailID, type);
             let pull = 2;
-      
             if (done === total) {
               pull = 1;
             } else if (fatal === total) {
@@ -1725,7 +1819,7 @@ class InitialPullService {
                         [Op.and]: [
                             { cronRunningStatus: { [Op.in]: [1, 3, 4] } },
                             { MonthlyProcessRunningStatus: { [Op.in]: [1, 2, 3, 4] } },
-                            { MonthlySQPDataPullStatus: { [Op.in]: [0,2] } },
+                            { MonthlySQPDataPullStatus: { [Op.in]: [0, 2] } },
                             {
                                 [Op.or]: [
                                     { dtUpdatedOn: { [Op.lte]: literal(`'${cutoffTime}'`) } },
@@ -1738,7 +1832,7 @@ class InitialPullService {
                         [Op.and]: [
                             { cronRunningStatus: { [Op.in]: [1, 3, 4] } },
                             { QuarterlyProcessRunningStatus: { [Op.in]: [1, 2, 3, 4] } },
-                            { QuarterlySQPDataPullStatus: { [Op.in]: [0,2] } },
+                            { QuarterlySQPDataPullStatus: { [Op.in]: [0, 2] } },
                             {
                                 [Op.or]: [
                                     { dtUpdatedOn: { [Op.lte]: literal(`'${cutoffTime}'`) } },
