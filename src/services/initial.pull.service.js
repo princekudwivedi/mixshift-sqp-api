@@ -87,7 +87,7 @@ class InitialPullService {
                         }
                         
                         if (failedRecords.length === 0) {
-                            logger.info({ userId: user.ID }, 'No failed initial pull records found for user');
+                            logger.info({ userId: user.ID}, 'No failed initial pull records found for user');
                             continue;
                         }
                         
@@ -102,6 +102,11 @@ class InitialPullService {
                         }, 'Found failed initial pull records to retry');
                         // Retry each failed record
                         for (const rec of failedRecords) {
+                            
+                            const seller = rec.SellerID
+                                ? await sellerModel.getProfileDetailsByID(rec.SellerID)
+                                : null;
+                            
                             const authOverrides = await authService.buildAuthOverrides(rec.AmazonSellerID);
                             // status update
                             const updateData = {
@@ -144,7 +149,7 @@ class InitialPullService {
                                         executionTime: 0
                                     });
                                     
-                                    const result = await this.retryStuckRecord(rec, log.reportType, authOverrides, log, user);
+                                    const result = await this.retryStuckRecord(rec, log.reportType, authOverrides, log, user, seller);
                                     
                                     if (result.success) {
                                         totalSuccess++;
@@ -250,13 +255,13 @@ class InitialPullService {
     /**
      * Retry a stuck record's pipeline for a specific report type, then finalize status.
      */
-    async retryStuckRecord(record, reportType, authOverrides, recordLog, user = null) {
+    async retryStuckRecord(record, reportType, authOverrides, recordLog, user = null, seller) {
         // Check memory usage before processing
         const memoryStats = MemoryMonitor.getMemoryStats();
-        if (MemoryMonitor.isMemoryUsageHigh(Number(process.env.MAX_MEMORY_USAGE_MB) || 500)) {
+        if (MemoryMonitor.isMemoryUsageHigh(Number(process.env.MAX_MEMORY_USAGE_MB) || 599)) {
             logger.warn({ 
                 memoryUsage: memoryStats.heapUsed,
-                threshold: process.env.MAX_MEMORY_USAGE_MB || 500
+                threshold: process.env.MAX_MEMORY_USAGE_MB || 599
             }, 'High memory usage detected, skipping seller processing');            
             return { success: false, error: 'High memory usage' };
         }
@@ -265,8 +270,6 @@ class InitialPullService {
         let reportId = recordLog.reportId;
         const range = recordLog.range;
         
-        // Get seller profile
-        const seller = await sellerModel.getProfileDetailsByAmazonSellerID(record.AmazonSellerID);
         if (!seller) {
             logger.error({ amazonSellerID: record.AmazonSellerID }, 'Seller not found for retry');
             return { success: false, error: 'Seller not found' };
@@ -326,6 +329,9 @@ class InitialPullService {
 
                 const newReportId = requestResult?.data?.reportId;
 
+                const requestDelaySec = Number(process.env.REQUEST_DELAY_SECONDS) || 30;
+                await DelayHelpers.wait(requestDelaySec, 'Between report re request ');
+
                 if (newReportId) {
                     reportId = newReportId;
                     logger.info({
@@ -354,7 +360,7 @@ class InitialPullService {
                     };
                 }
             }
-
+            
             // STEP 1: Check status and trigger download (reuse existing function)
             const statusResult = await this.circuitBreaker.execute(
                 () => this._checkInitialPullReportStatus(
@@ -484,10 +490,10 @@ class InitialPullService {
 
                                 // Check memory usage before processing
                                 const memoryStats = MemoryMonitor.getMemoryStats();
-                                if (MemoryMonitor.isMemoryUsageHigh(Number(process.env.MAX_MEMORY_USAGE_MB) || 500)) {
+                                if (MemoryMonitor.isMemoryUsageHigh(Number(process.env.MAX_MEMORY_USAGE_MB) || 599)) {
                                     logger.warn({ 
                                         memoryUsage: memoryStats.heapUsed,
-                                        threshold: process.env.MAX_MEMORY_USAGE_MB || 500
+                                        threshold: process.env.MAX_MEMORY_USAGE_MB || 599
                                     }, 'High memory usage detected, skipping seller processing');
                                     breakUserProcessing = false;
                                     continue;
