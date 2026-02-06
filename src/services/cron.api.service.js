@@ -137,7 +137,7 @@ class CronApiService {
                                         // Step 2: Check status with circuit breaker protection
                                         try {
                                             await this.circuitBreaker.execute(
-                                                () => ctrl.checkReportStatuses(authOverrides, { cronDetailID: cronDetailIDs, cronDetailData: cronDetailData, user: user }),
+                                                () => ctrl.checkReportStatuses(authOverrides, { cronDetailID: cronDetailIDs, cronDetailData: cronDetailData, user: user, seller: s }),
                                                 { sellerId: s.idSellerAccount, operation: 'checkReportStatuses' }
                                             );
                                             totalProcessed++;
@@ -242,6 +242,7 @@ class CronApiService {
                         // Retry each stuck record's report types before deciding final status
                         const retryResults = [];
                         for (const rec of stuckRecords) {
+                            const seller = await sellerModel.getProfileDetailsByID(rec.SellerID);
                             const authOverrides = await authService.buildAuthOverrides(rec.AmazonSellerID);
                             for (const type of rec.stuckReportTypes) {
                                 try {
@@ -254,7 +255,7 @@ class CronApiService {
                                         }, 'High memory usage detected, skipping record processing');
                                         continue;
                                     }
-                                    const rr = await this.retryStuckRecord(rec, type, authOverrides, user);
+                                    const rr = await this.retryStuckRecord(rec, type, authOverrides, user, seller);
                                     retryResults.push(rr);
                                 } catch (e) {
                                     retryResults.push({
@@ -406,7 +407,7 @@ class CronApiService {
     /**
      * Retry a stuck record's pipeline for a specific report type, then finalize status.
      */
-    async retryStuckRecord(record, reportType, authOverrides, user) {
+    async retryStuckRecord(record, reportType, authOverrides, user, seller) {
         // Lazy load to avoid circular dependencies
         const { getModel: getSqpCronDetails } = require('../models/sequelize/sqpCronDetails.model');
         const ctrl = require('../controllers/sqp.cron.controller');
@@ -451,7 +452,6 @@ class CronApiService {
                 }, 'Missing ReportID and no ASINs available for retry; keeping record in retry state');
             } else {
                 // Load seller profile
-                const seller = await sellerModel.getProfileDetailsByAmazonSellerID(record.AmazonSellerID);
                 if (!seller) {
                     logger.error({
                         id: record.ID,
@@ -527,9 +527,8 @@ class CronApiService {
             }
         }
 
-        let res = null;
         try {
-            res = await ctrl.checkReportStatuses(authOverrides, { cronDetailID: [record.ID], reportType: reportType, cronDetailData: [record], user: user }, true);
+            await ctrl.checkReportStatuses(authOverrides, { cronDetailID: [record.ID], reportType: reportType, cronDetailData: [record], user: user, seller: seller }, true);
         } catch (e) {
             logger.error({ id: record.ID, reportType, error: e.message }, 'Retry status check failed');
         }

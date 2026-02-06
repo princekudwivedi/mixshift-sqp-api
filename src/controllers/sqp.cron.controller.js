@@ -379,7 +379,7 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 
 async function checkReportStatuses(authOverrides = {}, filter = {}, retry = false) {
     logger.info('Starting checkReportStatuses');
-    const { cronDetailID, cronDetailData, user } = filter;
+    const { cronDetailID, cronDetailData, user, seller } = filter;
 	const rows = cronDetailData;
     logger.info({ reportCount: rows.length }, 'Found reports for status check');
     
@@ -418,7 +418,7 @@ async function checkReportStatuses(authOverrides = {}, filter = {}, retry = fals
 
                 logger.info({ type }, 'Checking status for report');
 
-                const result = await checkReportStatusByType(row, type, authOverrides, reportID, retry, user);
+                const result = await checkReportStatusByType(row, type, authOverrides, reportID, retry, user, seller);
 
                 if (result.success) {
                     res.push(result);
@@ -433,7 +433,7 @@ async function checkReportStatuses(authOverrides = {}, filter = {}, retry = fals
 }
 
 
-async function checkReportStatusByType(row, reportType, authOverrides = {}, reportID = null, retry = false, user = null) {
+async function checkReportStatusByType(row, reportType, authOverrides = {}, reportID = null, retry = false, user = null, seller = null) {
     // Find latest ReportID from logs for this CronJobID + ReportType
     const reportId = reportID || await model.getLatestReportId(row.ID, reportType);
     if (!reportId) {
@@ -451,8 +451,7 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
         return { success: true, skipped: true, reason: 'No ReportID in logs yet' };
     }
 	
-	// Get seller profile from database using AmazonSellerID from the row
-	const seller = await sellerModel.getProfileDetailsByAmazonSellerID(row.AmazonSellerID);
+	// Get seller profile from database using AmazonSellerID from the row	
 	if (!seller) {
 		logger.error({ amazonSellerID: row.AmazonSellerID }, 'Seller profile not found');
 		return;
@@ -614,7 +613,7 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 				// ProcessRunningStatus = 3 (Download)
                 await model.setProcessRunningStatus(row.ID, reportType, 3);
                 
-				const downloadResult = await downloadReportByType(row, reportType, authOverrides, reportId, user, range, documentId);
+				const downloadResult = await downloadReportByType(row, reportType, authOverrides, reportId, user, range, documentId, seller);
 				return {
 					message: downloadResult?.message ? downloadResult?.message : `Report ready on attempt ${attempt}. Report ID: ${reportId}${documentId ? ' | Document ID: ' + documentId : ''}`,
 					action: downloadResult?.action ? downloadResult?.action : 'Check Status and Download Report',
@@ -706,7 +705,7 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 	return result;
 }
 
-async function downloadReportByType(row, reportType, authOverrides = {}, reportId = null, user = null, range = null, reportDocumentId = '') {
+async function downloadReportByType(row, reportType, authOverrides = {}, reportId = null, user = null, range = null, reportDocumentId = '', seller = null) {
     if (!reportId) {
         reportId = await model.getLatestReportId(row.ID, reportType);
         if (!reportId) {
@@ -715,14 +714,12 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
         }
     }
 	
-	
-	// Load seller profile by AmazonSellerID (avoid env defaults)
-	const seller = await sellerModel.getProfileDetailsByAmazonSellerID(row.AmazonSellerID);
+	// Check if seller profile is provided
 	if (!seller) {
 		logger.error({ amazonSellerID: row.AmazonSellerID }, 'Seller profile not found for download');
 		return;
 	}
-
+	
 	// Use the universal retry function
 	const result = await RetryHelpers.executeWithRetry({
 		cronDetailID: row.ID,
