@@ -7,6 +7,8 @@ const SellerMarketplacesMapping = require('./sellerMarketplacesMapping.model');
 const Marketplace = require('./marketplace.model');
 const MwsOauthToken = require('./mwsOauthToken.model');
 const MwsAccessKeys = require('./mwsAccessKeys.model');
+const { getModel: getSellerAsinList } = require('./sellerAsinList.model');
+const dates = require('../../utils/dates.utils');
 
 const table = TBL_SELLER;
 
@@ -187,13 +189,6 @@ async function getProfileDetailsByID(idSellerAccount, key = 'ID') {
 	};
 }
 
-async function getProfileDetailsByAmazonSellerID(amazonSellerID) {
-    const BoundSeller = getBoundModel();
-    const s = await BoundSeller.findOne({ where: { AmazonSellerID: amazonSellerID } });
-    if (!s) return null;
-    return getProfileDetailsByID(s.ID);
-}
-
 async function getSellersProfilesForCronAdvanced({ idSellerAccount = 0, pullAll = 0, AmazonSellerID = '', marketplacename = '', marketplaceAry = [], isCustomPull = 0 } = {}) {
     const where = { isMwsUser: 1 };
     if (idSellerAccount > 0) where.ID = Number(idSellerAccount);
@@ -203,10 +198,75 @@ async function getSellersProfilesForCronAdvanced({ idSellerAccount = 0, pullAll 
     const order = [['dtMwsActivatedOn', 'ASC']];
 
     const BoundSeller = getBoundModel();
-    const sellers = await BoundSeller.findAll({ where, order });
+    const sequelize = BoundSeller.sequelize || getCurrentSequelize();
+    const sellers = await BoundSeller.findAll({
+        where,
+        order,
+        attributes: {
+            include: [
+                [
+                    sequelize.literal(`(
+                        SELECT a.iLostAccess
+                        FROM tbl_sp_api_authorization a
+                        WHERE a.AmazonSellerID = ${table}.AmazonSellerID
+                        ORDER BY a.id DESC
+                        LIMIT 1
+                    )`),
+                    'iLostAccess'
+                ]
+            ]
+        }
+    });
 
     const results = [];
+    const SellerAsinList = getSellerAsinList();
+
     for (const s of sellers) {
+        // Skip sellers whose latest SP-API token has explicitly lost access (iLostAccess = 1)
+        const tokenLostAccess = Number(s.get('iLostAccess')) === 1;
+        if (tokenLostAccess) {
+            // When seller has lost access, open/ensure backfill window on seller_ASIN_list and mark pending
+            try {
+                const todayStr = dates.formatTimestamp(new Date(), null, { onlyDate: true });
+
+                // Set BackfillStartDate only where it's null, clear BackfillEndDate, mark pending
+                await SellerAsinList.update(
+                    {
+                        BackfillStartDate: todayStr,
+                        BackfillEndDate: null,
+                        BackfillPending: 1,
+                        dtUpdatedOn: dates.getNowDateTimeInUserTimezone().db
+                    },
+                    {
+                        where: {
+                            SellerID: s.ID,
+                            AmazonSellerID: s.AmazonSellerID,
+                            BackfillStartDate: null
+                        }
+                    }
+                );
+
+                // Ensure BackfillPending=1 and BackfillEndDate cleared for all ASINs of this seller
+                await SellerAsinList.update(
+                    {
+                        BackfillEndDate: null,
+                        BackfillPending: 1,
+                        dtUpdatedOn: dates.getNowDateTimeInUserTimezone().db
+                    },
+                    {
+                        where: {
+                            SellerID: s.ID,
+                            AmazonSellerID: s.AmazonSellerID
+                        }
+                    }
+                );
+            } catch (e) {
+                // Do not block cron flow if this update fails; just log
+                // (logger is available via utils in other modules; here we skip to avoid circular deps)
+                console.warn('Failed to update backfill window for seller', s.ID, s.AmazonSellerID, e.message);
+            }
+            continue;
+        }
         let mp = null;
         const mapping = await SellerMarketplacesMapping.findOne({ where: { SellerId: s.ID } }).catch(() => null);
         if (mapping) {
@@ -221,6 +281,7 @@ async function getSellersProfilesForCronAdvanced({ idSellerAccount = 0, pullAll 
 
         const row = {
             idSellerAccount: s.ID,
+            ID: s.ID,
             SellerName: s.Name,
             MerchantRegion: s.MerchantRegion,
             AmazonSellerID: s.AmazonSellerID,
@@ -240,6 +301,10 @@ async function getSellersProfilesForCronAdvanced({ idSellerAccount = 0, pullAll 
             MarketPlaceName: mp ? mp.Name : null,
             CountryCode: mp ? mp.CountryCode : null,
             AmazonMarketplaceId: mp ? mp.AmazonMarketplaceId : (s.AmazonMarketplaceId || null),
+            Name: s.Name,
+            MerchantAlias: s.MerchantAlias,
+            // SP-API token lost access flag (from tbl_sp_api_authorization)
+            iLostAccess: Number(s.get('iLostAccess')) || 0,
         };
         results.push(row);
     }
@@ -252,6 +317,5 @@ async function getSellersProfilesForCronAdvanced({ idSellerAccount = 0, pullAll 
 }
 
 module.exports.getProfileDetailsByID = getProfileDetailsByID;
-module.exports.getProfileDetailsByAmazonSellerID = getProfileDetailsByAmazonSellerID;
 module.exports.getSellersProfilesForCronAdvanced = getSellersProfilesForCronAdvanced;
 

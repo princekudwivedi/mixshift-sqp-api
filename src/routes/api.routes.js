@@ -29,6 +29,9 @@ router.get('/cron/sqp/initial/pull', (req, res) => initialPullController.runInit
 // Retry failed initial pull route
 router.get('/cron/sqp/initial/retry', (req, res) => initialPullController.retryFailedInitialPull(req, res));
 
+// Backfill cron route (historical data for missed periods, e.g. after token re-enabled)
+router.get('/cron/sqp/backfill', (req, res) => initialPullController.runBackfill(req, res));
+
 // Cleanup old records route
 router.get('/cron/sqp/cleanup', (req, res) => sqpCronCleanupApiController.cleanupOldRecords(req, res));
 

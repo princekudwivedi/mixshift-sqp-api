@@ -108,6 +108,10 @@ class InitialPullService {
                                 : null;
                             
                             const authOverrides = await authService.buildAuthOverrides(rec.AmazonSellerID);
+                            if(authOverrides.iLostAccess === 1) {
+                                logger.error({ sellerId: seller.idSellerAccount, amazonSellerID: seller.AmazonSellerID, iLostAccess: authOverrides.iLostAccess }, 'Token lost access for seller');
+                                continue;
+                            }
                             // status update
                             const updateData = {
                                 InitialPullStatus: 1,
@@ -196,7 +200,17 @@ class InitialPullService {
                         // After all retries, update final status for each unique cronDetailID
                         const processedCronDetails = new Set();
                         for (const rec of failedRecords) {
+                            const seller = rec.SellerID
+                                ? await sellerModel.getProfileDetailsByID(rec.SellerID)
+                                : null;
+                            
+                            const authOverrides = await authService.buildAuthOverrides(rec.AmazonSellerID);
+                            if(authOverrides.iLostAccess === 1) {
+                                logger.error({ sellerId: seller.idSellerAccount, amazonSellerID: seller.AmazonSellerID, iLostAccess: authOverrides.iLostAccess }, 'Token lost access for seller');
+                                continue;
+                            }
                             if (!processedCronDetails.has(rec.ID)) {
+
                                 processedCronDetails.add(rec.ID);
                                 
                                 try {
@@ -499,6 +513,14 @@ class InitialPullService {
                                     continue;
                                 }
 
+                                // Get access token
+                                const authOverrides = await authService.buildAuthOverrides(seller.AmazonSellerID);
+                                if (authOverrides.accessToken === null && authOverrides.iLostAccess === 1) {
+                                    logger.error({ sellerId: seller.idSellerAccount, amazonSellerID: seller.AmazonSellerID, iLostAccess: authOverrides.iLostAccess }, 'Token lost access for seller');
+                                    breakUserProcessing = false;
+                                    continue;
+                                }
+
                                 // Check if seller has eligible ASINs before processing
                                 const hasEligible = await model.hasEligibleASINsInitialPull(seller.idSellerAccount); 
                                 if (!hasEligible) {
@@ -519,13 +541,7 @@ class InitialPullService {
 
                                 // Check rate limit before making API calls
                                 await this.rateLimiter.checkLimit(seller.AmazonSellerID);
-
-                                // Get access token
-                                const authOverrides = await authService.buildAuthOverrides(seller.AmazonSellerID);
-                                if (!authOverrides.accessToken) {				
-                                    logger.error({ amazonSellerID: seller.AmazonSellerID }, 'No access token available for request');
-                                    throw new Error('No access token available for report request');
-                                }
+                                
                                 // Start initial pull for seller with circuit breaker protection
                                 await this.circuitBreaker.execute(
                                     () => this._startInitialPullForSeller(seller, reportType, authOverrides, user),
@@ -687,14 +703,96 @@ class InitialPullService {
     }
 
     /**
+     * Run historical pull for a seller with given ranges and iInitialPull (1 = initial pull, 2 = backfill).
+     * Used by backfill service with filtered missing ranges and iInitialPull=2.
+     */
+    async _runHistoricalPullForSeller(seller, ranges, iInitialPull, authOverrides = {}, user = null) {
+        try {
+            const timezone = await model.getUserTimezone(user);
+            const { asins } = await model.getActiveASINsBySellerInitialPull(seller.idSellerAccount, true);
+            if (!asins || asins.length === 0) return;
+            const asinList = asins;
+            const options = {
+                iInitialPull,
+                FullWeekRange: ranges.fullWeekRange || null,
+                FullMonthRange: ranges.fullMonthRange || null,
+                FullQuarterRange: ranges.fullQuarterRange || null,
+                SellerName: seller.SellerName || seller.MerchantAlias || `Seller_${seller.AmazonSellerID}`
+            };
+            const cronDetailRow = await model.createSQPCronDetail(seller.AmazonSellerID, asinList.join(' '), seller.idSellerAccount, options);
+            const typesToPull = env.TYPE_ARRAY;
+
+            if (iInitialPull === 1) {
+                try {
+                    await asinInitialPull.markInitialPullStarted(
+                        seller.AmazonSellerID,
+                        asinList,
+                        seller.idSellerAccount,
+                        cronDetailRow.ID,
+                        timezone
+                    );
+                } catch (statusError) {
+                    logger.error({ error: statusError.message }, 'Failed to mark initial pull as started');
+                }
+            }
+
+            const reportRequests = [];
+            for (const type of typesToPull) {
+                const rangesToProcess = type === 'WEEK' ? ranges.weekRanges : type === 'MONTH' ? ranges.monthRanges : ranges.quarterRanges;
+                if (!rangesToProcess || rangesToProcess.length === 0) continue;
+                for (const range of rangesToProcess) {
+                    try {
+                        const result = await this.circuitBreaker.execute(
+                            () => this._requestInitialPullReport(
+                                cronDetailRow.ID,
+                                seller,
+                                asinList,
+                                range,
+                                type,
+                                authOverrides,
+                                user,
+                                iInitialPull
+                            ),
+                            { sellerId: seller.idSellerAccount, operation: 'requestHistoricalPullReport' }
+                        );
+                        const reportID = result?.reportId || result?.data?.reportId;
+                        if (result && reportID) {
+                            reportRequests.push({ type, range, cronDetailID: cronDetailRow.ID, reportId: reportID });
+                        }
+                        const requestDelaySeconds = Number(process.env.REQUEST_DELAY_SECONDS) || 30;
+                        await DelayHelpers.wait(requestDelaySeconds, 'Between report requests (rate limiting)');
+                    } catch (error) {
+                        logger.error({ cronDetailID: cronDetailRow.ID, range: range?.range, error: error.message }, 'Failed to request historical pull report');
+                    }
+                }
+            }
+
+            if (reportRequests.length === 0) {
+                logger.warn({ cronDetailID: cronDetailRow.ID, amazonSellerID: seller.AmazonSellerID }, 'No report requests succeeded; skipping status check');
+                return;
+            }
+
+            const initialDelaySeconds = Number(process.env.INITIAL_DELAY_SECONDS) || 30;
+            await DelayHelpers.wait(initialDelaySeconds, 'Before historical pull status check');
+            await this.circuitBreaker.execute(
+                () => this._checkAllInitialPullStatuses(cronDetailRow, seller, reportRequests, asinList, authOverrides, false, user),
+                { sellerId: seller.idSellerAccount, operation: 'checkAllHistoricalPullStatuses' }
+            );
+            logger.info({ cronDetailID: cronDetailRow.ID, amazonSellerID: seller.AmazonSellerID }, 'Historical pull process completed for seller');
+        } catch (error) {
+            logger.error({ error: error.message }, 'Error in _runHistoricalPullForSeller');
+        }
+    }
+
+    /**
      * Request a single initial pull report (Step 1: Create Report)
      */
-    async _requestInitialPullReport(cronDetailID, seller, asinList, range, reportType, authOverrides = {}, user = null) {
+    async _requestInitialPullReport(cronDetailID, seller, asinList, range, reportType, authOverrides = {}, user = null, iInitialPull = 1) {
         const result = await RetryHelpers.executeWithRetry({
             cronDetailID,
             amazonSellerID: seller.AmazonSellerID,
             reportType,
-            action: 'Initial Pull - Request Report',
+            action: iInitialPull === 2 ? 'Backfill - Request Report' : 'Initial Pull - Request Report',
             context: { seller, asinList, range, reportType, reportId: null, user },
             model,
             sendFailureNotification: (cronDetailID, amazonSellerID, reportType, errorMessage, retryCount, reportId, isFatalError, range) => {
@@ -710,7 +808,7 @@ class InitialPullService {
                     model,
                     NotificationHelpers,
                     env,
-                    context: 'Initial Pull'
+                    context: iInitialPull === 2 ? 'Backfill' : 'Initial Pull'
                 });
             },
             maxRetries: 3, // Strict limit of 3 retries per report
@@ -718,7 +816,7 @@ class InitialPullService {
             // Pass these to RetryHelpers so attempt logs have correct values
             extraLogFields: {
                 Range: range.range,
-                iInitialPull: 1
+                iInitialPull
             },
             operation: async ({ attempt, currentRetry, context, startTime }) => {
                 const { seller, asinList, range, reportType, user } = context;
@@ -842,12 +940,12 @@ class InitialPullService {
                     await model.logCronActivity({
                         cronJobID: cronDetailID,
                         reportType,
-                        action: 'Initial Pull - Request Report',
+                        action: iInitialPull === 2 ? 'Backfill - Request Report' : 'Initial Pull - Request Report',
                         status: 1,
-                        message: `Initial pull report requested: ${range.range}`,
+                        message: `${iInitialPull === 2 ? 'Backfill' : 'Initial pull'} report requested: ${range.range}`,
                         reportID: reportId,
                         Range: range.range,
-                        iInitialPull: 1,
+                        iInitialPull,
                         retryCount: 0,
                         executionTime: (Date.now() - startTime) / 1000
                     });
@@ -862,7 +960,7 @@ class InitialPullService {
                     data: { reportId, range: range.range },
                     logData: {
                         Range: range.range,
-                        iInitialPull: 1
+                        iInitialPull
                     }
                 };
             }
@@ -931,11 +1029,11 @@ class InitialPullService {
       
               // ✅ Check if all of a type are processed → update pull status
               if (request.type === 'WEEK' && doneWeek === totalWeek) {
-                await this._checkAndUpdateTypeCompletion(cronDetailRow.ID, 'WEEK', user);
+                await this._checkAndUpdateTypeCompletion(cronDetailRow.ID, 'WEEK', user, totalWeek);
               } else if (request.type === 'MONTH' && doneMonth === totalMonth) {
-                await this._checkAndUpdateTypeCompletion(cronDetailRow.ID, 'MONTH', user);
+                await this._checkAndUpdateTypeCompletion(cronDetailRow.ID, 'MONTH', user, totalMonth);
               } else if (request.type === 'QUARTER' && doneQuarter === totalQuarter) {
-                await this._checkAndUpdateTypeCompletion(cronDetailRow.ID, 'QUARTER', user);
+                await this._checkAndUpdateTypeCompletion(cronDetailRow.ID, 'QUARTER', user, totalQuarter);
               }
       
             } catch (error) {
@@ -958,8 +1056,8 @@ class InitialPullService {
         }
     }
       
-    async _checkAndUpdateTypeCompletion(cronDetailID, type, user = null) {
-        const { done, fatal, progress, total } = await this.analyzeReports(cronDetailID, type);
+    async _checkAndUpdateTypeCompletion(cronDetailID, type, user = null, totalForType = null) {
+        const { done, fatal, progress, total } = await this.analyzeReports(cronDetailID, type, totalForType);
         let pull = 2; // default in-progress
       
         if (done === total) {
@@ -975,11 +1073,11 @@ class InitialPullService {
         await this.updateStatus(cronDetailID, type, pull, user);
     }
 
-    // analyze logs and determine counts
-    async analyzeReports(cronDetailID, type) {
+    // analyze logs and determine counts (supports initial pull iInitialPull=1 and backfill iInitialPull=2)
+    async analyzeReports(cronDetailID, type, totalOverride = null) {
         const SqpCronLogs = getSqpCronLogs();
         const logs = await SqpCronLogs.findAll({
-            where: { CronJobID: cronDetailID, ReportType: type, iInitialPull: 1, ReportID: { [Op.ne]: null } },
+            where: { CronJobID: cronDetailID, ReportType: type, iInitialPull: { [Op.in]: [1, 2] }, ReportID: { [Op.ne]: null } },
             attributes: ['ReportID', 'Status', 'Action', 'Message'],
             order: [['dtUpdatedOn', 'DESC']]
         });
@@ -1003,17 +1101,13 @@ class InitialPullService {
             else if (isFatal) { fatal++; fatalIDs.push(id); }
             else if (isInProgress) progress++;
         }
-        let totalCount = 0        
-        if(type === 'WEEK'){
-            totalCount = Number(process.env.WEEKS_TO_PULL);
+        let totalCount = totalOverride;
+        if (totalCount == null) {
+            if (type === 'WEEK') totalCount = Number(process.env.WEEKS_TO_PULL);
+            else if (type === 'MONTH') totalCount = Number(process.env.MONTHS_TO_PULL);
+            else if (type === 'QUARTER') totalCount = Number(process.env.QUARTERS_TO_PULL);
         }
-        if(type === 'MONTH'){
-            totalCount = Number(process.env.MONTHS_TO_PULL);
-        }
-        if(type === 'QUARTER'){
-            totalCount = Number(process.env.QUARTERS_TO_PULL);
-        }
-        return { done, fatal, progress, total: totalCount, fatalIDs };
+        return { done, fatal, progress, total: totalCount || 0, fatalIDs };
     }
     
     // update status in DB
@@ -1044,9 +1138,10 @@ class InitialPullService {
       
           const cronDetail = await SqpCronDetails.findOne({
             where: { ID: cronDetailID },
-            attributes: ['ASIN_List', 'AmazonSellerID', 'SellerID']
+            attributes: ['ASIN_List', 'AmazonSellerID', 'SellerID', 'iInitialPull']
           });
           if (!cronDetail) return;
+          const isBackfill = Number(cronDetail.iInitialPull) === 2;
       
           asinList = asinList?.length
             ? asinList
@@ -1054,9 +1149,9 @@ class InitialPullService {
           amazonSellerID = amazonSellerID || cronDetail.AmazonSellerID;
           const SellerID = cronDetail.SellerID;
       
-          // Fetch all logs
+          // Fetch all logs (initial pull iInitialPull=1 and backfill iInitialPull=2)
           const allLogs = await SqpCronLogs.findAll({
-            where: { CronJobID: cronDetailID, iInitialPull: 1, ReportID: { [Op.ne]: null } },
+            where: { CronJobID: cronDetailID, iInitialPull: { [Op.in]: [1, 2] }, ReportID: { [Op.ne]: null } },
             attributes: ['ReportID', 'ReportType', 'Range'],
             group: ['ReportID', 'ReportType', 'Range']
           });
@@ -1096,12 +1191,14 @@ class InitialPullService {
           }
           
           logger.info({ overallAsinStatus }, 'Overall ASIN pull status');
-          // Update ASIN pull status
-          if (overallAsinStatus === 2)
-            await asinInitialPull.markInitialPullCompleted(amazonSellerID, asinList, SellerID, cronDetailID, timezone);
-          else
-            await asinInitialPull.markInitialPullFailed(amazonSellerID, asinList, SellerID, cronDetailID, timezone);
-      
+          // Update ASIN pull status only for initial pull (not backfill)
+          if (!isBackfill) {
+            if (overallAsinStatus === 2)
+              await asinInitialPull.markInitialPullCompleted(amazonSellerID, asinList, SellerID, cronDetailID, timezone);
+            else
+              await asinInitialPull.markInitialPullFailed(amazonSellerID, asinList, SellerID, cronDetailID, timezone);
+          }
+
           // Final cronRunningStatus update
           const row = await SqpCronDetails.findOne({ where: { ID: cronDetailID }, raw: true });          
           if (row) {            
@@ -1115,11 +1212,13 @@ class InitialPullService {
             }
 
             logger.info({ overallAsinStatus }, 'Overall ASIN pull status');
-            // Update ASIN pull status
-            if (newStatus == 2){
+            // Update ASIN pull status only for initial pull (not backfill)
+            if (!isBackfill) {
+              if (newStatus == 2){
                 await asinInitialPull.markInitialPullCompleted(amazonSellerID, asinList, SellerID, cronDetailID, timezone);
-            } else {
+              } else {
                 await asinInitialPull.markInitialPullFailed(amazonSellerID, asinList, SellerID, cronDetailID, timezone);
+              }
             }
           }
         } catch (error) {
@@ -1132,11 +1231,13 @@ class InitialPullService {
      * Check initial pull report status (Step 2: Check Status)
      */
     async _checkInitialPullReportStatus(cronDetailID, seller, reportId, range, reportType, authOverrides = {}, retry = false, user = null) {
+        const cronDetailRow = await getSqpCronDetails().findOne({ where: { ID: cronDetailID }, attributes: ['iInitialPull'], raw: true });
+        const iInitialPull = cronDetailRow?.iInitialPull ?? 1;
         const result = await RetryHelpers.executeWithRetry({
             cronDetailID,
             amazonSellerID: seller.AmazonSellerID,
             reportType,
-            action: retry ? 'Initial Pull - Retry Check Status' : 'Initial Pull - Check Status',
+            action: retry ? (iInitialPull === 2 ? 'Backfill - Retry Check Status' : 'Initial Pull - Retry Check Status') : (iInitialPull === 2 ? 'Backfill - Check Status' : 'Initial Pull - Check Status'),
             context: { seller, reportId, range, reportType, retry, user },
             model,
             sendFailureNotification: (cronDetailID, amazonSellerID, reportType, errorMessage, retryCount, reportId, isFatalError, range) => {
@@ -1152,14 +1253,14 @@ class InitialPullService {
                     model,
                     NotificationHelpers,
                     env,
-                    context: 'Initial Pull'
+                    context: iInitialPull === 2 ? 'Backfill' : 'Initial Pull'
                 });
             },
             maxRetries: 3, // Strict limit of 3 retries per report
             skipIfMaxRetriesReached: true, // Now safe to check because each range is tracked independently
             extraLogFields: {
                 Range: range.range,
-                iInitialPull: 1
+                iInitialPull
             },
             operation: async ({ attempt, currentRetry, context, startTime }) => {
                 const { seller, reportId, range, reportType, retry, user } = context;
@@ -1276,13 +1377,13 @@ class InitialPullService {
                     await model.logCronActivity({
                         cronJobID: cronDetailID,
                         reportType,
-                        action: retry ? 'Initial Pull - Retry Check Status' : 'Initial Pull - Check Status',
+                        action: retry ? (iInitialPull === 2 ? 'Backfill - Retry Check Status' : 'Initial Pull - Retry Check Status') : (iInitialPull === 2 ? 'Backfill - Check Status' : 'Initial Pull - Check Status'),
                         status: 1,
                         message: `Report ready: ${range.range}`,
                         reportID: reportId,
                         reportDocumentID: documentId,
                         Range: range.range,
-                        iInitialPull: 1,
+                        iInitialPull,
                         executionTime: (Date.now() - startTime) / 1000
                     });
                     
@@ -1290,7 +1391,7 @@ class InitialPullService {
                     await DelayHelpers.wait(requestDelaySeconds, 'Between report status checks and downloads (rate limiting)');
 
                     const downloadResult = await this.circuitBreaker.execute(
-                        () => this._downloadInitialPullReport(cronDetailID, seller, reportId, documentId, range, reportType, authOverrides, retry, user),
+                        () => this._downloadInitialPullReport(cronDetailID, seller, reportId, documentId, range, reportType, authOverrides, retry, user, iInitialPull),
                         { sellerId: seller.idSellerAccount, operation: 'downloadInitialPullReport' }
                     );
 
@@ -1301,17 +1402,17 @@ class InitialPullService {
                     };
                     
                 } else if (status === 'IN_QUEUE' || status === 'IN_PROGRESS') {
-                    const delaySeconds = await DelayHelpers.calculateBackoffDelay(attempt, `Initial Pull Status Check (${range.range})`);
+                    const delaySeconds = await DelayHelpers.calculateBackoffDelay(attempt, `${iInitialPull === 2 ? 'Backfill' : 'Initial Pull'} Status Check (${range.range})`);
                     
                     await model.logCronActivity({
                         cronJobID: cronDetailID,
                         reportType,
-                        action: retry ? 'Initial Pull - Retry Check Status' : 'Initial Pull - Check Status',
+                        action: retry ? (iInitialPull === 2 ? 'Backfill - Retry Check Status' : 'Initial Pull - Retry Check Status') : (iInitialPull === 2 ? 'Backfill - Check Status' : 'Initial Pull - Check Status'),
                         status: 0,
                         message: `Report ${status} for ${range.range}, waiting ${delaySeconds}s`,
                         reportID: reportId,
                         Range: range.range,
-                        iInitialPull: 1,
+                        iInitialPull,
                         retryCount: currentRetry,
                         executionTime: (Date.now() - startTime) / 1000
                     });
@@ -1331,12 +1432,12 @@ class InitialPullService {
                     await model.logCronActivity({
                         cronJobID: cronDetailID,
                         reportType,
-                        action: retry ? 'Initial Pull - Retry Check Status' : 'Initial Pull - Check Status',
+                        action: retry ? (iInitialPull === 2 ? 'Backfill - Retry Check Status' : 'Initial Pull - Retry Check Status') : (iInitialPull === 2 ? 'Backfill - Check Status' : 'Initial Pull - Check Status'),
                         status: 3,
                         message: `Report ${status} for ${range.range}`,
                         reportID: reportId,
                         Range: range.range,
-                        iInitialPull: 1,
+                        iInitialPull,
                         executionTime: (Date.now() - startTime) / 1000
                     });
                     
@@ -1354,12 +1455,12 @@ class InitialPullService {
     /**
      * Download initial pull report (Step 3: Download)
      */
-    async _downloadInitialPullReport(cronDetailID, seller, reportId, documentId, range, reportType, authOverrides = {}, retry = false, user = null) {
+    async _downloadInitialPullReport(cronDetailID, seller, reportId, documentId, range, reportType, authOverrides = {}, retry = false, user = null, iInitialPull = 1) {
         const result = await RetryHelpers.executeWithRetry({
             cronDetailID,
             amazonSellerID: seller.AmazonSellerID,
             reportType,
-            action: retry ? 'Initial Pull - Retry Download Report' : 'Initial Pull - Download Report',
+            action: retry ? (iInitialPull === 2 ? 'Backfill - Retry Download Report' : 'Initial Pull - Retry Download Report') : (iInitialPull === 2 ? 'Backfill - Download Report' : 'Initial Pull - Download Report'),
             context: { seller, reportId, documentId, range, reportType, user },
             model,
             sendFailureNotification: (cronDetailID, amazonSellerID, reportType, errorMessage, retryCount, reportId, isFatalError, range) => {
@@ -1375,20 +1476,20 @@ class InitialPullService {
                     model,
                     NotificationHelpers,
                     env,
-                    context: 'Initial Pull'
+                    context: iInitialPull === 2 ? 'Backfill' : 'Initial Pull'
                 });
             },
             maxRetries: 3, // Strict limit of 3 retries per report
             skipIfMaxRetriesReached: true, // Now safe to check because each range is tracked independently
             extraLogFields: {
                 Range: range.range,
-                iInitialPull: 1
+                iInitialPull
             },            
             operation: async ({ attempt, currentRetry, context, startTime }) => {
                 const { seller, reportId, documentId, range, reportType, retry, user } = context;
                 const downloadStartTime = dates.getNowDateTimeInUserTimezone().db;
                 const timezone = await model.getUserTimezone(user);
-                logger.info({ reportId, documentId, range: range.range, attempt, timezone }, 'Starting initial pull download');
+                logger.info({ reportId, documentId, range: range.range, attempt, timezone }, iInitialPull === 2 ? 'Starting backfill download' : 'Starting initial pull download');
                 
                 // Set ProcessRunningStatus = 3 (Download) and update start date
                 await model.setProcessRunningStatus(cronDetailID, reportType, 3);
@@ -1397,13 +1498,13 @@ class InitialPullService {
                 await model.logCronActivity({
                     cronJobID: cronDetailID,
                     reportType,
-                    action: retry ? 'Initial Pull - Retry Download Report' : 'Initial Pull - Download Report',
+                    action: retry ? (iInitialPull === 2 ? 'Backfill - Retry Download Report' : 'Initial Pull - Retry Download Report') : (iInitialPull === 2 ? 'Backfill - Download Report' : 'Initial Pull - Download Report'),
                     status: 1,
                     message: `Starting download for ${range.range}`,
                     reportID: reportId,
                     reportDocumentID: documentId,
                     Range: range.range,
-                    iInitialPull: 1
+                    iInitialPull
                 });
                 
                 // Update download status
@@ -1601,13 +1702,13 @@ class InitialPullService {
                     await model.logCronActivity({
                         cronJobID: cronDetailID,
                         reportType,
-                        action: retry ? 'Initial Pull - Retry Download Report' : 'Initial Pull - Download Report',
+                        action: retry ? (iInitialPull === 2 ? 'Backfill - Retry Download Report' : 'Initial Pull - Retry Download Report') : (iInitialPull === 2 ? 'Backfill - Download Report' : 'Initial Pull - Download Report'),
                         status: 1,
                         message: `Downloading report for ${range.range}`,
                         reportID: reportId,
                         reportDocumentID: documentId,
                         Range: range.range,
-                        iInitialPull: 1,
+                        iInitialPull,
                         executionTime: (Date.now() - startTime) / 1000
                     });
                     
@@ -1626,10 +1727,10 @@ class InitialPullService {
                                 reportType,
                                 range: range.range,
                                 filePath 
-                            }, retry ? 'Starting initial pull import (retry)' : 'Starting initial pull import', 'Starting initial pull import');
+                            }, retry ? (iInitialPull === 2 ? 'Starting backfill import (retry)' : 'Starting initial pull import (retry)') : (iInitialPull === 2 ? 'Starting backfill import' : 'Starting initial pull import'), 'Starting import');
                             
                             // Import JSON data into database
-                            const importResult = await jsonSvc.__importJson(enrichedRow, 0, 0, 1, timezone);
+                            const importResult = await jsonSvc.__importJson(enrichedRow, 0, 0, iInitialPull, timezone);
                             
                             logger.info({ 
                                 cronDetailID,
@@ -1644,13 +1745,13 @@ class InitialPullService {
                             await model.logCronActivity({
                                 cronJobID: cronDetailID,
                                 reportType,
-                                action: retry ? 'Initial Pull - Import Done (retry)' : 'Initial Pull - Import Done',
+                                action: retry ? (iInitialPull === 2 ? 'Backfill - Import Done (retry)' : 'Initial Pull - Import Done (retry)') : (iInitialPull === 2 ? 'Backfill - Import Done' : 'Initial Pull - Import Done'),
                                 status: 1,
                                 message: `Imported data for ${range.range}`,
                                 reportID: reportId,
                                 reportDocumentID: documentId,
                                 Range: range.range,
-                                iInitialPull: 1,
+                                iInitialPull,
                                 executionTime: (Date.now() - startTime) / 1000
                             });
 
@@ -1662,7 +1763,7 @@ class InitialPullService {
                                 reportType,
                                 range: range.range,
                                 retry
-                            }, retry ? 'Error during initial pull import - file saved but import failed (retry)' : 'Error during initial pull import - file saved but import failed', 'Error during initial pull import - file saved but import failed');
+                            }, retry ? (iInitialPull === 2 ? 'Error during backfill import - file saved but import failed (retry)' : 'Error during initial pull import - file saved but import failed (retry)') : (iInitialPull === 2 ? 'Error during backfill import - file saved but import failed' : 'Error during initial pull import - file saved but import failed'));
                             
                             //await model.updateSQPReportStatus(cronDetailID, reportType, 0, null, dates.getNowDateTimeInUserTimezone().db);
                             
@@ -1670,13 +1771,13 @@ class InitialPullService {
                             await model.logCronActivity({
                                 cronJobID: cronDetailID,
                                 reportType,
-                                action: retry ? 'Initial Pull - Import Failed (retry)' : 'Initial Pull - Import Failed',
+                                action: retry ? (iInitialPull === 2 ? 'Backfill - Import Failed (retry)' : 'Initial Pull - Import Failed (retry)') : (iInitialPull === 2 ? 'Backfill - Import Failed' : 'Initial Pull - Import Failed'),
                                 status: 2,
                                 message: `Import failed for ${range.range}: ${importError.message}`,
                                 reportID: reportId,
                                 reportDocumentID: documentId,
                                 Range: range.range,
-                                iInitialPull: 1,
+                                iInitialPull,
                                 executionTime: (Date.now() - startTime) / 1000
                             });
                             // Don't throw - file is saved, import can be retried later
@@ -1684,13 +1785,13 @@ class InitialPullService {
                     } 
                     
                     return {
-                        action: 'Initial Pull - Download and Import Done',
+                        action: iInitialPull === 2 ? 'Backfill - Download and Import Done' : 'Initial Pull - Download and Import Done',
                         message: `Downloaded and imported ${data.length} rows for ${range.range}`,
                         reportID: reportId,
                         data: { rows: data.length, filePath, fileSize, range: range.range },
                         logData: {
                             Range: range.range,
-                            iInitialPull: 1
+                            iInitialPull
                         },
                         skipped: true
                     };
@@ -1762,24 +1863,24 @@ class InitialPullService {
                     await model.logCronActivity({
                         cronJobID: cronDetailID,
                         reportType,
-                        action: retry ? 'Initial Pull - Import Done (retry)' : 'Initial Pull - Import Done',
+                        action: retry ? (iInitialPull === 2 ? 'Backfill - Import Done (retry)' : 'Initial Pull - Import Done (retry)') : (iInitialPull === 2 ? 'Backfill - Import Done' : 'Initial Pull - Import Done'),
                         status: 1,
                         message: `No data to import for ${range.range} (report was empty)`,
                         reportID: reportId,
                         reportDocumentID: documentId,
                         Range: range.range,
-                        iInitialPull: 1,
+                        iInitialPull,
                         executionTime: (Date.now() - startTime) / 1000
                     });
                     
                     return {
-                        action: 'Initial Pull - Download and Import Done',
+                        action: iInitialPull === 2 ? 'Backfill - Download and Import Done' : 'Initial Pull - Download and Import Done',
                         message: `No data for ${range.range}`,
                         reportID: reportId,
                         data: { rows: 0, range: range.range },
                         logData: {
                             Range: range.range,
-                            iInitialPull: 1
+                            iInitialPull
                         },
                         skipped: true
                     };

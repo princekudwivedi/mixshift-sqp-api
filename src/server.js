@@ -74,7 +74,7 @@ function validateEnv() {
 }
 
 async function startServer() {
-    await env.loadAwsSecrets({ overwrite: false });
+    //await env.loadAwsSecrets({ overwrite: false });
     validateEnv();
 
     app.listen(PORT, () => {

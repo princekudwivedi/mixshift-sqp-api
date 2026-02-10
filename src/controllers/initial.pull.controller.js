@@ -8,6 +8,7 @@ const { ValidationHelpers, CircuitBreaker, RateLimiter, MemoryMonitor, Notificat
 const logger = require('../utils/logger.utils');
 const env = require('../config/env.config');
 const initialPullService = require('../services/initial.pull.service');
+const backfillService = require('../services/backfill.service');
 
 class InitialPullController {
 
@@ -117,7 +118,42 @@ class InitialPullController {
             logger.error({ error: error.message }, 'Failed to start retry failed initial pull');
             return ErrorHandler.sendError(res, error, 'Failed to start retry failed initial pull');
         }
-    }    
+    }
+
+    /**
+     * Run backfill for historical data (e.g. after token re-enabled).
+     * Fetches only missing date ranges per seller. Use a separate cron schedule for this.
+     * Query params: userId (optional), sellerId (optional), startDate (YYYY-MM-DD), endDate (YYYY-MM-DD), onlyWithPending (1 = only sellers with BackfillPending=1)
+     */
+    async runBackfill(req, res) {
+        try {
+            const { userId, sellerId, startDate, endDate, onlyWithPending } = req.query;
+            const validatedUserId = userId ? ValidationHelpers.validateUserId(userId) : null;
+            const validatedSellerId = sellerId ? ValidationHelpers.validateUserId(sellerId) : null;
+            const options = {};
+            if (startDate && endDate) options.startDate = startDate;
+            if (endDate) options.endDate = endDate;
+            if (onlyWithPending === '1' || onlyWithPending === 'true') options.onlyWithPending = true;
+
+            logger.info({ validatedUserId, validatedSellerId, startDate, endDate, onlyWithPending }, 'Backfill cron triggered via API');
+
+            backfillService.processBackfill(validatedUserId, validatedSellerId, options)
+                .catch(error => {
+                    logger.error({ error: error.message }, 'Error in backfill background process');
+                });
+
+            return SuccessHandler.sendSuccess(res, {
+                message: 'Backfill started',
+                processing: 'Background processing initiated',
+                params: { userId, sellerId, startDate, endDate, onlyWithPending },
+                note: 'Fetches historical data for missing periods only. Use startDate/endDate for a custom range, or onlyWithPending=1 to process only sellers with BackfillPending flag set.'
+            }, 'Backfill started successfully');
+        } catch (error) {
+            logger.error({ error: error.message }, 'Error starting backfill');
+            return ErrorHandler.sendError(res, error, 'Failed to start backfill');
+        }
+    }
+
 }
 
 module.exports = new InitialPullController();

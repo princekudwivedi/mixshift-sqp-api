@@ -1,6 +1,9 @@
 const { getModel: getSqpCronDetails } = require('./sequelize/sqpCronDetails.model');
 const { getModel: getSqpCronLogs } = require('./sequelize/sqpCronLogs.model');
 const { getModel: getSellerAsinList } = require('./sequelize/sellerAsinList.model');
+const { getModel: getSqpWeekly } = require('./sequelize/sqpWeekly.model');
+const { getModel: getSqpMonthly } = require('./sequelize/sqpMonthly.model');
+const { getModel: getSqpQuarterly } = require('./sequelize/sqpQuarterly.model');
 const { Op, literal } = require('sequelize');
 const logger = require('../utils/logger.utils');
 const env = require('../config/env.config');
@@ -519,18 +522,18 @@ async function updateSQPReportStatus(cronDetailID, reportType, status, startDate
 async function logCronActivity({ cronJobID, reportType, action, status, message, reportID = null, reportDocumentID = null, retryCount = null, executionTime = null, Range = null, iInitialPull = 0 }) {
     const SqpCronLogs = getSqpCronLogs();
     
-    // For initial pull with Range and Action, create unique log per range + action
+    // For initial pull or backfill (iInitialPull 1 or 2) with Range, create unique log per range + action
     // ReportID is NOT part of the key - it's just a field that gets updated as the report progresses
     // This prevents duplicate entries for the same range as reportID changes from NULL to actual ID
     // For regular pull, match by CronJobID + ReportType
-    const where = (iInitialPull === 1 && Range) 
-        ? { 
-            CronJobID: cronJobID, 
-            ReportType: reportType, 
+    const where = ((iInitialPull === 1 || iInitialPull === 2) && Range)
+        ? {
+            CronJobID: cronJobID,
+            ReportType: reportType,
             Range: Range,
             iInitialPull: iInitialPull
         }
-        : { CronJobID: cronJobID, ReportType: reportType};
+        : { CronJobID: cronJobID, ReportType: reportType };
     
     const payload = {
         Status: status,
@@ -614,11 +617,11 @@ async function checkCronDetailsOfSellersByDate(
     const SqpCronDetails = getSqpCronDetails();
     // Get current date/time in user's timezone
     let HoursAgo = null;
-    if (iInitialPull === 1) {
-        // Reset to now and subtract 6 hours
-        HoursAgo = dates.getNowDateTimeInUserTimezoneAgo(new Date(), { hours: 6 });  
+    if (iInitialPull === 1 || iInitialPull === 2) {
+        // Initial pull or backfill: reset to now and subtract 6 hours
+        HoursAgo = dates.getNowDateTimeInUserTimezoneAgo(new Date(), { hours: 6 });
     } else {
-        // Subtract 1 hours
+        // Regular cron: subtract 1 hour
         HoursAgo = dates.getNowDateTimeInUserTimezoneAgo(new Date(), { hours: 1 });
     }
 
@@ -751,6 +754,42 @@ async function getUserTimezone(user = null) {
     return timezone;
 }
 
+/**
+ * Get existing data ranges already stored in SQP tables for a seller.
+ * Used by backfill to skip periods we already have.
+ * @param {number} sellerID - Seller account ID (SellerID in SQP tables)
+ * @param {string} amazonSellerID - Amazon seller ID
+ * @returns {Promise<{ WEEK: Set<string>, MONTH: Set<string>, QUARTER: Set<string> }>}
+ */
+async function getExistingDataRangesForSeller(sellerID, amazonSellerID) {
+    const SqpWeekly = getSqpWeekly();
+    const SqpMonthly = getSqpMonthly();
+    const SqpQuarterly = getSqpQuarterly();
+    const baseWhere = { SellerID: sellerID, AmazonSellerID: amazonSellerID };
+
+    const toRangeSet = (rows) => {
+        const set = new Set();
+        (rows || []).forEach((r) => {
+            if (r.StartDate && r.EndDate) {
+                set.add(`${r.StartDate} to ${r.EndDate}`);
+            }
+        });
+        return set;
+    };
+
+    const [weekRows, monthRows, quarterRows] = await Promise.all([
+        SqpWeekly.findAll({ where: baseWhere, attributes: ['StartDate', 'EndDate'], raw: true }).catch(() => []),
+        SqpMonthly.findAll({ where: baseWhere, attributes: ['StartDate', 'EndDate'], raw: true }).catch(() => []),
+        SqpQuarterly.findAll({ where: baseWhere, attributes: ['StartDate', 'EndDate'], raw: true }).catch(() => [])
+    ]);
+
+    return {
+        WEEK: toRangeSet(weekRows),
+        MONTH: toRangeSet(monthRows),
+        QUARTER: toRangeSet(quarterRows)
+    };
+}
+
 module.exports = {
     splitASINsIntoChunks,
     mapPrefix,
@@ -768,7 +807,8 @@ module.exports = {
     hasEligibleASINs,
     hasEligibleASINsInitialPull,
     getReportsForStatusType,
-    getUserTimezone
+    getUserTimezone,
+    getExistingDataRangesForSeller
 };
 
 

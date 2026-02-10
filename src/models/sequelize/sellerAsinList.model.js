@@ -50,6 +50,11 @@ const modelDefinition = {
     QuarterlyLastSQPDataPullStartTime: { type: DataTypes.DATE, allowNull: true },
     QuarterlyLastSQPDataPullEndTime: { type: DataTypes.DATE, allowNull: true },
     
+    // Backfill window / flag (per seller + ASIN)
+    BackfillStartDate: { type: DataTypes.DATEONLY, allowNull: true },
+    BackfillEndDate: { type: DataTypes.DATEONLY, allowNull: true },
+    BackfillPending: { type: DataTypes.TINYINT, allowNull: true, defaultValue: 0 },
+
     dtCreatedOn: { type: DataTypes.DATE, allowNull: false },
     dtUpdatedOn: { type: DataTypes.DATE, allowNull: true }
 };

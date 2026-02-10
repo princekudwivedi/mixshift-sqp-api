@@ -316,6 +316,85 @@ function calculateFullRanges(timezone) {
     };
 }
 
+/**
+ * Calculate week/month/quarter ranges that fall within [startDate, endDate].
+ * startDate/endDate are YYYY-MM-DD strings or Date objects.
+ */
+function calculateRangesInDateRange(startDate, endDate, timezone) {
+    const zone = resolveTimezone(timezone ?? getCurrentTimezone());
+    const start = typeof startDate === 'string' ? new Date(startDate + 'T00:00:00') : new Date(startDate);
+    const end = typeof endDate === 'string' ? new Date(endDate + 'T23:59:59') : new Date(endDate);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) {
+        return { fullWeekRange: null, fullMonthRange: null, fullQuarterRange: null, weekRanges: [], monthRanges: [], quarterRanges: [] };
+    }
+    const startInTz = getTimeZoneParts(start, zone).date;
+    const endInTz = getTimeZoneParts(end, zone).date;
+    const weekRanges = [];
+    const monthRanges = [];
+    const quarterRanges = [];
+    const seenWeek = new Set();
+    const seenMonth = new Set();
+    const seenQuarter = new Set();
+    let cursor = new Date(startInTz.getFullYear(), startInTz.getMonth(), startInTz.getDate());
+    const endDateOnly = new Date(endInTz.getFullYear(), endInTz.getMonth(), endInTz.getDate());
+    while (cursor <= endDateOnly) {
+        const weekStart = startOfWeek(cursor, { weekStartsOn: 0 });
+        const weekEnd = addDays(weekStart, 6);
+        if (weekStart <= endInTz && weekEnd >= startInTz) {
+            const key = fmt(weekStart) + '|' + fmt(weekEnd);
+            if (!seenWeek.has(key)) {
+                seenWeek.add(key);
+                weekRanges.push({
+                    startDate: fmt(weekStart),
+                    endDate: fmt(weekEnd),
+                    range: `${fmt(weekStart)} to ${fmt(weekEnd)}`,
+                    type: 'WEEK'
+                });
+            }
+        }
+        const monthStart = startOfMonth(cursor);
+        const monthEnd = lastDayOfMonth(cursor, { weekStartsOn: 0 });
+        if (monthStart <= endInTz && monthEnd >= startInTz) {
+            const key = fmt(monthStart) + '|' + fmt(monthEnd);
+            if (!seenMonth.has(key)) {
+                seenMonth.add(key);
+                monthRanges.push({
+                    startDate: fmt(monthStart),
+                    endDate: fmt(monthEnd),
+                    range: `${fmt(monthStart)} to ${fmt(monthEnd)}`,
+                    type: 'MONTH'
+                });
+            }
+        }
+        const qStart = startOfQuarter(cursor);
+        const qEnd = new Date(qStart.getFullYear(), qStart.getMonth() + 3, 0);
+        if (qStart <= endInTz && qEnd >= startInTz) {
+            const key = fmt(qStart) + '|' + fmt(qEnd);
+            if (!seenQuarter.has(key)) {
+                seenQuarter.add(key);
+                quarterRanges.push({
+                    startDate: fmt(qStart),
+                    endDate: fmt(qEnd),
+                    range: `${fmt(qStart)} to ${fmt(qEnd)}`,
+                    type: 'QUARTER'
+                });
+            }
+        }
+        cursor = addDays(cursor, 1);
+    }
+    weekRanges.sort((a, b) => a.startDate.localeCompare(b.startDate));
+    monthRanges.sort((a, b) => a.startDate.localeCompare(b.startDate));
+    quarterRanges.sort((a, b) => a.startDate.localeCompare(b.startDate));
+    return {
+        fullWeekRange: weekRanges.length ? `${weekRanges[0].startDate} to ${weekRanges[weekRanges.length - 1].endDate}` : null,
+        fullMonthRange: monthRanges.length ? `${monthRanges[0].startDate} to ${monthRanges[monthRanges.length - 1].endDate}` : null,
+        fullQuarterRange: quarterRanges.length ? `${quarterRanges[0].startDate} to ${quarterRanges[quarterRanges.length - 1].endDate}` : null,
+        weekRanges,
+        monthRanges,
+        quarterRanges
+    };
+}
+
 function getDateRangeForPeriod(period, timezone = null) {
     const zone = resolveTimezone(timezone ?? getCurrentTimezone());
     const now = getNowDateTimeInUserTimezoneDate(new Date(), zone);
@@ -351,6 +430,7 @@ module.exports = {
     calculateMonthRanges,
     calculateQuarterRanges,
     calculateFullRanges,
+    calculateRangesInDateRange,
     getNowDateTimeInUserTimezone,
     getNowDateTimeInUserTimezoneDate,
     getNowRangeForPeriodInUserTimezone,

@@ -75,8 +75,7 @@ class CronApiService {
                         if (cronLimits.shouldProcess) {                        
                             const sellers = validatedSellerId
                                 ? [await sellerModel.getProfileDetailsByID(validatedSellerId)]
-                                : await sellerModel.getSellersProfilesForCronAdvanced({ pullAll: 0 });
-                            
+                                : await sellerModel.getSellersProfilesForCronAdvanced({ pullAll: 0 });                            
                             logger.info({ userId: user.ID, sellerCount: sellers.length }, 'Processing sellers for user');
 
                             // Check if user has eligible seller which has eligible ASINs before processing
@@ -122,8 +121,12 @@ class CronApiService {
                                     // Check rate limit before making API calls
                                     await this.rateLimiter.checkLimit(s.AmazonSellerID);
                                     
-                                    const authOverrides = await authService.buildAuthOverrides(s.AmazonSellerID);
-                                    
+                                    const authOverrides = await authService.buildAuthOverrides(s.AmazonSellerID);                                    
+                                    if (authOverrides.iLostAccess === 1) {
+                                        logger.error({ sellerId: s.idSellerAccount, amazonSellerID: s.AmazonSellerID, iLostAccess: authOverrides.iLostAccess }, 'Token lost access for seller');
+                                        breakUserProcessing = false;
+                                        continue;
+                                    }
                                     // Step 1: Request report with circuit breaker protection
                                     const { cronDetailIDs, cronDetailData } = await this.circuitBreaker.execute(
                                         () => ctrl.requestForSeller(s, authOverrides, env.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT, user),
@@ -244,6 +247,10 @@ class CronApiService {
                         for (const rec of stuckRecords) {
                             const seller = await sellerModel.getProfileDetailsByID(rec.SellerID);
                             const authOverrides = await authService.buildAuthOverrides(rec.AmazonSellerID);
+                            if (authOverrides.iLostAccess === 1) {
+                                logger.error({ sellerId: seller.idSellerAccount, amazonSellerID: seller.AmazonSellerID, iLostAccess: authOverrides.iLostAccess }, 'Token lost access for seller');
+                                continue;
+                            }
                             for (const type of rec.stuckReportTypes) {
                                 try {
                                     // Check memory usage before processing

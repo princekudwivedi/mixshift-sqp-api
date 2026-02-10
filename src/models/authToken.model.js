@@ -44,11 +44,11 @@ class AuthToken {
             const SpApiAuthorization = getSpApiAuthorization();
             const token = await SpApiAuthorization.findOne({
                 where: { AmazonSellerID: amazonSellerID },
-                attributes: ['id', 'AmazonSellerID', 'access_token', 'refresh_token', 'expires_in'],
+                attributes: ['id', 'AmazonSellerID', 'access_token', 'refresh_token', 'expires_in','iLostAccess','dtLostAccessOn'],
                 order: [['id', 'DESC']]
             });
             
-            if (token) {
+            if (token && token.iLostAccess === 0) {
                 logger.info({ 
                     amazonSellerID, 
                     tokenId: token.id,
@@ -57,7 +57,11 @@ class AuthToken {
                     expiresIn: token.expires_in
                 }, 'Token found for seller');
             } else {
-                logger.warn({ amazonSellerID }, 'No token found in database for seller');
+                if (token?.iLostAccess === 1) {
+                    logger.warn({ amazonSellerID, iLostAccess: token?.iLostAccess }, 'Token lost access for seller');
+                } else {
+                    logger.warn({ amazonSellerID, iLostAccess: token?.iLostAccess }, 'No token found in database for seller');
+                }
             }
             
             return token;
