@@ -16,8 +16,9 @@ async function buildAuthOverrides(amazonSellerID, forceRefresh = false) {
         // Call getValidAccessToken from the same module (avoid 'this')
         const tokenResult = await getValidAccessToken(amazonSellerID, forceRefresh);
 
-        if (tokenResult.accessToken) {
+        if (tokenResult.accessToken && tokenResult.iLostAccess === 0) {
             authOverrides.accessToken = tokenResult.accessToken;
+            authOverrides.iLostAccess = tokenResult.iLostAccess ?? 0;
 
             logger.info(
                 {
@@ -40,13 +41,21 @@ async function buildAuthOverrides(amazonSellerID, forceRefresh = false) {
                 );
             }
         } else {
-            logger.warn(
-                {
-                    amazonSellerID,
-                    error: tokenResult.error,
-                },
-                'No valid access token available for seller'
-            );
+            if (tokenResult?.iLostAccess === 1) {
+                logger.warn(
+                    { amazonSellerID, iLostAccess: tokenResult?.iLostAccess },
+                    'Token lost access for seller'
+                );
+                authOverrides.iLostAccess = 1;
+            } else {
+                logger.warn(
+                    { amazonSellerID, iLostAccess: 0 },
+                    'No valid access token available for seller'
+                );
+                authOverrides.iLostAccess = 0;
+            }
+            authOverrides.accessToken = null;
+            
         }
 
         return authOverrides;
@@ -166,7 +175,16 @@ async function getValidAccessToken(amazonSellerID, forceRefresh = false) {
 
         if (!tokenRow) {
             logger.warn({ amazonSellerID }, 'No token found for seller');
-            return { accessToken: null, wasRefreshed: false };
+            return { accessToken: null, wasRefreshed: false, iLostAccess: undefined, error: 'No token found for seller' };
+        }
+
+        // If token is explicitly marked as lost access, stop pulling data
+        if (Number(tokenRow.iLostAccess) === 1) {
+            logger.warn(
+                { amazonSellerID, iLostAccess: tokenRow.iLostAccess, dtLostAccessOn: tokenRow.dtLostAccessOn },
+                'Token has lost access for seller; skipping SP-API calls'
+            );
+            return { accessToken: null, wasRefreshed: false, iLostAccess: 1, error: 'Token lost access' };
         }
 
         if (isTokenExpired(tokenRow) || forceRefresh) {
@@ -182,7 +200,7 @@ async function getValidAccessToken(amazonSellerID, forceRefresh = false) {
                 );
                 await updateTokenInDatabase(amazonSellerID, newTokenData);
 
-                return { accessToken: newTokenData.access_token, wasRefreshed: true };
+                return { accessToken: newTokenData.access_token, wasRefreshed: true, iLostAccess: 0 };
             } catch (refreshError) {
                 logger.error(
                     { amazonSellerID, error: refreshError.message },
@@ -193,15 +211,16 @@ async function getValidAccessToken(amazonSellerID, forceRefresh = false) {
                     wasRefreshed: false,
                     refreshFailed: true,
                     error: refreshError.message,
+                    iLostAccess: 0
                 };
             }
         }
 
         logger.info({ amazonSellerID, expiresAt: tokenRow.expires_in }, 'Using existing valid token');
-        return { accessToken: tokenRow.access_token, wasRefreshed: false };
+        return { accessToken: tokenRow.access_token, wasRefreshed: false, iLostAccess: 0 };
     } catch (error) {
         logger.error({ amazonSellerID, error: error.message, stack: error.stack }, 'Error in getValidAccessToken');
-        return { accessToken: null, wasRefreshed: false, error: error.message };
+        return { accessToken: null, wasRefreshed: false, iLostAccess: undefined, error: error.message };
     }
 }
 

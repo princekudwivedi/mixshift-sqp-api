@@ -108,6 +108,10 @@ class InitialPullService {
                                 : null;
                             
                             const authOverrides = await authService.buildAuthOverrides(rec.AmazonSellerID);
+                            if(authOverrides.iLostAccess === 1 || authOverrides.iLostAccess === undefined) {
+                                logger.warn({ sellerId: seller.idSellerAccount, amazonSellerID: seller.AmazonSellerID, iLostAccess: authOverrides.iLostAccess }, 'Token lost access for seller');                                
+                                continue;
+                            }
                             // status update
                             const updateData = {
                                 InitialPullStatus: 1,
@@ -522,6 +526,11 @@ class InitialPullService {
 
                                 // Get access token
                                 const authOverrides = await authService.buildAuthOverrides(seller.AmazonSellerID);
+                                if(authOverrides.iLostAccess === 1 || authOverrides.iLostAccess === undefined) {
+                                    logger.warn({ sellerId: seller.idSellerAccount, amazonSellerID: seller.AmazonSellerID, iLostAccess: authOverrides.iLostAccess }, 'Token lost access for seller');
+                                    breakUserProcessing = false;
+                                    continue;
+                                }
                                 if (!authOverrides.accessToken) {				
                                     logger.error({ amazonSellerID: seller.AmazonSellerID }, 'No access token available for request');
                                     throw new Error('No access token available for report request');
