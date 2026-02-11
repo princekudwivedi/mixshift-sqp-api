@@ -1,5 +1,6 @@
 const { DataTypes, Op } = require('sequelize');
 const { getCurrentSequelize, getCurrentUserId } = require('../../db/tenant.db');
+const dates = require('../../utils/dates.utils');
 
 const { TBL_SELLER } = require('../../config/env.config');
 const { makeReadOnly } = require('./utils');
@@ -10,9 +11,11 @@ const MwsAccessKeys = require('./mwsAccessKeys.model');
 
 const table = TBL_SELLER;
 
-// Cache for lazy-loaded model
+// Cache for lazy-loaded models
 let cachedModel = null;
 let cachedUserId = null;
+let cachedWritableModel = null;
+let cachedWritableUserId = null;
 
 // Model definition structure (used for lazy loading)
 const modelDefinition = {
@@ -92,6 +95,7 @@ const modelDefinition = {
     dtBlankRecordUpdateDate: { type: DataTypes.DATE },
     iBlankBuyerEmailStatus: { type: DataTypes.TINYINT },
     dtForecastLatestDate: { type: DataTypes.DATE },
+    dtLatestSQPPullDate: { type: DataTypes.DATE },
     iSpApiArchiveStatus: { type: DataTypes.TINYINT },
     dtSpApiLastArchiveStartTime: { type: DataTypes.DATE },
     dtSpApiLastArchiveEndTime: { type: DataTypes.DATE },
@@ -117,7 +121,7 @@ const modelOptions = {
     timestamps: false
 };
 
-// Lazy load model (called at runtime, not module load)
+// Lazy load READ-ONLY model (called at runtime, not module load)
 function getModel() {
     const currentUserId = getCurrentUserId();
     
@@ -133,6 +137,19 @@ function getModel() {
     }
     
     return makeReadOnly(cachedModel);
+}
+
+// Writable model (bypasses makeReadOnly) for controlled update operations
+function getWritableModel() {
+    const currentUserId = getCurrentUserId();
+
+    // Clear cache if database context changed
+    if (cachedWritableUserId !== currentUserId) {
+        const sequelize = getCurrentSequelize();
+        cachedWritableModel = sequelize.define(table, modelDefinition, modelOptions);
+        cachedWritableUserId = currentUserId;
+    }
+    return cachedWritableModel;
 }
 
 module.exports = getModel();
@@ -185,13 +202,6 @@ async function getProfileDetailsByID(idSellerAccount, key = 'ID') {
 		auth_token: la ? la.auth_token : null,
 		developerId: ma ? ma.developerId : null,
 	};
-}
-
-async function getProfileDetailsByAmazonSellerID(amazonSellerID) {
-    const BoundSeller = getBoundModel();
-    const s = await BoundSeller.findOne({ where: { AmazonSellerID: amazonSellerID } });
-    if (!s) return null;
-    return getProfileDetailsByID(s.ID);
 }
 
 async function getSellersProfilesForCronAdvanced({ idSellerAccount = 0, pullAll = 0, AmazonSellerID = '', marketplacename = '', marketplaceAry = [], isCustomPull = 0 } = {}) {
@@ -251,7 +261,29 @@ async function getSellersProfilesForCronAdvanced({ idSellerAccount = 0, pullAll 
     return results;
 }
 
+/**
+ * Update dtLatestSQPPullDate on seller table using user timezone-aware timestamp.
+ * This is called after SQP initial pull and regular cron complete.
+ */
+async function updateLastestSQPPullDateBySellerId(idSellerAccount, timezone = null) {
+    const SellerWritable = getWritableModel();
+    if (!idSellerAccount || !SellerWritable) return;
+
+    // Use the same timezone-aware formatting used across the app
+    const formattedNow = dates.formatTimestamp(new Date(), timezone);
+
+    await SellerWritable.update(
+        {
+            dtLatestSQPPullDate: formattedNow,
+            dtUpdatedOn: formattedNow
+        },
+        {
+            where: { ID: Number(idSellerAccount) }
+        }
+    );
+}
+
 module.exports.getProfileDetailsByID = getProfileDetailsByID;
-module.exports.getProfileDetailsByAmazonSellerID = getProfileDetailsByAmazonSellerID;
 module.exports.getSellersProfilesForCronAdvanced = getSellersProfilesForCronAdvanced;
+module.exports.updateLastestSQPPullDateBySellerId = updateLastestSQPPullDateBySellerId;
 

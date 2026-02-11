@@ -1118,6 +1118,14 @@ class InitialPullService {
             // Update ASIN pull status
             if (newStatus == 2){
                 await asinInitialPull.markInitialPullCompleted(amazonSellerID, asinList, SellerID, cronDetailID, timezone);
+                // Initial pull fully completed – update seller's latest SQP pull date
+                if (SellerID) {
+                  try {
+                    await sellerModel.updateLastestSQPPullDateBySellerId(SellerID, timezone);
+                  } catch (e) {
+                    logger.error({ error: e.message, SellerID }, 'Failed to update dtLatestSQPPullDate after initial pull completion');
+                  }
+                }
             } else {
                 await asinInitialPull.markInitialPullFailed(amazonSellerID, asinList, SellerID, cronDetailID, timezone);
             }

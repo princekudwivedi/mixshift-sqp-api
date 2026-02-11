@@ -1208,6 +1208,16 @@ async function finalizeCronRunningStatus(cronDetailID, user = null) {
                 quarterly 
             }, 'cronRunningStatus unchanged');
         }
+
+        // When cron run fully completed (no pending/retry), update seller's latest SQP pull date
+        if (newStatus === 2 && row.SellerID) {
+            try {
+                const timezone = await model.getUserTimezone(user);
+                await sellerModel.updateLastestSQPPullDateBySellerId(row.SellerID, timezone);
+            } catch (err) {
+                logger.error({ cronDetailID, SellerID: row.SellerID, error: err.message }, 'Failed to update dtLatestSQPPullDate after cron completion');
+            }
+        }
     } catch (e) {
         logger.error({ cronDetailID, error: e.message }, 'Failed to finalize cronRunningStatus');
     }
