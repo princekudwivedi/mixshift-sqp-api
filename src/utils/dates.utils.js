@@ -1,4 +1,4 @@
-const { format, addDays, subDays, startOfWeek, startOfMonth, startOfQuarter, lastDayOfMonth, lastDayOfQuarter } = require('date-fns');
+const { format, addDays, subDays, addMonths, startOfWeek, startOfMonth, startOfQuarter, lastDayOfMonth, lastDayOfQuarter } = require('date-fns');
 const { getCurrentTimezone } = require('../db/tenant.db');
 const { Op, literal } = require('sequelize');
 
@@ -346,11 +346,104 @@ function getDateRangeForPeriod(period, timezone = null) {
     }
 }
 
+/**
+ * Get pending weekly, monthly, and quarterly ranges from a "from" date up to "today".
+ * Used by regular cron to catch up based on dtLatestSQPPullDate.
+ * - WEEK: full weeks (Sun–Sat) from the week containing fromDate through the last complete week before today.
+ * - MONTH: full calendar months from the month of fromDate through the last complete month before today.
+ * - QUARTER: full quarters that are complete and unlocked (per QUARTERLY_REPORT_DELAY, e.g. after 20th of next quarter's first month).
+ *
+ * @param {Date|string} fromDate - Last pull date (e.g. seller.dtLatestSQPPullDate).
+ * @param {Date|string} [today] - Reference "today"; defaults to now in timezone.
+ * @param {string} [timezone] - Timezone for date boundaries.
+ * @returns {{ weekRanges: Array<{startDate, endDate, range, start, end, type}>, monthRanges: Array<...>, quarterRanges: Array<...> }}
+ */
+function getPendingRangesFromDate(fromDate, today = null, timezone = null) {
+    const zone = resolveTimezone(timezone ?? getCurrentTimezone());
+    const from = fromDate instanceof Date ? fromDate : new Date(String(fromDate).replace(' ', 'T'));
+    const to = today ? (today instanceof Date ? today : new Date(String(today).replace(' ', 'T'))) : getNowDateTimeInUserTimezoneDate(new Date(), zone);
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+        return { weekRanges: [], monthRanges: [], quarterRanges: [] };
+    }
+
+    const weeklyDelay = Number(process.env.WEEKLY_REPORT_DELAY || 2);
+    const monthlyDelay = Number(process.env.MONTHLY_REPORT_DELAY || 3);
+    const quarterlyDelay = Number(process.env.QUARTERLY_REPORT_DELAY || 20);
+
+    const weekRanges = [];
+    const monthRanges = [];
+    const quarterRanges = [];
+
+    // WEEK: from week containing fromDate through last complete week before today (Sunday = 0)
+    const firstWeekStart = startOfWeek(from, { weekStartsOn: 0 });
+    const lastCompleteWeekEnd = subDays(startOfWeek(to, { weekStartsOn: 0 }), 1);
+    for (let weekStart = new Date(firstWeekStart.getTime()); weekStart <= lastCompleteWeekEnd; weekStart = addDays(weekStart, 7)) {
+        const weekEnd = addDays(weekStart, 6);
+        if (weekEnd > lastCompleteWeekEnd) break;
+        const startStr = fmt(weekStart);
+        const endStr = fmt(weekEnd);
+        weekRanges.push({
+            startDate: startStr,
+            endDate: endStr,
+            range: `${startStr} to ${endStr}`,
+            start: startStr,
+            end: endStr,
+            type: 'WEEK'
+        });
+    }
+
+    // MONTH: from month of fromDate through last complete month before today
+    const firstMonthStart = startOfMonth(from);
+    const lastCompleteMonthEnd = subDays(startOfMonth(to), 1);
+    for (let monthStart = new Date(firstMonthStart.getTime()); monthStart <= lastCompleteMonthEnd; monthStart = addMonths(monthStart, 1)) {
+        const monthEnd = lastDayOfMonth(monthStart, { weekStartsOn: 0 });
+        if (monthEnd > lastCompleteMonthEnd) break;
+        const startStr = fmt(monthStart);
+        const endStr = fmt(monthEnd);
+        monthRanges.push({
+            startDate: startStr,
+            endDate: endStr,
+            range: `${startStr} to ${endStr}`,
+            start: startStr,
+            end: endStr,
+            type: 'MONTH'
+        });
+    }
+
+    // QUARTER: quarters that are complete and unlocked (unlock = quarterlyDelay day of first month of next quarter)
+    const currentQuarterStart = startOfQuarter(to);
+    const lastCompleteQuarterEnd = subDays(currentQuarterStart, 1);
+    let qStart = startOfQuarter(from);
+    let qEnd = lastDayOfQuarter(qStart, { weekStartsOn: 0 });
+    if (qEnd > lastCompleteQuarterEnd) {
+        qStart = addMonths(qStart, -3);
+        qEnd = lastDayOfQuarter(qStart, { weekStartsOn: 0 });
+    }
+    for (; qEnd <= lastCompleteQuarterEnd; qStart = addMonths(qStart, 3), qEnd = lastDayOfQuarter(qStart, { weekStartsOn: 0 })) {
+        const nextQuarterFirstMonth = addMonths(qEnd, 1);
+        const unlockDate = new Date(nextQuarterFirstMonth.getFullYear(), nextQuarterFirstMonth.getMonth(), quarterlyDelay, 23, 59, 59);
+        if (to < unlockDate) continue;
+        const startStr = fmt(qStart);
+        const endStr = fmt(qEnd);
+        quarterRanges.push({
+            startDate: startStr,
+            endDate: endStr,
+            range: `${startStr} to ${endStr}`,
+            start: startStr,
+            end: endStr,
+            type: 'QUARTER'
+        });
+    }
+
+    return { weekRanges, monthRanges, quarterRanges };
+}
+
 module.exports = {
     calculateWeekRanges,
     calculateMonthRanges,
     calculateQuarterRanges,
     calculateFullRanges,
+    getPendingRangesFromDate,
     getNowDateTimeInUserTimezone,
     getNowDateTimeInUserTimezoneDate,
     getNowRangeForPeriodInUserTimezone,

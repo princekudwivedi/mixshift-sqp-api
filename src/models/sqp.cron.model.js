@@ -519,18 +519,14 @@ async function updateSQPReportStatus(cronDetailID, reportType, status, startDate
 async function logCronActivity({ cronJobID, reportType, action, status, message, reportID = null, reportDocumentID = null, retryCount = null, executionTime = null, Range = null, iInitialPull = 0 }) {
     const SqpCronLogs = getSqpCronLogs();
     
-    // For initial pull with Range and Action, create unique log per range + action
-    // ReportID is NOT part of the key - it's just a field that gets updated as the report progresses
-    // This prevents duplicate entries for the same range as reportID changes from NULL to actual ID
-    // For regular pull, match by CronJobID + ReportType
-    const where = (iInitialPull === 1 && Range) 
-        ? { 
-            CronJobID: cronJobID, 
-            ReportType: reportType, 
-            Range: Range,
-            iInitialPull: iInitialPull
-        }
-        : { CronJobID: cronJobID, ReportType: reportType};
+    // For initial pull or regular cron with multiple ranges: key by Range so each range has its own log row.
+    // For regular pull with single range (no Range passed), match by CronJobID + ReportType only.
+    const where = Range != null
+        ? { CronJobID: cronJobID, ReportType: reportType, Range, iInitialPull: iInitialPull ?? 0 }
+        : { CronJobID: cronJobID, ReportType: reportType };
+    if (iInitialPull != null && Range == null) {
+        where.iInitialPull = iInitialPull;
+    }
     
     const payload = {
         Status: status,

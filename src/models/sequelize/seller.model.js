@@ -201,6 +201,7 @@ async function getProfileDetailsByID(idSellerAccount, key = 'ID') {
 		iLostAccess: la ? la.iLostAccess : null,
 		auth_token: la ? la.auth_token : null,
 		developerId: ma ? ma.developerId : null,
+		dtLatestSQPPullDate: s.dtLatestSQPPullDate || null,
 	};
 }
 
@@ -250,6 +251,7 @@ async function getSellersProfilesForCronAdvanced({ idSellerAccount = 0, pullAll 
             MarketPlaceName: mp ? mp.Name : null,
             CountryCode: mp ? mp.CountryCode : null,
             AmazonMarketplaceId: mp ? mp.AmazonMarketplaceId : (s.AmazonMarketplaceId || null),
+            dtLatestSQPPullDate: s.dtLatestSQPPullDate || null,
         };
         results.push(row);
     }

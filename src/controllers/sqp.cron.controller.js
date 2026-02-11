@@ -77,83 +77,74 @@ async function requestForSeller(seller, authOverrides = {}, spReportType = env.G
 		const { asins, reportTypes } = await model.getActiveASINsBySeller(seller.idSellerAccount);
 		if (!asins.length) {
 			logger.warn({ sellerId: seller.idSellerAccount }, 'No eligible ASINs for seller (pending or ${env.MAX_DAYS_AGO}+ day old completed)');
-			return [];
+			return { cronDetailIDs: [], cronDetailData: [] };
 		}
 		const chunks = model.splitASINsIntoChunks(asins, 200);
 		logger.info({ chunkCount: chunks.length }, 'Split ASINs into chunks');
 		let cronDetailIDs = [];
-		let cronDetailData = [];		
+		let cronDetailData = [];
+		const timezone = await model.getUserTimezone(user);
+		const today = dates.getNowDateTimeInUserTimezoneDate(new Date(), timezone);
+		const fromDate = seller.dtLatestSQPPullDate ? new Date(seller.dtLatestSQPPullDate) : null;
+		const pending = fromDate ? dates.getPendingRangesFromDate(fromDate, today, timezone) : { weekRanges: [], monthRanges: [], quarterRanges: [] };
+		const hasAnyPending = pending.weekRanges.length > 0 || pending.monthRanges.length > 0 || pending.quarterRanges.length > 0;
+		const rangesByType = {
+			WEEK: hasAnyPending ? pending.weekRanges : [dates.getDateRangeForPeriod('WEEK', timezone)],
+			MONTH: hasAnyPending ? pending.monthRanges : [dates.getDateRangeForPeriod('MONTH', timezone)],
+			QUARTER: hasAnyPending ? pending.quarterRanges : [dates.getDateRangeForPeriod('QUARTER', timezone)]
+		};
+		if (hasAnyPending) {
+			logger.info({
+				fromDate: fromDate ? fromDate.toISOString().slice(0, 10) : null,
+				weekCount: pending.weekRanges.length,
+				monthCount: pending.monthRanges.length,
+				quarterCount: pending.quarterRanges.length
+			}, 'Using pending ranges from dtLatestSQPPullDate');
+		}
 		for (let i = 0; i < chunks.length; i++) {
-			const chunk = chunks[i];			
-			// Check if any report types are allowed to be requested 
+			const chunk = chunks[i];
 			let allowedReportTypes = await checkAllowedReportTypes(reportTypes, user, seller, chunk);
-
-			// -----------------------------
-			// IF *NO* REPORT TYPES ARE ALLOWED SKIP REQUESTS
-			// -----------------------------
 			if (allowedReportTypes.length === 0) {
 				break;
 			}
-			
 			logger.info({ chunkIndex: i, asinCount: chunk.asins.length }, 'Processing chunk');
-			const timezone = await model.getUserTimezone(user);
-			const weekRange = dates.getDateRangeForPeriod('WEEK', timezone);
-			const monthRange = dates.getDateRangeForPeriod('MONTH', timezone);
-			const quarterRange = dates.getDateRangeForPeriod('QUARTER', timezone);
-			const FullWeekRange = `${weekRange.start} to ${weekRange.end}`;
-			const FullMonthRange = `${monthRange.start} to ${monthRange.end}`;
-			const FullQuarterRange = `${quarterRange.start} to ${quarterRange.end}`;
-			const cronDetailRow = await model.createSQPCronDetail(seller.AmazonSellerID, chunk.asin_string, seller.idSellerAccount, { SellerName: seller.SellerName, FullWeekRange: FullWeekRange, FullMonthRange: FullMonthRange, FullQuarterRange: FullQuarterRange });
-			const cronDetailID = cronDetailRow.ID;
-			// Convert Sequelize instance to plain object
-			const cronDetailObject = cronDetailRow.toJSON ? cronDetailRow.toJSON() : cronDetailRow.dataValues;
-			logger.info({ cronDetailID: cronDetailID }, 'Created cron detail');
-			cronDetailIDs.push(cronDetailID);
-			cronDetailData.push(cronDetailObject);
 			for (const type of allowedReportTypes) {
-				// Prepare to mark ASINs as In Progress and set start time
-				const startTime = dates.getNowDateTimeInUserTimezone();
-				logger.info({ 
-					userId: user.ID,
-					sellerAccountId: seller.idSellerAccount,
-					amazonSellerID: seller.AmazonSellerID,
-					asinCount: asins.length, 
-					asins: asins.slice(0, 5),
-					startTime: startTime.log
-				}, 'Found ASINs for seller - will mark as InProgress per chunk');
-				logger.info({ type }, 'Requesting report for type');
-				await model.ASINsBySellerUpdated(seller.idSellerAccount, seller.AmazonSellerID, chunk.asins, 1, type, startTime.db); // 1 = InProgress
-                // ProcessRunningStatus = 1 (Request Report)
-                await model.setProcessRunningStatus(cronDetailID, type, 1);
-                await model.logCronActivity({ cronJobID: cronDetailID, reportType: type, action: 'Request Report', status: 1, message: 'Requesting report', Range: chunk.range });
-                await requestSingleReport(chunk, seller, cronDetailID, type, authOverrides, spReportType, user);
+				const typeRanges = rangesByType[type] || [];				
+				if (typeRanges.length === 0) continue;
+				for (const rangeObj of typeRanges) {
+					const rangeStr = rangeObj.range || (rangeObj.start && rangeObj.end ? `${rangeObj.start} to ${rangeObj.end}` : null);
+					const fullRangeOpt = type === 'WEEK' ? { FullWeekRange: rangeStr, FullMonthRange: null, FullQuarterRange: null }
+						: type === 'MONTH' ? { FullWeekRange: null, FullMonthRange: rangeStr, FullQuarterRange: null }
+						: { FullWeekRange: null, FullMonthRange: null, FullQuarterRange: rangeStr };
+					const cronDetailRow = await model.createSQPCronDetail(seller.AmazonSellerID, chunk.asin_string, seller.idSellerAccount, { SellerName: seller.SellerName, ...fullRangeOpt });
+					const cronDetailID = cronDetailRow.ID;
+					const cronDetailObject = cronDetailRow.toJSON ? cronDetailRow.toJSON() : cronDetailRow.dataValues;
+					cronDetailIDs.push(cronDetailID);
+					cronDetailData.push(cronDetailObject);
+					logger.info({ cronDetailID, type, range: rangeStr }, 'Created cron detail for range');
+					const startTime = dates.getNowDateTimeInUserTimezone();
+					await model.ASINsBySellerUpdated(seller.idSellerAccount, seller.AmazonSellerID, chunk.asins, 1, type, startTime.db);
+					await model.setProcessRunningStatus(cronDetailID, type, 1);
+					await model.logCronActivity({ cronJobID: cronDetailID, reportType: type, action: 'Request Report', status: 1, message: 'Requesting report', Range: rangeStr, iInitialPull: 0 });
+					await requestSingleReport(chunk, seller, cronDetailID, type, authOverrides, spReportType, user, rangeObj);
+				}
 			}
-			logger.info({ 
-				sellerId: seller.idSellerAccount,
-				amazonSellerID: seller.AmazonSellerID,
-				chunkIndex: i,
-				asinCount: chunk.asins.length,
-				asins: chunk.asins.slice(0, 5),
-				cronDetailID
-			}, 'Marked ASINs as InProgress after request');
+			logger.info({ sellerId: seller.idSellerAccount, amazonSellerID: seller.AmazonSellerID, chunkIndex: i, asinCount: chunk.asins.length, cronDetailIDs: cronDetailIDs.length }, 'Marked ASINs as InProgress after request');
 		}
 		return { cronDetailIDs, cronDetailData };
 	} catch (error) {
-		logger.error({ 
-			error: error ? (error.message || String(error)) : 'Unknown error', 
-			stack: error?.stack,
-			seller: seller.idSellerAccount 
-		}, 'Error in requestForSeller');
+		logger.error({ error: error ? (error.message || String(error)) : 'Unknown error', stack: error?.stack, seller: seller.idSellerAccount }, 'Error in requestForSeller');
 		throw error;
 	}
 }
 
-async function requestSingleReport(chunk, seller, cronDetailID, reportType, authOverrides = {}, spReportType = env.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT, user = null) {
+async function requestSingleReport(chunk, seller, cronDetailID, reportType, authOverrides = {}, spReportType = env.GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT, user = null, rangeOverride = null) {
 	logger.info({ 
 		cronDetailID, 
 		reportType, 
 		sellerId: seller.AmazonSellerID,
-		hasAuthOverrides: !!authOverrides.accessToken 
+		hasAuthOverrides: !!authOverrides.accessToken,
+		rangeOverride: rangeOverride ? (rangeOverride.range || `${rangeOverride.start} to ${rangeOverride.end}`) : null
 	}, 'Starting requestSingleReport with retry logic');
 	
 	// Use the universal retry function
@@ -162,7 +153,7 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 		amazonSellerID: seller.AmazonSellerID,
 		reportType,
 		action: 'Request Report',
-		context: { chunk, seller, authOverrides, user },
+		context: { chunk, seller, authOverrides, user, rangeOverride },
 		model,
 		sendFailureNotification: (cronDetailID, amazonSellerID, reportType, errorMessage, retryCount, reportId, isFatalError, range) => {
 			return sendFailureNotification({
@@ -181,17 +172,18 @@ async function requestSingleReport(chunk, seller, cronDetailID, reportType, auth
 			});
 		},
 		operation: async ({ attempt, currentRetry, context, startTime }) => {
-			const { chunk, seller, authOverrides, user } = context;
+			const { chunk, seller, authOverrides, user, rangeOverride } = context;
 			
 			// Set start date when beginning the report request
 			const startDate =  dates.getNowDateTimeInUserTimezone();
 			logger.info({ cronDetailID, reportType, startDate: startDate.log, attempt }, 'Setting start date for report request');
 			await model.updateSQPReportStatus(cronDetailID, reportType, 0, startDate.db);
 
-			const period = reportType;
 			const timezone = await model.getUserTimezone(user);
-			const range = dates.getDateRangeForPeriod(period, timezone);
-			logger.info({ period, range, attempt }, 'Date range calculated');
+			const range = rangeOverride && (rangeOverride.start != null && rangeOverride.end != null)
+				? { start: rangeOverride.start, end: rangeOverride.end }
+				: dates.getDateRangeForPeriod(reportType, timezone);
+			logger.info({ reportType, range, attempt }, 'Date range calculated');
 			
 			// Resolve marketplace id (required by SP-API). If unavailable, skip this request gracefully.
 			const marketplaceId = seller.AmazonMarketplaceId || null;
@@ -405,7 +397,8 @@ async function checkReportStatuses(authOverrides = {}, filter = {}, retry = fals
                 // Set running status
                 await model.setProcessRunningStatus(row.ID, type, 2);
 
-                const reportID = await model.getLatestReportId(row.ID, type);
+                const rowRangeStr = row.FullWeekRange || row.FullMonthRange || row.FullQuarterRange || null;
+                const reportID = await model.getLatestReportId(row.ID, type, null, rowRangeStr);
 
                 await model.logCronActivity({
                     cronJobID: row.ID,
@@ -413,12 +406,13 @@ async function checkReportStatuses(authOverrides = {}, filter = {}, retry = fals
                     action: 'Check Status',
                     status: 1,
                     message: 'Checking report status',
-                    reportID
+                    reportID,
+                    Range: rowRangeStr
                 });
 
-                logger.info({ type }, 'Checking status for report');
+                logger.info({ type, range: rowRangeStr }, 'Checking status for report');
 
-                const result = await checkReportStatusByType(row, type, authOverrides, reportID, retry, user, seller);
+                const result = await checkReportStatusByType(row, type, authOverrides, reportID, retry, user, seller, rowRangeStr);
 
                 if (result.success) {
                     res.push(result);
@@ -427,15 +421,17 @@ async function checkReportStatuses(authOverrides = {}, filter = {}, retry = fals
         }
     }
 
-    // Finalize cronRunningStatus after status checks
-    try { if (cronDetailID) await finalizeCronRunningStatus(cronDetailID, user); } catch (_) {}
+    // Finalize cronRunningStatus after status checks (one per row when multiple ranges)
+    for (const row of rows) {
+        try { await finalizeCronRunningStatus(row.ID, user); } catch (_) {}
+    }
     return retry ? res : undefined;
 }
 
 
-async function checkReportStatusByType(row, reportType, authOverrides = {}, reportID = null, retry = false, user = null, seller = null) {
-    // Find latest ReportID from logs for this CronJobID + ReportType
-    const reportId = reportID || await model.getLatestReportId(row.ID, reportType);
+async function checkReportStatusByType(row, reportType, authOverrides = {}, reportID = null, retry = false, user = null, seller = null, rangeStrOverride = null) {
+    const rowRangeStr = rangeStrOverride ?? row.FullWeekRange ?? row.FullMonthRange ?? row.FullQuarterRange ?? null;
+    const reportId = reportID || await model.getLatestReportId(row.ID, reportType, null, rowRangeStr);
     if (!reportId) {
         logger.warn({ cronDetailID: row.ID, reportType }, 'No ReportID found in logs yet; skipping status check for this type');
         await model.logCronActivity({
@@ -446,20 +442,21 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
             message: 'Skipping status check: ReportID not found in logs yet',
             reportID: null,
             retryCount: 0,
-            executionTime: 0
+            executionTime: 0,
+            Range: rowRangeStr
         });
         return { success: true, skipped: true, reason: 'No ReportID in logs yet' };
     }
 	
-	// Get seller profile from database using AmazonSellerID from the row	
 	if (!seller) {
 		logger.error({ amazonSellerID: row.AmazonSellerID }, 'Seller profile not found');
 		return;
 	}
 
-	// Calculate date range for the report type
 	const timezone = await model.getUserTimezone(user);
-	const range = dates.getDateRangeForPeriod(reportType, timezone);
+	const range = rowRangeStr && rowRangeStr.includes(' to ')
+		? (() => { const p = rowRangeStr.split(' to '); return { start: p[0].trim(), end: p[1].trim() }; })()
+		: dates.getDateRangeForPeriod(reportType, timezone);
 
 	// Use the universal retry function
 	const statusMaxRetries = Number(process.env.MAX_RETRY_ATTEMPTS) || 3;
@@ -706,8 +703,9 @@ async function checkReportStatusByType(row, reportType, authOverrides = {}, repo
 }
 
 async function downloadReportByType(row, reportType, authOverrides = {}, reportId = null, user = null, range = null, reportDocumentId = '', seller = null) {
+    const rangeStr = range && range.start && range.end ? `${range.start} to ${range.end}` : (row.FullWeekRange || row.FullMonthRange || row.FullQuarterRange || null);
     if (!reportId) {
-        reportId = await model.getLatestReportId(row.ID, reportType);
+        reportId = await model.getLatestReportId(row.ID, reportType, null, rangeStr);
         if (!reportId) {
             await model.logCronActivity({ cronJobID: row.ID, reportType, action: 'Download Report', status: 3, message: 'Skipping download: ReportID not found in logs', reportID: null, retryCount: 0, executionTime: 0 });
             return { success: true, skipped: true, reason: 'No ReportID in logs' };
@@ -1018,9 +1016,9 @@ async function downloadReportByType(row, reportType, authOverrides = {}, reportI
 }
 
 async function handleFatalOrUnknownStatus(row, reportType, status, reportId = null) {	
-	// Use provided reportId or fetch from DB as fallback
+	const rowRangeStr = row.FullWeekRange || row.FullMonthRange || row.FullQuarterRange || null;
 	if (!reportId) {
-		reportId = await model.getLatestReportId(row.ID, reportType);
+		reportId = await model.getLatestReportId(row.ID, reportType, null, rowRangeStr);
 	}
 
     const statusToSet = 3; // Failed status
