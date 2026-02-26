@@ -3,14 +3,14 @@
  
  */
 const { ValidationHelpers } = require('../helpers/sqp.helpers');
-const { initDatabaseContext, loadDatabase } = require('../db/tenant.db');
+const { initDatabaseContext, loadDatabase, getCurrentSequelize } = require('../db/tenant.db');
 const { getModel: getSellerAsinList } = require('../models/sequelize/sellerAsinList.model');
 const { getModel: getMwsItems } = require('../models/sequelize/mwsItems.model');
 const sellerModel = require('../models/sequelize/seller.model');
 const logger = require('../utils/logger.utils');
 const env = require('../config/env.config');
 const dates = require('../utils/dates.utils');
-const { Op, literal } = require("sequelize");
+const { Op, literal,QueryTypes } = require("sequelize");
 class AsinPullService {
 
     /**
@@ -52,13 +52,8 @@ class AsinPullService {
                 logger.error({ error: result.error }, 'ASIN sync failed');
                 return;
             }
-
-            // Get seller info
-            const seller = await sellerModel.getProfileDetailsByID(validatedAmazonSellerID, 'AmazonSellerID');
-
             logger.info({
                 userId: validatedUserId,
-                sellerID: seller?.idSellerAccount,
                 amazonSellerID: validatedAmazonSellerID,
                 insertedCount: result.insertedCount,
                 totalCount: result.totalCount,
@@ -83,62 +78,56 @@ class AsinPullService {
     async _syncSellerAsinsInternal(sellerIdentifier, isActive = 0, key = 'ID') {
         try {
             const SellerAsinList = getSellerAsinList();
-            const MwsItems = getMwsItems();
     
-            // Get seller info for validation
-            logger.info({ sellerIdentifier, key }, 'Getting seller profile details');
-            const seller = await sellerModel.getProfileDetailsByID(sellerIdentifier, key);
-            if (!seller) {
-                logger.error({ sellerIdentifier }, 'Seller not found');
-                return { insertedCount: 0, totalCount: 0, error: 'Seller not found or inactive' };
-            }
-    
-            if (!seller.AmazonSellerID) {
-                logger.error({ sellerID: seller.idSellerAccount, seller }, 'Seller AmazonSellerID is missing');
-                return { insertedCount: 0, totalCount: 0, error: 'Seller AmazonSellerID is missing' };
-            }
-        
             // Get new ASINs from mws_items - select newest ItemName per ASIN
             // Priority: InCatalog = 1 first, then by highest ID or most recent dtUpdatedOn
-            const newAsinsList = await MwsItems.findAll({
-                where: {
-                    AmazonSellerID: seller.AmazonSellerID,
-                    ASIN: {
-                        [Op.and]: [
-                            { [Op.ne]: null },
-                            { [Op.ne]: '' }
-                        ]
-                    }
-                },
-                attributes: [
-                    "SellerID",
-                    "ASIN",
-                    "ItemName",
-                    "SKU",
-                    "SellerName",
-                    "MarketPlaceName",
-                    "AmazonSellerID",
-                    "ID",
-                    "dtUpdatedOn",
-                    [
-                        literal(`
-                            ROW_NUMBER() OVER (
-                                PARTITION BY ASIN 
-                                ORDER BY
-                                    CASE WHEN InCatalog = 1 THEN 0 ELSE 1 END,
-                                    COALESCE(dtUpdatedOn, '1970-01-01') DESC,
-                                    ID DESC
-                            )
-                        `),
-                        "rn"
-                    ]
-                ],
-                raw: true
+            const sequelize = getCurrentSequelize();
+            const newAsinsList = await sequelize.query(`
+                SELECT 
+                    main.ID,
+                    main.SellerID,
+                    main.ASIN,
+                    main.AmazonSellerID,
+                    main.SKU,
+                    main.MarketPlaceName,
+                    main.SellerName,
+                    latest.ItemName
+
+                FROM mws_items main
+                JOIN (
+                    SELECT 
+                        sub.SellerID,
+                        sub.ASIN,
+                        sub.AmazonSellerID,
+                        MAX(sub.ID) AS maxID
+                    FROM mws_items sub
+                    WHERE sub.AmazonSellerID = :amazonId
+                    AND sub.ASIN IS NOT NULL
+                    AND sub.ASIN <> ''
+                    GROUP BY sub.SellerID, sub.ASIN, sub.AmazonSellerID
+                ) filtered 
+                ON filtered.maxID = main.ID
+
+                LEFT JOIN mws_items latest
+                    ON latest.ID = (
+                        SELECT sub2.ID
+                        FROM mws_items sub2
+                        WHERE sub2.ASIN = main.ASIN
+                        AND sub2.AmazonSellerID = main.AmazonSellerID
+                        ORDER BY
+                            CASE WHEN sub2.InCatalog = 1 THEN 0 ELSE 1 END,
+                            sub2.ID DESC,
+                            COALESCE(sub2.dtUpdatedOn, '1970-01-01') DESC
+                        LIMIT 1
+                    );
+                `,
+                {
+                 replacements: { amazonId: sellerIdentifier },
+                 type: QueryTypes.SELECT
             });
-
-            // Keep ONLY the newest record per ASIN
-            const newAsins = newAsinsList.filter(x => x.rn === 1);
-
+            
+            // ✅ No need to filter again, newAsinsList already has only the latest rows
+            const newAsins = newAsinsList; 
             // Fetch existing ASINs for this seller
             const existingAsinsInDB = await SellerAsinList.findAll({
                 where: { 
@@ -147,8 +136,7 @@ class AsinPullService {
                 },
                 attributes: ['ASIN', 'SellerID'],
                 raw: true
-            });
-
+            });    
             // Create a set of existing combinations: ASIN + SellerID
             const normalizeKey = (asin, sellerId) => {
                 const normalizedAsin = (asin || '').trim().toUpperCase();
@@ -176,8 +164,7 @@ class AsinPullService {
                             MarketPlaceName: item.MarketPlaceName || '',
                             ItemName: item.ItemName || '',
                             SKU: item.SKU || '',
-                            AmazonSellerID: item.AmazonSellerID || '',
-                            ID: item.ID || 0
+                            AmazonSellerID: item.AmazonSellerID || ''
                         });
                         return false;
                     }
@@ -210,7 +197,7 @@ class AsinPullService {
                     } catch (chunkError) {
                         logger.error({
                             error: chunkError.message,
-                            sellerID: seller.idSellerAccount,
+                            sellerID: newAsins.map(i => i.SellerID),
                             chunkSample: chunk.slice(0, 2)
                         }, 'Chunk insert failed, trying individual inserts');
     
@@ -228,8 +215,7 @@ class AsinPullService {
                         }
                     }
                 }
-            }
-            
+            }            
             if (updates.length > 0) {
                 const chunkSize = 50;
                 for (let i = 0; i < updates.length; i += chunkSize) {
@@ -243,11 +229,10 @@ class AsinPullService {
                                 SKU: record.SKU,
                                 dtUpdatedOn: dates.getNowDateTimeInUserTimezone().db
                             };
-
                             return SellerAsinList.update(payload, {
                                 where: {
-                                    SellerID: record.SellerID,
-                                    ASIN: record.ASIN,
+                                    SellerID: parseInt(record.SellerID) || 0,
+                                    ASIN: (record.ASIN || '').trim().toUpperCase(),
                                     AmazonSellerID: record.AmazonSellerID
                                 }
                             })
@@ -271,7 +256,9 @@ class AsinPullService {
             }
 
             const afterCount = await SellerAsinList.count({
-                where: { SellerID: seller.idSellerAccount }
+                where: { 
+                    SellerID: { [require('sequelize').Op.in]: newAsins.map(i => i.SellerID) }
+                }
             });
     
             return { insertedCount, totalCount: afterCount, updatedCount, error: null };
